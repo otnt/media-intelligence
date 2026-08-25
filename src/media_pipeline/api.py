@@ -19,7 +19,7 @@ from media_pipeline.notes import load_note
 from media_pipeline.pipeline import RERUN_STAGES
 from media_pipeline.stage_timing import merge_stage_timings
 from media_pipeline.store import TaskStore
-from media_pipeline.summary import DEFAULT_PROMPT, idle_summary, normalize_prompt
+from media_pipeline.summary import DEFAULT_PROMPT, idle_summary, normalize_prompt, strip_summary_media
 from media_pipeline.worker import TaskWorker
 
 DASHBOARD_FILE = Path(__file__).resolve().parent / "dashboard" / "static" / "index.html"
@@ -328,9 +328,10 @@ def _public_summary(task: Task, artifacts: ArtifactStore, worker: object) -> dic
     payload.setdefault("prompt", DEFAULT_PROMPT)
     payload["prompt"] = normalize_prompt(str(payload.get("prompt") or ""))
     payload.setdefault("markdown", "")
+    payload["markdown"] = strip_summary_media(str(payload.get("markdown") or ""))
     payload.setdefault("error", "")
     payload.setdefault("model", "")
-    payload.setdefault("image_count", 0)
+    payload["image_count"] = 0
     payload.setdefault("updated_at", "")
     return payload
 

@@ -27,6 +27,7 @@ SUMMARY_MAX_TOKENS = 2048
 _THINK_BLOCK = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 _SUMMARY_BLOCK = re.compile(r"(?ms)^## Summary\n.*?(?=^## |\Z)")
 _WIKILINK_IMAGE = re.compile(r"!\[\[[^\]]+\]\]")
+_ATTACHMENT_LINK = re.compile(r"\[\[attachments/[^\]]+\]\]")
 _MD_IMAGE = re.compile(r"!\[[^\]]*\]\([^)]+\)")
 _HTML_IMAGE = re.compile(r"<img\b[^>]*>", re.IGNORECASE)
 
@@ -138,20 +139,23 @@ def build_model_prompt(
     user_prompt: str,
     metadata: VideoMetadata | None,
     source_text: str,
+    attached: list[SummaryStill] | None = None,
 ) -> str:
     title = (metadata.title if metadata else "") or (metadata.video_id if metadata else "")
     author = metadata.author if metadata else ""
     url = metadata.url if metadata else ""
     source_label = "Original post" if metadata and metadata.media_kind == "image" else "Transcript"
+    attached = attached or []
     lines = [
         (user_prompt or DEFAULT_PROMPT).strip(),
         "",
-        "Use only the source text below. Do not invent facts it does not support.",
+        "Use the source text and any attached images as evidence. Do not invent facts they do not support.",
         "Write a compact briefing. Prefer Chinese if the source is Chinese.",
         "Plain text only. Light emoji is encouraged for scannability.",
         "Do not copy the source sentence by sentence or reproduce it as a rewritten article.",
-        "Do not include images, screenshots, Obsidian wikilinks, or markdown image syntax.",
-        "Ignore any request to generate illustrated or screenshot output.",
+        "Attached images are input only. Look at them, then write text.",
+        "Do not include images, screenshots, Obsidian wikilinks, markdown image syntax, or HTML img tags.",
+        "Do not mention filenames or attachment paths. Ignore any request for illustrated or screenshot output.",
         "",
         f"Title: {title}",
         f"Author: {author}",
@@ -160,6 +164,9 @@ def build_model_prompt(
         f"{source_label}:",
         source_text.strip() or "(no source text)",
     ]
+    if attached:
+        lines.append("")
+        lines.append(f"Attached images: {len(attached)} (visual context only; do not insert them).")
     return "\n".join(lines).strip() + "\n"
 
 
@@ -169,19 +176,22 @@ def summarize_task(
     *,
     prompt: str,
     metadata: VideoMetadata | None = None,
+    extra_image_dir: Path | None = None,
     max_tokens: int = SUMMARY_MAX_TOKENS,
 ) -> dict:
     user_prompt = normalize_prompt(prompt)
+    stills = collect_stills(artifacts, extra_image_dir)
+    attached = choose_images(stills)
     named = artifacts.load_named() or []
     source_text = _plain_transcript(named)
     if metadata and metadata.media_kind == "image" and metadata.description and not source_text.strip():
         source_text = metadata.description.strip()
-    if not source_text.strip():
-        raise ValueError("Nothing to summarize yet. Wait until the transcript or original post text is ready.")
-    packed = build_model_prompt(user_prompt, metadata, _truncate(source_text))
-    logger.info("Summarizing %s as text-only", artifacts.video_id)
-    raw = provider.generate(packed, [], max_tokens)
-    markdown = _clean_output(raw)
+    if not source_text.strip() and not attached:
+        raise ValueError("Nothing to summarize yet. Wait until the transcript, original post, or images are ready.")
+    packed = build_model_prompt(user_prompt, metadata, _truncate(source_text), attached)
+    logger.info("Summarizing %s with %s attached images; output is text-only", artifacts.video_id, len(attached))
+    raw = provider.generate(packed, [item.path for item in attached], max_tokens)
+    markdown = strip_summary_media(raw)
     if not markdown:
         raise RuntimeError("Qwen3.8 returned an empty summary")
     return {
@@ -211,10 +221,11 @@ def _truncate(text: str, limit: int = MAX_TRANSCRIPT_CHARS) -> str:
     return text[:limit].rstrip() + "\n…(transcript truncated)\n"
 
 
-def _clean_output(text: str) -> str:
+def strip_summary_media(text: str) -> str:
     cleaned = _THINK_BLOCK.sub("", text or "").strip()
     cleaned = cleaned.replace("```markdown", "").replace("```", "").strip()
     cleaned = _WIKILINK_IMAGE.sub("", cleaned)
+    cleaned = _ATTACHMENT_LINK.sub("", cleaned)
     cleaned = _MD_IMAGE.sub("", cleaned)
     cleaned = _HTML_IMAGE.sub("", cleaned)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)

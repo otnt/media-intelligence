@@ -186,7 +186,7 @@ class TaskWorker:
             "markdown": str(existing.get("markdown") or ""),
             "model": str(existing.get("model") or ""),
             "error": "",
-            "image_count": int(existing.get("image_count") or 0),
+            "image_count": 0,
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
         artifacts.save_summary(payload)
@@ -337,6 +337,7 @@ class TaskWorker:
                 self._summarizing.discard(task_id)
             return
         artifacts = ArtifactStore(self.config.paths.artifacts, task.video_id)
+        extra_dir = Path(task.video_path) if task.video_path else None
         try:
             provider = self._ensure_vision()
             metadata = artifacts.load_metadata()
@@ -346,6 +347,7 @@ class TaskWorker:
                     provider,
                     prompt=prompt,
                     metadata=metadata,
+                    extra_image_dir=extra_dir if extra_dir and extra_dir.is_dir() else None,
                 )
             artifacts.save_summary(result)
             if task.note_path:

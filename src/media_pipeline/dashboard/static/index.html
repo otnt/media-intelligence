@@ -401,7 +401,7 @@
         </div>
         <div class="panel" id="summary-panel">
           <strong>Generate summary</strong>
-          <p class="empty" style="padding:8px 0 10px">Qwen3.8 reads the transcript or original post, then writes a one-minute text briefing with light emoji. No images.</p>
+          <p class="empty" style="padding:8px 0 10px">Qwen3.8 reads the transcript or original post and attached images, then writes a one-minute text briefing with light emoji. The summary itself has no images.</p>
           <div class="actions">
             <button class="btn primary" id="summarize">Generate summary</button>
             <span class="worker-msg" id="summary-status"></span>
@@ -619,7 +619,7 @@
       else if (status === "failed") statusEl.textContent = summary.error || "Summary failed";
       else if (status === "completed") statusEl.textContent = summary.model ? `Done · ${summary.model}` : "Done";
       else statusEl.textContent = "";
-      output.innerHTML = renderNoteMarkdown(markdown, debug && debug.video_id);
+      output.innerHTML = renderSummaryMarkdown(markdown);
       if (fold) {
         const show = Boolean(markdown);
         fold.hidden = !show;
@@ -639,6 +639,26 @@
       const output = document.getElementById("extracted-output");
       if (!output) return;
       output.innerHTML = renderNoteMarkdown(markdown, videoId) || `<div class="empty">No extracted note yet.</div>`;
+    }
+
+    function stripSummaryImages(text) {
+      return String(text || "")
+        .replace(/!\[\[[^\]]+\]\]/g, "")
+        .replace(/\[\[attachments\/[^\]]+\]\]/g, "")
+        .replace(/!\[[^\]]*\]\([^)]+\)/g, "")
+        .replace(/<img\b[^>]*>/gi, "")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+    }
+
+    function renderSummaryMarkdown(text) {
+      if (!text) return "";
+      let html = esc(stripSummaryImages(text));
+      html = html.replace(/^### (.+)$/gm, "<h3>$1</h3>");
+      html = html.replace(/^## (.+)$/gm, "<h2>$1</h2>");
+      html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+      html = html.replace(/\n/g, "<br />");
+      return html;
     }
 
     function renderNoteMarkdown(text, videoId) {

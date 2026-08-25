@@ -11,6 +11,7 @@ from media_pipeline.summary import (
     choose_images,
     collect_stills,
     normalize_prompt,
+    strip_summary_media,
     summarize_task,
     upsert_summary_section,
 )
@@ -59,14 +60,33 @@ def test_choose_images_keeps_highest_scores_in_time_order():
 
 
 def test_build_prompt_is_text_only():
-    text = build_model_prompt("请总结", _metadata(), "[00:00:00] Speaker 1: hello")
+    stills = [SummaryStill("keep.jpg", 1.5, "a slide", Path("keep.jpg"), score=0.9)]
+    text = build_model_prompt("请总结", _metadata(), "[00:00:00] Speaker 1: hello", stills)
     assert "请总结" in text
     assert "How to listen" in text
     assert "Speaker 1: hello" in text
     assert "Transcript:" in text
-    assert "keep.jpg" not in text
+    assert "Attached images: 1" in text
     assert "![[attachments" not in text
+    assert "visual context only" in text
     assert "Plain text only" in text
+
+
+def test_strip_summary_media_drops_wikilinks_and_markdown_images():
+    raw = (
+        "📉 简报\n\n要点。\n\n"
+        "![[attachments/note1/01.jpg]]\n"
+        "[[attachments/note1/02.jpg]]\n"
+        "![slide](keep.jpg)\n"
+        "<img src='keep.jpg'>\n"
+    )
+    cleaned = strip_summary_media(raw)
+    assert "简报" in cleaned
+    assert "要点" in cleaned
+    assert "![[" not in cleaned
+    assert "attachments/" not in cleaned
+    assert "<img" not in cleaned
+    assert "keep.jpg" not in cleaned
 
 
 def test_build_prompt_labels_image_post_as_original():
@@ -104,7 +124,7 @@ def test_upsert_summary_replaces_existing_block():
     assert "old" not in updated
 
 
-def test_summarize_task_uses_transcript_without_images(tmp_path: Path):
+def test_summarize_task_attaches_stills_but_strips_output_images(tmp_path: Path):
     artifacts = ArtifactStore(tmp_path / "artifacts", "BVxxxx")
     artifacts.save_metadata(_metadata())
     frame_dir = artifacts.keyframe_dir
@@ -136,14 +156,15 @@ def test_summarize_task_uses_transcript_without_images(tmp_path: Path):
     assert "核心思想" in result["markdown"]
     assert "<think>" not in result["markdown"]
     assert "![[" not in result["markdown"]
-    assert vision.images == []
+    assert vision.images == [keep]
     assert "Welcome." in vision.prompt
     assert "Plain text only" in vision.prompt
+    assert "Attached images: 1" in vision.prompt
     stills = collect_stills(artifacts)
     assert [item.filename for item in stills] == ["keep.jpg"]
 
 
-def test_summarize_image_post_uses_caption_not_photos(tmp_path: Path):
+def test_summarize_image_post_attaches_photos_but_omits_them_from_output(tmp_path: Path):
     metadata = VideoMetadata(
         url="https://www.xiaohongshu.com/explore/note1",
         title="币圈大佬",
@@ -163,13 +184,20 @@ def test_summarize_image_post_uses_caption_not_photos(tmp_path: Path):
     photo_dir.mkdir()
     (photo_dir / "01.jpg").write_bytes(b"photo")
     vision = FakeVision()
-    result = summarize_task(artifacts, vision, prompt=LEGACY_PROMPT, metadata=metadata)
+    result = summarize_task(
+        artifacts,
+        vision,
+        prompt=LEGACY_PROMPT,
+        metadata=metadata,
+        extra_image_dir=photo_dir,
+    )
     assert result["status"] == "completed"
     assert result["prompt"] == DEFAULT_PROMPT
     assert result["image_count"] == 0
-    assert vision.images == []
+    assert vision.images == [photo_dir / "01.jpg"]
     assert "Original post:" in vision.prompt
     assert metadata.description in vision.prompt
+    assert "Attached images: 1" in vision.prompt
     assert "![[" not in result["markdown"]
 
 
