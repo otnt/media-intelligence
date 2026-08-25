@@ -11,7 +11,9 @@ from media_pipeline.store import TaskStore
 class DummyWorker:
     def __init__(self) -> None:
         self.submitted: list[str] = []
+        self.summarized: list[tuple[str, str]] = []
         self.limits = {"youtube": 10, "bilibili": 10, "other": 10, "model_jobs": 1}
+        self._summarizing: set[str] = set()
 
     def start(self) -> None:
         return None
@@ -25,6 +27,21 @@ class DummyWorker:
     def retry(self, task: Task, stage: str | None = None, visual: dict | None = None) -> Task:
         self.submitted.append(task.id)
         return task
+
+    def summarize(self, task: Task, prompt: str = "") -> dict:
+        from media_pipeline.summary import DEFAULT_PROMPT
+
+        self.summarized.append((task.id, prompt))
+        self._summarizing.add(task.id)
+        return {
+            "status": "running",
+            "prompt": prompt or DEFAULT_PROMPT,
+            "markdown": "",
+            "model": "",
+            "error": "",
+            "image_count": 0,
+            "updated_at": "",
+        }
 
     def set_limits(self, **kwargs: int) -> None:
         for key, value in kwargs.items():
@@ -195,6 +212,8 @@ def test_dashboard_and_frame_override(tmp_path: Path):
     assert "Sample interval" in home.text
     assert "Qwen3.8 frame filter" in home.text
     assert "vlm_keep_threshold" in home.text
+    assert "Generate summary" in home.text
+    assert "提取这个文章的核心思想" in home.text
     visual = client.get("/v1/visual/config").json()
     assert visual["visual"]["vlm_keep_threshold"] == 0.45
     assert "filtering_frames" in visual["stages"]
@@ -221,6 +240,12 @@ def test_dashboard_and_frame_override(tmp_path: Path):
     debug = client.get(f"/v1/tasks/{task_id}/debug")
     assert debug.status_code == 200
     assert "debug" in debug.json()
+    assert debug.json()["summary"]["status"] == "idle"
+    started = client.post(f"/v1/tasks/{task_id}/summary", json={"prompt": "一句话概括"})
+    assert started.status_code == 202
+    assert started.json()["status"] == "running"
+    assert started.json()["prompt"] == "一句话概括"
+    assert worker.summarized == [(task_id, "一句话概括")]
 
 
 def test_update_worker_limits(tmp_path: Path):

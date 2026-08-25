@@ -38,6 +38,7 @@ class ArtifactStore:
         self.multimodal_path = self.root / "multimodal.json"
         self.frame_analysis_path = self.root / "frame_analysis.json"
         self.timings_path = self.root / "stage_timings.json"
+        self.summary_path = self.root / "summary.json"
 
     def asr_path(self, model_id: str) -> Path:
         return self.asr_dir / f"{model_id}.json"
@@ -161,6 +162,15 @@ class ArtifactStore:
             return None
         return [FrameVerdict.from_dict(item) for item in data if isinstance(item, dict)]
 
+    def save_summary(self, payload: dict[str, Any]) -> None:
+        self.write_json(self.summary_path, payload)
+
+    def load_summary(self) -> dict[str, Any] | None:
+        if not self.summary_path.exists():
+            return None
+        data = self.read_json(self.summary_path)
+        return data if isinstance(data, dict) else None
+
     def invalidate_from(self, stage: str) -> None:
         """Drop downstream visual/audio artifacts so a stage can be rerun."""
         visual_from_scenes = {"detecting_scenes", "all"}
@@ -252,4 +262,5 @@ class ArtifactStore:
             "decisions": attached,
             "analysis": [item.to_dict() for item in analysis],
             "stage_timings": self.load_stage_timings(),
+            "summary": self.load_summary(),
         }

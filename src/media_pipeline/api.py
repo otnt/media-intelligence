@@ -18,6 +18,7 @@ from media_pipeline.models import ASR_MODELS, Task, TaskStatus, asr_label
 from media_pipeline.pipeline import RERUN_STAGES
 from media_pipeline.stage_timing import merge_stage_timings
 from media_pipeline.store import TaskStore
+from media_pipeline.summary import DEFAULT_PROMPT, idle_summary
 from media_pipeline.worker import TaskWorker
 
 DASHBOARD_FILE = Path(__file__).resolve().parent / "dashboard" / "static" / "index.html"
@@ -38,6 +39,10 @@ class RetryTaskRequest(BaseModel):
 
 class FrameDecisionRequest(BaseModel):
     decision: str
+
+
+class SummarizeRequest(BaseModel):
+    prompt: str | None = None
 
 
 class WorkerLimitsRequest(BaseModel):
@@ -186,7 +191,36 @@ def create_app(config: AppConfig, store: TaskStore | None = None, worker: TaskWo
             payload["scenes"] = [item.to_dict() for item in (artifacts.load_scenes() or [])]
             if not payload.get("selected_count"):
                 payload["selected_count"] = int(summary.get("selected_count") or 0)
+            payload["summary"] = _public_summary(task, artifacts, worker)
+        else:
+            payload["summary"] = idle_summary()
         return payload
+
+    @app.get("/v1/tasks/{task_id}/summary")
+    def get_summary(task_id: str) -> dict[str, Any]:
+        task = store.get(task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+        if not task.video_id:
+            return idle_summary()
+        artifacts = ArtifactStore(config.paths.artifacts, task.video_id)
+        return _public_summary(task, artifacts, worker)
+
+    @app.post("/v1/tasks/{task_id}/summary", status_code=202)
+    def start_summary(task_id: str, payload: SummarizeRequest | None = None) -> dict[str, Any]:
+        task = store.get(task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+        if not task.video_id:
+            raise HTTPException(status_code=400, detail="Task has no video id yet")
+        prompt = (payload.prompt if payload else None) or DEFAULT_PROMPT
+        starter = getattr(worker, "summarize", None)
+        if not callable(starter):
+            raise HTTPException(status_code=501, detail="Worker cannot summarize")
+        try:
+            return starter(task, prompt)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/v1/tasks/{task_id}/retry")
     def retry_task(task_id: str, payload: RetryTaskRequest | None = None) -> dict[str, Any]:
@@ -257,6 +291,26 @@ def _enrich_task(task: Task, config: AppConfig) -> dict[str, Any]:
         artifacts.load_stage_timings(),
         payload.get("stage_timings"),
     )
+    stored = artifacts.load_summary() or {}
+    payload["summary_status"] = str(stored.get("status") or "idle")
+    return payload
+
+
+def _public_summary(task: Task, artifacts: ArtifactStore, worker: object) -> dict[str, Any]:
+    payload = artifacts.load_summary() or idle_summary()
+    running = getattr(worker, "_summarizing", set())
+    if payload.get("status") == "running" and task.id not in running:
+        payload = {
+            **payload,
+            "status": "failed",
+            "error": payload.get("error") or "Summary was interrupted",
+        }
+    payload.setdefault("prompt", DEFAULT_PROMPT)
+    payload.setdefault("markdown", "")
+    payload.setdefault("error", "")
+    payload.setdefault("model", "")
+    payload.setdefault("image_count", 0)
+    payload.setdefault("updated_at", "")
     return payload
 
 

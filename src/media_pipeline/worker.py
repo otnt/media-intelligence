@@ -12,7 +12,7 @@ from media_pipeline.models import Task, TaskStatus
 from media_pipeline.pipeline import Pipeline
 from media_pipeline.stage_timing import clear_invalidated_timings
 from media_pipeline.store import TaskStore
-from media_pipeline.visual.vlm import VisionProvider
+from media_pipeline.visual.vlm import VisionProvider, build_vision_provider
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +110,7 @@ class TaskWorker:
         self._diarization: DiarizationProvider | None = None
         self._diarization_lock = threading.Lock()
         self._vision: VisionProvider | None = None
+        self._summarizing: set[str] = set()
 
     def start(self) -> None:
         if self._dispatcher and self._dispatcher.is_alive():
@@ -163,6 +164,39 @@ class TaskWorker:
         self.store.update(task)
         self.submit(task)
         return task
+
+    def summarize(self, task: Task, prompt: str = "") -> dict:
+        from datetime import datetime, timezone
+
+        from media_pipeline.summary import DEFAULT_PROMPT, idle_summary
+
+        if not task.video_id:
+            raise ValueError("Task has no video id yet")
+        artifacts = ArtifactStore(self.config.paths.artifacts, task.video_id)
+        existing = artifacts.load_summary() or idle_summary(prompt)
+        with self._lock:
+            if task.id in self._summarizing:
+                return existing
+            self._summarizing.add(task.id)
+        payload = {
+            "status": "running",
+            "prompt": (prompt or "").strip() or existing.get("prompt") or DEFAULT_PROMPT,
+            "markdown": str(existing.get("markdown") or ""),
+            "model": str(existing.get("model") or ""),
+            "error": "",
+            "image_count": int(existing.get("image_count") or 0),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        artifacts.save_summary(payload)
+        thread = threading.Thread(
+            target=self._run_summary,
+            args=(task.id, payload["prompt"]),
+            name=f"media-pipeline-summary-{task.id[:8]}",
+            daemon=True,
+        )
+        thread.start()
+        self._wake.set()
+        return payload
 
     def set_limits(
         self,
@@ -265,7 +299,7 @@ class TaskWorker:
         if idle <= 0:
             return
         with self._lock:
-            busy = bool(self._inflight) or bool(self._pending)
+            busy = bool(self._inflight) or bool(self._pending) or bool(self._summarizing)
         if busy:
             return
         self._unload_vision(idle_only=True, idle_sec=idle)
@@ -288,3 +322,55 @@ class TaskWorker:
             closer = getattr(provider, "close", None)
             if callable(closer):
                 closer()
+
+    def _run_summary(self, task_id: str, prompt: str) -> None:
+        from pathlib import Path
+
+        from media_pipeline.notes import NoteWriter
+        from media_pipeline.summary import summarize_task
+
+        task = self.store.get(task_id)
+        if task is None or not task.video_id:
+            with self._lock:
+                self._summarizing.discard(task_id)
+            return
+        artifacts = ArtifactStore(self.config.paths.artifacts, task.video_id)
+        extra_dir = Path(task.video_path) if task.video_path else None
+        try:
+            provider = self._ensure_vision()
+            metadata = artifacts.load_metadata()
+            with self._model_slots:
+                result = summarize_task(
+                    artifacts,
+                    provider,
+                    prompt=prompt,
+                    metadata=metadata,
+                    extra_image_dir=extra_dir if extra_dir and extra_dir.is_dir() else None,
+                )
+            artifacts.save_summary(result)
+            if task.note_path:
+                try:
+                    NoteWriter(Path(task.note_path).parent).update_summary(Path(task.note_path), result["markdown"])
+                except Exception:
+                    logger.exception("Could not write summary into note for task %s", task_id)
+        except Exception as exc:
+            logger.exception("Summary failed for task %s", task_id)
+            current = artifacts.load_summary() or {}
+            artifacts.save_summary(
+                {
+                    **current,
+                    "status": "failed",
+                    "prompt": prompt,
+                    "error": str(exc),
+                }
+            )
+        finally:
+            with self._lock:
+                self._summarizing.discard(task_id)
+            self._wake.set()
+
+    def _ensure_vision(self) -> VisionProvider:
+        with self._diarization_lock:
+            if self._vision is None:
+                self._vision = build_vision_provider(self.config)
+            return self._vision

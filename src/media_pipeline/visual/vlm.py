@@ -71,6 +71,9 @@ class VisionProvider:
     def judge(self, image_path: Path, prompt: str) -> str:
         raise NotImplementedError
 
+    def generate(self, prompt: str, images: list[Path] | None = None, max_tokens: int | None = None) -> str:
+        raise NotImplementedError
+
     def unload(self) -> None:
         return None
 
@@ -85,6 +88,9 @@ class NullVisionProvider(VisionProvider):
             '{"informative": true, "score": 1.0, "category": "other",'
             ' "reason": "analysis_unavailable", "caption": ""}'
         )
+
+    def generate(self, prompt: str, images: list[Path] | None = None, max_tokens: int | None = None) -> str:
+        raise RuntimeError("Qwen3.8 is not available. uv pip install -e '.[analysis]'")
 
 
 class MlxVlmProvider(VisionProvider):
@@ -119,6 +125,11 @@ class MlxVlmProvider(VisionProvider):
     def judge(self, image_path: Path, prompt: str) -> str:
         return str(self._on_thread(self._judge_sync, image_path, prompt))
 
+    def generate(self, prompt: str, images: list[Path] | None = None, max_tokens: int | None = None) -> str:
+        paths = [Path(item) for item in (images or []) if Path(item).is_file()]
+        tokens = int(max_tokens) if max_tokens else self.max_tokens
+        return str(self._on_thread(self._generate_sync, prompt, paths, tokens))
+
     def _on_thread(self, fn, *args):
         return _mlx_loop().call(fn, *args)
 
@@ -150,12 +161,15 @@ class MlxVlmProvider(VisionProvider):
             pass
 
     def _judge_sync(self, image_path: Path, prompt: str) -> str:
+        return self._generate_sync(prompt, [image_path], self.max_tokens)
+
+    def _generate_sync(self, prompt: str, images: list[Path], max_tokens: int) -> str:
         self._load_sync()
         self.last_used = time.monotonic()
         from mlx_vlm import generate
 
-        formatted = _format_prompt(self._processor, self._config, prompt)
-        output = _generate(generate, self._model, self._processor, formatted, image_path, self.max_tokens)
+        formatted = _format_prompt(self._processor, self._config, prompt, num_images=len(images))
+        output = _generate(generate, self._model, self._processor, formatted, images, max_tokens)
         return _as_text(output)
 
 
@@ -222,27 +236,48 @@ def _hub_dirname(model_id: str) -> str:
     return "models--" + model_id.replace("/", "--")
 
 
-def _format_prompt(processor, config, prompt: str) -> str:
+def _format_prompt(processor, config, prompt: str, num_images: int = 1) -> str:
     from mlx_vlm.prompt_utils import apply_chat_template
 
-    try:
-        return apply_chat_template(processor, config, prompt, num_images=1, enable_thinking=False)
-    except TypeError:
-        return apply_chat_template(processor, config, prompt, num_images=1)
-
-
-def _generate(generate, model, processor, prompt: str, image_path: Path, max_tokens: int):
-    image = str(image_path)
+    count = max(0, int(num_images))
     attempts = (
-        {"prompt": prompt, "image": image, "max_tokens": max_tokens, "verbose": False, "temperature": 0.0},
-        {"prompt": prompt, "images": [image], "max_tokens": max_tokens, "verbose": False},
+        {"num_images": count, "enable_thinking": False},
+        {"num_images": count},
     )
+    for extra in attempts:
+        try:
+            return apply_chat_template(processor, config, prompt, **extra)
+        except TypeError:
+            continue
+    return apply_chat_template(processor, config, prompt, num_images=max(count, 1))
+
+
+def _generate(generate, model, processor, prompt: str, images: Path | list[Path], max_tokens: int):
+    paths = [images] if isinstance(images, Path) else list(images)
+    image_strs = [str(path) for path in paths]
+    if not image_strs:
+        attempts: tuple[dict, ...] = (
+            {"prompt": prompt, "max_tokens": max_tokens, "verbose": False, "temperature": 0.0},
+            {"prompt": prompt, "images": [], "max_tokens": max_tokens, "verbose": False},
+        )
+    elif len(image_strs) == 1:
+        attempts = (
+            {"prompt": prompt, "image": image_strs[0], "max_tokens": max_tokens, "verbose": False, "temperature": 0.0},
+            {"prompt": prompt, "images": image_strs, "max_tokens": max_tokens, "verbose": False},
+        )
+    else:
+        attempts = (
+            {"prompt": prompt, "images": image_strs, "max_tokens": max_tokens, "verbose": False, "temperature": 0.0},
+            {"prompt": prompt, "image": image_strs, "max_tokens": max_tokens, "verbose": False},
+        )
     for kwargs in attempts:
         try:
             return generate(model, processor, **kwargs)
         except TypeError:
             continue
-    return generate(model, processor, prompt, image, max_tokens=max_tokens, verbose=False)
+    if image_strs:
+        return generate(model, processor, prompt, image_strs[0], max_tokens=max_tokens, verbose=False)
+    return generate(model, processor, prompt, max_tokens=max_tokens, verbose=False)
 
 
 def _as_text(output: object) -> str:

@@ -13,6 +13,7 @@ from media_pipeline.models import (
     now_stamp,
 )
 from media_pipeline.transcript import render_transcript
+from media_pipeline.summary import extract_summary_section, upsert_summary_section
 
 _INVALID_FILENAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _HEADER_END = re.compile(r"\n---\s*\n", re.MULTILINE)
@@ -51,9 +52,18 @@ class NoteWriter:
         document = NoteDocument.parse(path.read_text(encoding="utf-8"))
         document.apply_task(task, metadata)
         if body is not None:
-            document.transcript_markdown = body
+            document.transcript_markdown = _keep_summary(document.transcript_markdown, body)
         elif transcript is not None:
-            document.transcript_markdown = render_transcript(transcript)
+            document.transcript_markdown = _keep_summary(
+                document.transcript_markdown, render_transcript(transcript)
+            )
+        path.write_text(document.render(), encoding="utf-8")
+
+    def update_summary(self, path: Path, markdown: str) -> None:
+        if not path.exists():
+            raise FileNotFoundError(path)
+        document = NoteDocument.parse(path.read_text(encoding="utf-8"))
+        document.transcript_markdown = upsert_summary_section(document.transcript_markdown, markdown)
         path.write_text(document.render(), encoding="utf-8")
 
     def _path_for(self, metadata: VideoMetadata, disambiguate: bool = False) -> Path:
@@ -213,3 +223,12 @@ def _is_image_post(metadata: VideoMetadata | None, task: Task) -> bool:
 
 def _kind_label(metadata: VideoMetadata | None, task: Task) -> str:
     return "Image" if _is_image_post(metadata, task) else "Video"
+
+
+def _keep_summary(previous: str, incoming: str) -> str:
+    if extract_summary_section(incoming):
+        return incoming
+    existing = extract_summary_section(previous)
+    if not existing:
+        return incoming
+    return upsert_summary_section(incoming, existing)
