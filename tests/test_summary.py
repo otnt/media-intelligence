@@ -2,7 +2,7 @@ from pathlib import Path
 
 from media_pipeline.artifacts import ArtifactStore
 from media_pipeline.models import NamedSegment, Task, TaskStatus, VideoMetadata
-from media_pipeline.notes import NoteWriter
+from media_pipeline.notes import NoteDocument, NoteWriter, load_note
 from media_pipeline.summary import (
     DEFAULT_PROMPT,
     SummaryStill,
@@ -124,9 +124,29 @@ def test_note_writer_inserts_summary_above_transcript(tmp_path: Path):
     writer.update_progress(path, task, metadata, body="## Transcript\n\nhello\n")
     writer.update_summary(path, "一分钟读完")
     text = path.read_text(encoding="utf-8")
+    assert text.index("## Summary") < text.index("URL:")
     assert text.index("## Summary") < text.index("## Transcript")
     assert "一分钟读完" in text
+    parsed = NoteDocument.parse(text)
+    assert parsed.summary_markdown == "一分钟读完"
+    assert parsed.transcript_markdown.startswith("## Transcript")
     writer.update_progress(path, task, metadata, body="## Transcript\n\nreplaced\n")
     kept = path.read_text(encoding="utf-8")
     assert "一分钟读完" in kept
     assert "replaced" in kept
+
+
+def test_load_note_moves_legacy_summary_above_metadata(tmp_path: Path):
+    path = tmp_path / "legacy.md"
+    path.write_text(
+        "# Title\n\nURL: https://example.com/v\nPlatform: Bilibili\nKind: Video\n"
+        "Author: A\nStatus: completed\nVideo Path: /tmp/v\nCreated: now\nUpdated: now\n"
+        "\n---\n\n## Summary\n\nbriefing\n\n## Transcript\n\nhello\n",
+        encoding="utf-8",
+    )
+    document = load_note(path, rewrite_layout=True)
+    text = path.read_text(encoding="utf-8")
+    assert text.index("## Summary") < text.index("URL:")
+    assert document.summary_markdown == "briefing"
+    assert document.transcript_markdown.startswith("## Transcript")
+    assert "## Summary" not in document.transcript_markdown

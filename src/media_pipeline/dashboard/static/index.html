@@ -123,10 +123,26 @@
       resize: vertical;
       line-height: 1.45;
     }
-    .summary-md { margin-top: 14px; font-size: 14px; line-height: 1.55; }
-    .summary-md:empty { display: none; }
-    .summary-md h2, .summary-md h3 { margin: 14px 0 8px; }
-    .summary-md img { display: block; max-width: 100%; border-radius: 8px; margin: 10px 0; background: #0b0d12; }
+    .summary-md, .note-md { margin-top: 4px; font-size: 14px; line-height: 1.55; }
+    .summary-md:empty, .note-md:empty { display: none; }
+    .summary-md h2, .summary-md h3, .note-md h2, .note-md h3 { margin: 14px 0 8px; }
+    .summary-md img, .note-md img { display: block; max-width: min(100%, 720px); border-radius: 8px; margin: 10px 0; background: #0b0d12; }
+    details.fold {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      margin: 16px 0;
+    }
+    details.fold > summary {
+      cursor: pointer;
+      font-weight: 650;
+      padding: 14px 16px;
+      list-style: none;
+    }
+    details.fold > summary::-webkit-details-marker { display: none; }
+    details.fold > summary::before { content: "▸ "; color: var(--muted); }
+    details.fold[open] > summary::before { content: "▾ "; }
+    details.fold .fold-body { padding: 0 16px 16px; }
   </style>
 </head>
 <body>
@@ -326,6 +342,7 @@
           });
         }
       }
+      paintExtracted(debug.extracted_markdown || "", debug.video_id);
       paintSummary(debug.summary || {}, { keepPrompt: true });
     }
 
@@ -382,19 +399,30 @@
           </div>
         </div>
         <div class="panel" id="summary-panel">
-          <strong>Summary</strong>
+          <strong>Generate summary</strong>
           <p class="empty" style="padding:8px 0 10px">Qwen3.8 reads the transcript and kept stills, then writes a one-minute illustrated briefing.</p>
           <div class="actions">
             <button class="btn primary" id="summarize">Generate summary</button>
             <span class="worker-msg" id="summary-status"></span>
           </div>
-          <div class="summary-md" id="summary-output"></div>
           <label class="field" style="margin-top:12px">Prompt
             <textarea id="summary-prompt" class="prompt" rows="4">${esc(DEFAULT_SUMMARY_PROMPT)}</textarea>
           </label>
         </div>
-        <h3>Candidate frames</h3>
-        <div class="grid" id="gallery"></div>
+        <details class="fold" id="fold-frames">
+          <summary>Candidate frames</summary>
+          <div class="fold-body">
+            <div class="grid" id="gallery"></div>
+          </div>
+        </details>
+        <details class="fold" id="fold-extracted">
+          <summary>Extracted contents</summary>
+          <div class="fold-body note-md" id="extracted-output"></div>
+        </details>
+        <details class="fold" id="fold-summary" hidden>
+          <summary>Summary</summary>
+          <div class="fold-body summary-md" id="summary-output"></div>
+        </details>
       `;
       document.getElementById("rerun").onclick = rerun;
       const extractBtn = document.getElementById("extract-keyframes");
@@ -404,6 +432,7 @@
       summaryPromptDirty = false;
       promptEl.addEventListener("input", () => { summaryPromptDirty = true; });
       paintSummary(task.summary || {}, { keepPrompt: false });
+      paintExtracted(task.extracted_markdown || "", task.video_id);
       const gallery = document.getElementById("gallery");
       const decisions = task.decisions || [];
       gallery.innerHTML = decisions.map((item) => cardHtml(task.video_id, item)).join("") || `<div class="empty">No candidate frames yet.</div>`;
@@ -578,28 +607,46 @@
       const statusEl = document.getElementById("summary-status");
       const button = document.getElementById("summarize");
       const promptEl = document.getElementById("summary-prompt");
+      const fold = document.getElementById("fold-summary");
       if (!output || !statusEl || !button || !promptEl) return;
       const status = summary.status || "idle";
       const running = status === "running";
+      const markdown = summary.markdown || "";
       button.disabled = running;
       if (status === "running") statusEl.textContent = "Generating…";
       else if (status === "failed") statusEl.textContent = summary.error || "Summary failed";
       else if (status === "completed") statusEl.textContent = summary.model ? `Done · ${summary.model}` : "Done";
       else statusEl.textContent = "";
-      output.innerHTML = renderSummaryMarkdown(summary.markdown || "", debug && debug.video_id);
+      output.innerHTML = renderNoteMarkdown(markdown, debug && debug.video_id);
+      if (fold) {
+        const show = Boolean(markdown);
+        fold.hidden = !show;
+        if (show && !fold.dataset.seen) {
+          fold.open = true;
+          fold.dataset.seen = "1";
+        }
+      }
       const focused = document.activeElement === promptEl;
       if (!keepPrompt && !summaryPromptDirty && !focused && summary.prompt) {
         promptEl.value = summary.prompt;
       }
     }
 
-    function renderSummaryMarkdown(text, videoId) {
+    function paintExtracted(markdown, videoId) {
+      const output = document.getElementById("extracted-output");
+      if (!output) return;
+      output.innerHTML = renderNoteMarkdown(markdown, videoId) || `<div class="empty">No extracted note yet.</div>`;
+    }
+
+    function renderNoteMarkdown(text, videoId) {
       if (!text) return "";
       let html = esc(text);
-      html = html.replace(/!\[\[attachments\/([^/\]]+)\/([^\]]+)\]\]/g, (_, vid, file) => summaryImage(vid, file));
+      html = html.replace(/!?\[\[(?:attachments\/([^/\]]+)\/)?([^\]|]+)(?:\|[^\]]*)?\]\]/g, (_, vid, file) => {
+        return noteImage(vid || videoId, file);
+      });
       html = html.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_, alt, file) => {
         const name = String(file).split("/").pop();
-        return summaryImage(videoId, name, alt);
+        return noteImage(videoId, name, alt);
       });
       html = html.replace(/^### (.+)$/gm, "<h3>$1</h3>");
       html = html.replace(/^## (.+)$/gm, "<h2>$1</h2>");
@@ -608,12 +655,11 @@
       return html;
     }
 
-    function summaryImage(videoId, filename, alt) {
+    function noteImage(videoId, filename, alt) {
       const name = String(filename || "").split("/").pop();
       const label = esc(alt || name);
-      const key = `/v1/videos/${encodeURIComponent(videoId)}/frames/keyframes/${encodeURIComponent(name)}`;
-      const cand = `/v1/videos/${encodeURIComponent(videoId)}/frames/candidate_frames/${encodeURIComponent(name)}`;
-      return `<img src="${key}" alt="${label}" onerror="this.onerror=null;this.src='${cand}'" />`;
+      const src = `/v1/videos/${encodeURIComponent(videoId)}/attachments/${encodeURIComponent(name)}`;
+      return `<img src="${src}" alt="${label}" />`;
     }
 
     async function api(path, options) {

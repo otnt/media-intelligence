@@ -271,6 +271,8 @@ def test_dashboard_and_frame_override(tmp_path: Path):
     assert "Qwen3.8 frame filter" in home.text
     assert "vlm_keep_threshold" in home.text
     assert "Generate summary" in home.text
+    assert "Extracted contents" in home.text
+    assert "fold-frames" in home.text
     assert "Extract keyframes" in home.text
     assert "Transcript only" in home.text
     assert "Keyframes on" in home.text
@@ -307,6 +309,32 @@ def test_dashboard_and_frame_override(tmp_path: Path):
     assert started.json()["status"] == "running"
     assert started.json()["prompt"] == "一句话概括"
     assert worker.summarized == [(task_id, "一句话概括")]
+
+
+def test_attachment_endpoint_serves_vault_and_video_images(tmp_path: Path):
+    config = AppConfig(
+        paths=PathsConfig(
+            videos=tmp_path / "videos",
+            audio=tmp_path / "audio",
+            artifacts=tmp_path / "artifacts",
+            logs=tmp_path / "logs",
+            vault=tmp_path / "vault",
+            db=tmp_path / "tasks.sqlite3",
+        )
+    )
+    config.ensure_directories()
+    note_dir = config.notes_dir()
+    assert note_dir is not None
+    attachment_dir = note_dir / "attachments" / "note123"
+    attachment_dir.mkdir(parents=True)
+    image = attachment_dir / "01.jpg"
+    image.write_bytes(b"jpeg-bytes")
+    client = TestClient(create_app(config, store=TaskStore(config.paths.db), worker=DummyWorker()))
+    response = client.get("/v1/videos/note123/attachments/01.jpg")
+    assert response.status_code == 200
+    assert response.content == b"jpeg-bytes"
+    missing = client.get("/v1/videos/note123/attachments/missing.jpg")
+    assert missing.status_code == 404
 
 
 def test_update_worker_limits(tmp_path: Path):

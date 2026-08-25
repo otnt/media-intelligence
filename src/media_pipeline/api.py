@@ -15,6 +15,7 @@ from media_pipeline.asr.registry import list_models
 from media_pipeline.config import AppConfig, persist_worker_config
 from media_pipeline.media import UnsupportedURLError, canonicalize_url, parse_video_ref
 from media_pipeline.models import ASR_MODELS, Task, TaskStatus, asr_label
+from media_pipeline.notes import load_note
 from media_pipeline.pipeline import RERUN_STAGES
 from media_pipeline.stage_timing import merge_stage_timings
 from media_pipeline.store import TaskStore
@@ -197,8 +198,10 @@ def create_app(config: AppConfig, store: TaskStore | None = None, worker: TaskWo
             if not payload.get("selected_count"):
                 payload["selected_count"] = int(summary.get("selected_count") or 0)
             payload["summary"] = _public_summary(task, artifacts, worker)
+            payload["extracted_markdown"] = _extracted_markdown(task, config, artifacts)
         else:
             payload["summary"] = idle_summary()
+            payload["extracted_markdown"] = ""
         return payload
 
     @app.get("/v1/tasks/{task_id}/summary")
@@ -250,6 +253,15 @@ def create_app(config: AppConfig, store: TaskStore | None = None, worker: TaskWo
         path = config.paths.artifacts / video_id / kind / filename
         if not path.exists():
             raise HTTPException(status_code=404, detail="Frame not found")
+        return FileResponse(path)
+
+    @app.get("/v1/videos/{video_id}/attachments/{filename}")
+    def get_attachment(video_id: str, filename: str):
+        if Path(filename).name != filename:
+            raise HTTPException(status_code=400, detail="Invalid filename")
+        path = _attachment_path(config, video_id, filename)
+        if path is None:
+            raise HTTPException(status_code=404, detail="Attachment not found")
         return FileResponse(path)
 
     @app.post("/v1/videos/{video_id}/frames/{filename}/decision")
@@ -320,6 +332,47 @@ def _public_summary(task: Task, artifacts: ArtifactStore, worker: object) -> dic
     payload.setdefault("image_count", 0)
     payload.setdefault("updated_at", "")
     return payload
+
+
+def _extracted_markdown(task: Task, config: AppConfig, artifacts: ArtifactStore) -> str:
+    if task.note_path:
+        path = Path(task.note_path)
+        if path.exists():
+            document = load_note(path, rewrite_layout=True)
+            return document.transcript_markdown.strip()
+    named = artifacts.load_named() or []
+    if not named:
+        return ""
+    from media_pipeline.transcript import render_transcript
+    from media_pipeline.visual.filtering import caption_for, selected_from_verdicts
+
+    keyframes = artifacts.load_keyframes() or []
+    analysis = artifacts.load_frame_analysis() or []
+    chosen = selected_from_verdicts(keyframes, analysis) if analysis else keyframes
+    frames = [(frame.timestamp, frame.image_path, caption_for(frame, analysis)) for frame in chosen]
+    return render_transcript(named, video_id=task.video_id, frames=frames).strip()
+
+
+def _attachment_path(config: AppConfig, video_id: str, filename: str) -> Path | None:
+    name = Path(filename).name
+    if not name or name != filename:
+        return None
+    artifacts = ArtifactStore(config.paths.artifacts, video_id)
+    directories = [
+        artifacts.keyframe_dir,
+        artifacts.candidate_dir,
+        config.paths.videos / video_id,
+    ]
+    notes_dir = config.notes_dir()
+    if notes_dir is not None:
+        directories.append(notes_dir / "attachments" / video_id)
+    if config.paths.vault is not None:
+        directories.append(config.paths.vault / "attachments" / video_id)
+    for directory in directories:
+        path = directory / name
+        if path.is_file() and path.stat().st_size > 0:
+            return path
+    return None
 
 
 def _validate_model(model_id: str) -> None:

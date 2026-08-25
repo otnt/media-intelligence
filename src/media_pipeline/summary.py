@@ -52,6 +52,10 @@ def extract_summary_section(body: str) -> str:
     return re.sub(r"^## Summary\s*", "", match.group(0)).strip()
 
 
+def strip_summary_section(body: str) -> str:
+    return _SUMMARY_BLOCK.sub("", body or "").strip()
+
+
 def upsert_summary_section(body: str, summary: str) -> str:
     block = "## Summary\n\n" + (summary or "").strip() + "\n"
     text = body or ""
