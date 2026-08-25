@@ -2,15 +2,59 @@ from __future__ import annotations
 
 import gc
 import logging
+import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future
 from pathlib import Path
+from queue import SimpleQueue
 
 from media_pipeline.config import AnalysisConfig, AppConfig
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_VLM_MODEL = "mlx-community/Qwen3.8-27B-4bit"
+
+
+class _MlxSerialLoop:
+    """Run MLX work on one daemon thread that is never joined or stopped.
+
+    Python 3.13 aborts with `PyThreadState_Get` / exit 133 when a thread that
+    touched MLX Metal exits. `ThreadPoolExecutor` joins its workers in atexit,
+    which is exactly that abort. This loop parks forever instead.
+    """
+
+    def __init__(self) -> None:
+        self._jobs: SimpleQueue[tuple[Future, object, tuple]] = SimpleQueue()
+        self._thread = threading.Thread(target=self._run, name="mlx-vlm", daemon=True)
+        self._thread.start()
+
+    def call(self, fn, *args):
+        if threading.current_thread() is self._thread:
+            return fn(*args)
+        future: Future = Future()
+        self._jobs.put((future, fn, args))
+        return future.result()
+
+    def _run(self) -> None:
+        while True:
+            future, fn, args = self._jobs.get()
+            if future.set_running_or_notify_cancel():
+                try:
+                    future.set_result(fn(*args))
+                except BaseException as exc:
+                    future.set_exception(exc)
+
+
+_LOOP: _MlxSerialLoop | None = None
+_LOOP_LOCK = threading.Lock()
+
+
+def _mlx_loop() -> _MlxSerialLoop:
+    global _LOOP
+    with _LOOP_LOCK:
+        if _LOOP is None:
+            _LOOP = _MlxSerialLoop()
+        return _LOOP
 
 
 class VisionProvider:
@@ -53,7 +97,6 @@ class MlxVlmProvider(VisionProvider):
         self._model = None
         self._processor = None
         self._config = None
-        self._executor: ThreadPoolExecutor | None = None
 
     @property
     def loaded(self) -> bool:
@@ -63,7 +106,7 @@ class MlxVlmProvider(VisionProvider):
         self._on_thread(self._load_sync)
 
     def unload(self) -> None:
-        if self._executor is None and self._model is None:
+        if self._model is None:
             return
         try:
             self._on_thread(self._unload_sync)
@@ -72,21 +115,12 @@ class MlxVlmProvider(VisionProvider):
 
     def close(self) -> None:
         self.unload()
-        executor = self._executor
-        self._executor = None
-        if executor is not None:
-            executor.shutdown(wait=False)
 
     def judge(self, image_path: Path, prompt: str) -> str:
         return str(self._on_thread(self._judge_sync, image_path, prompt))
 
-    def _ensure_executor(self) -> ThreadPoolExecutor:
-        if self._executor is None:
-            self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mlx-vlm")
-        return self._executor
-
     def _on_thread(self, fn, *args):
-        return self._ensure_executor().submit(fn, *args).result()
+        return _mlx_loop().call(fn, *args)
 
     def _load_sync(self) -> None:
         if self._model is not None:

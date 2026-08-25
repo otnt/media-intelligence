@@ -140,6 +140,11 @@ class Pipeline:
         logger.info("Task %s completed with %s", task.id, asr_label(task.asr_model))
         return task
 
+    def close(self) -> None:
+        closer = getattr(self.vision, "close", None)
+        if callable(closer):
+            closer()
+
     def _fetch_metadata(self, task: Task) -> VideoMetadata:
         self._set_status(task, TaskStatus.fetching_metadata)
         video_id = task.video_id

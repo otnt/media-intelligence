@@ -203,7 +203,11 @@ def cmd_transcribe(config: AppConfig, url: str, asr_model: str | None, language:
     print(f"ASR:  {asr_label(model_id)}")
     print(f"Language: {task.extra['language']}")
     print(f"URL:  {task.url}")
-    result = Pipeline(config, store).run(task)
+    pipeline = Pipeline(config, store)
+    try:
+        result = pipeline.run(task)
+    finally:
+        pipeline.close()
     print()
     print(f"Status: {result.status.value}")
     if result.note_path:
@@ -245,7 +249,11 @@ def cmd_retry(config: AppConfig, task_id: str, asr_model: str | None, stage: str
     task.error = ""
     task.error_stage = ""
     store.update(task)
-    result = Pipeline(config, store).run(task)
+    pipeline = Pipeline(config, store)
+    try:
+        result = pipeline.run(task)
+    finally:
+        pipeline.close()
     print(json.dumps(result.to_public(), ensure_ascii=False, indent=2))
     return 0 if result.status.value == "completed" else 1
 
