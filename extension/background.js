@@ -33,6 +33,7 @@ async function handle(message) {
         url: message.url,
         asr_model: message.asr_model,
         language: message.language || "auto",
+        extract_keyframes: Boolean(message.extract_keyframes),
       }),
     });
   }

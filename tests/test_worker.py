@@ -150,6 +150,32 @@ def test_raising_youtube_limit_starts_waiting_job(tmp_path: Path, monkeypatch):
         worker.stop()
 
 
+def test_retry_visual_stage_enables_keyframes(tmp_path: Path):
+    config = _config(tmp_path)
+    store = TaskStore(config.paths.db)
+    worker = TaskWorker(config, store)
+    task = store.insert(_task("t-visual", "YouTube"))
+    assert not task.extra.get("extract_keyframes")
+    worker.retry(task, stage="detecting_scenes")
+    stored = store.get("t-visual")
+    assert stored is not None
+    assert stored.extra["extract_keyframes"] is True
+    assert stored.extra["rerun_stage"] == "detecting_scenes"
+    assert stored.status == TaskStatus.queued
+
+
+def test_retry_asr_stage_keeps_keyframes_off(tmp_path: Path):
+    config = _config(tmp_path)
+    store = TaskStore(config.paths.db)
+    worker = TaskWorker(config, store)
+    task = store.insert(_task("t-asr", "YouTube"))
+    worker.retry(task, stage="transcribing")
+    stored = store.get("t-asr")
+    assert stored is not None
+    assert not stored.extra.get("extract_keyframes")
+    assert stored.extra["rerun_stage"] == "transcribing"
+
+
 def test_worker_unloads_idle_vision(tmp_path: Path):
     class FakeVision:
         name = "fake"

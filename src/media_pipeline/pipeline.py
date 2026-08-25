@@ -48,6 +48,15 @@ RERUN_STAGES = frozenset(
         "all",
     }
 )
+VISUAL_RERUN_STAGES = frozenset(
+    {
+        "detecting_scenes",
+        "sampling_frames",
+        "deduplicating_frames",
+        "filtering_frames",
+        "aligning_multimodal",
+    }
+)
 
 
 class PipelineError(RuntimeError):
@@ -128,7 +137,15 @@ class Pipeline:
         task.extra["segment_count"] = len(named)
         self.store.update(task)
 
-        visual_result = self._extract_visual(task, metadata, artifacts, video_path, named, from_stage)
+        visual_result: dict = {}
+        if _wants_keyframes(task, from_stage):
+            visual_result = self._extract_visual(task, metadata, artifacts, video_path, named, from_stage)
+        else:
+            task.extra.setdefault("extract_keyframes", False)
+            task.extra["candidate_count"] = 0
+            task.extra["keyframe_count"] = 0
+            task.extra["selected_count"] = 0
+            self.store.update(task)
         self._write_outputs(task, metadata, artifacts, named, visual_result)
         task.status = TaskStatus.completed
         task.error = ""
@@ -469,6 +486,13 @@ def _media_destination(config: AppConfig, metadata: VideoMetadata) -> Path:
     if metadata.media_kind == "image":
         return config.paths.videos / metadata.video_id
     return config.paths.videos / f"{metadata.video_id}.mp4"
+
+
+def _wants_keyframes(task: Task, from_stage: str = "") -> bool:
+    if from_stage in VISUAL_RERUN_STAGES:
+        task.extra["extract_keyframes"] = True
+        return True
+    return bool(task.extra.get("extract_keyframes"))
 
 
 def _asr_context(metadata: VideoMetadata) -> str:

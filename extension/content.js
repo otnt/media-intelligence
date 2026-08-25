@@ -111,6 +111,14 @@ function inject(force = false) {
         <p class="title">✨ Save &amp; Transcribe</p>
         <div class="section">ASR Model</div>
         <div id="model-list"></div>
+        <div class="section">Visual</div>
+        <label class="option">
+          <input type="checkbox" id="keyframes">
+          <span>
+            <span class="label">Extract keyframes</span>
+            <div class="runtime">Optional and slow. Adds stills to the note.</div>
+          </span>
+        </label>
         <button class="start" type="button" id="start">Start</button>
         <div class="status" id="status"></div>
       </div>
@@ -124,6 +132,13 @@ function wire(shadow, host) {
   const toggle = shadow.getElementById("toggle");
   const panel = shadow.getElementById("panel");
   const start = shadow.getElementById("start");
+  const keyframes = shadow.getElementById("keyframes");
+  chrome.storage.local.get(["extractKeyframes"], (stored) => {
+    keyframes.checked = Boolean(stored.extractKeyframes);
+  });
+  keyframes.addEventListener("change", () => {
+    chrome.storage.local.set({ extractKeyframes: keyframes.checked });
+  });
   toggle.addEventListener("click", (event) => {
     event.preventDefault();
     event.stopPropagation();
@@ -167,10 +182,12 @@ async function submitTask(shadow, start) {
   status.className = "status";
   status.textContent = "Submitting…";
   start.disabled = true;
+  const keyframes = Boolean(shadow.getElementById("keyframes")?.checked);
   const response = await mdpSend({
     type: "CREATE_TASK",
     url: location.href,
     asr_model: selectedModel,
+    extract_keyframes: keyframes,
   });
   start.disabled = false;
   if (!response.ok) {
@@ -178,7 +195,7 @@ async function submitTask(shadow, start) {
     status.textContent = response.error || "Could not add the task.";
     return;
   }
-  chrome.storage.local.set({ asrModel: selectedModel });
+  chrome.storage.local.set({ asrModel: selectedModel, extractKeyframes: keyframes });
   status.className = "status ok";
-  status.textContent = `✓ Added to queue\nASR: ${response.asr_label || selectedModel}`;
+  status.textContent = `✓ Added to queue\nASR: ${response.asr_label || selectedModel}${keyframes ? "\nKeyframes: on" : ""}`;
 }

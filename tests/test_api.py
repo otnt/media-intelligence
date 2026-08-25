@@ -189,6 +189,64 @@ def test_create_task_accepts_explicit_language(tmp_path: Path):
     assert stored.asr_model == "qwen3-asr-1.7b"
 
 
+def test_create_task_defaults_keyframes_off(tmp_path: Path):
+    config = AppConfig(
+        paths=PathsConfig(
+            videos=tmp_path / "videos",
+            audio=tmp_path / "audio",
+            artifacts=tmp_path / "artifacts",
+            logs=tmp_path / "logs",
+            vault=tmp_path / "vault",
+            db=tmp_path / "tasks.sqlite3",
+        )
+    )
+    config.ensure_directories()
+    store = TaskStore(config.paths.db)
+    client = TestClient(create_app(config, store=store, worker=DummyWorker()))
+    response = client.post(
+        "/v1/tasks",
+        json={"url": "https://www.bilibili.com/video/BV181KNeuEi2", "asr_model": "whisper-large-v3-turbo"},
+    )
+    assert response.status_code == 202
+    payload = response.json()
+    assert payload["extract_keyframes"] is False
+    stored = store.get(payload["id"])
+    assert stored is not None
+    assert stored.extra["extract_keyframes"] is False
+    listed = client.get("/v1/tasks").json()["tasks"][0]
+    assert listed["extract_keyframes"] is False
+
+
+def test_create_task_accepts_extract_keyframes(tmp_path: Path):
+    config = AppConfig(
+        paths=PathsConfig(
+            videos=tmp_path / "videos",
+            audio=tmp_path / "audio",
+            artifacts=tmp_path / "artifacts",
+            logs=tmp_path / "logs",
+            vault=tmp_path / "vault",
+            db=tmp_path / "tasks.sqlite3",
+        )
+    )
+    config.ensure_directories()
+    store = TaskStore(config.paths.db)
+    client = TestClient(create_app(config, store=store, worker=DummyWorker()))
+    response = client.post(
+        "/v1/tasks",
+        json={
+            "url": "https://www.bilibili.com/video/BV181KNeuEi2",
+            "asr_model": "whisper-large-v3-turbo",
+            "extract_keyframes": True,
+        },
+    )
+    assert response.status_code == 202
+    payload = response.json()
+    assert payload["extract_keyframes"] is True
+    stored = store.get(payload["id"])
+    assert stored is not None
+    assert stored.extra["extract_keyframes"] is True
+
+
 def test_dashboard_and_frame_override(tmp_path: Path):
     config = AppConfig(
         paths=PathsConfig(
@@ -213,6 +271,9 @@ def test_dashboard_and_frame_override(tmp_path: Path):
     assert "Qwen3.8 frame filter" in home.text
     assert "vlm_keep_threshold" in home.text
     assert "Generate summary" in home.text
+    assert "Extract keyframes" in home.text
+    assert "Transcript only" in home.text
+    assert "Keyframes on" in home.text
     assert "提取这个文章的核心思想" in home.text
     visual = client.get("/v1/visual/config").json()
     assert visual["visual"]["vlm_keep_threshold"] == 0.45

@@ -14,6 +14,17 @@ def test_transcribe_rejects_unknown_model(capsys):
     assert "Unknown ASR model" in err
 
 
+def test_transcribe_help_documents_keyframes_flag(capsys):
+    try:
+        main(["transcribe", "-h"])
+    except SystemExit as exc:
+        assert exc.code == 0
+    out = capsys.readouterr().out
+    assert "--keyframes" in out
+    assert "slow" in out
+    assert "default" in out
+
+
 def test_doctor_reports_qwen_analysis(capsys):
     cmd_doctor(AppConfig())
     out = capsys.readouterr().out

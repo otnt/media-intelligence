@@ -35,6 +35,11 @@ def main(argv: list[str] | None = None) -> int:
         default="auto",
         help="auto (multilingual detect) or a language such as zh, en, Chinese, English",
     )
+    transcribe.add_argument(
+        "--keyframes",
+        action="store_true",
+        help="Extract stills and run the visual pipeline (slow; off by default)",
+    )
     transcribe.add_argument("--config", type=Path, default=None)
 
     retry = sub.add_parser("retry", help="Re-queue a task, reusing downloaded artifacts")
@@ -66,7 +71,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "doctor":
         return cmd_doctor(config)
     if args.command == "transcribe":
-        return cmd_transcribe(config, args.url, args.asr_model, args.language)
+        return cmd_transcribe(config, args.url, args.asr_model, args.language, args.keyframes)
     if args.command == "retry":
         return cmd_retry(config, args.task_id, args.asr_model, getattr(args, "stage", None))
     if args.command == "status":
@@ -162,7 +167,13 @@ def cmd_doctor(config: AppConfig) -> int:
     return 0 if failed == 0 else 1
 
 
-def cmd_transcribe(config: AppConfig, url: str, asr_model: str | None, language: str | None = "auto") -> int:
+def cmd_transcribe(
+    config: AppConfig,
+    url: str,
+    asr_model: str | None,
+    language: str | None = "auto",
+    extract_keyframes: bool = False,
+) -> int:
     import uuid
 
     from media_pipeline.media import UnsupportedURLError, canonicalize_url, parse_video_ref
@@ -196,12 +207,16 @@ def cmd_transcribe(config: AppConfig, url: str, asr_model: str | None, language:
         status=TaskStatus.queued,
         platform=platform,
         video_id=video_id,
-        extra={"language": language or config.asr.language or "auto"},
+        extra={
+            "language": language or config.asr.language or "auto",
+            "extract_keyframes": bool(extract_keyframes),
+        },
     )
     store.insert(task)
     print(f"Task: {task.id}")
     print(f"ASR:  {asr_label(model_id)}")
     print(f"Language: {task.extra['language']}")
+    print(f"Keyframes: {'on' if extract_keyframes else 'off'}")
     print(f"URL:  {task.url}")
     pipeline = Pipeline(config, store)
     try:
@@ -225,7 +240,7 @@ def cmd_transcribe(config: AppConfig, url: str, asr_model: str | None, language:
 def cmd_retry(config: AppConfig, task_id: str, asr_model: str | None, stage: str | None = None) -> int:
     from media_pipeline.artifacts import ArtifactStore
     from media_pipeline.models import TaskStatus
-    from media_pipeline.pipeline import Pipeline
+    from media_pipeline.pipeline import VISUAL_RERUN_STAGES, Pipeline
     from media_pipeline.stage_timing import clear_invalidated_timings
     from media_pipeline.store import TaskStore
 
@@ -242,6 +257,8 @@ def cmd_retry(config: AppConfig, task_id: str, asr_model: str | None, stage: str
         task.asr_model = asr_model
     if stage:
         task.extra["rerun_stage"] = stage
+        if stage in VISUAL_RERUN_STAGES:
+            task.extra["extract_keyframes"] = True
         clear_invalidated_timings(task.extra, stage)
         if task.video_id:
             ArtifactStore(config.paths.artifacts, task.video_id).clear_invalidated_timings(stage)

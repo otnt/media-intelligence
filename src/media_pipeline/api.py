@@ -29,6 +29,7 @@ class CreateTaskRequest(BaseModel):
     url: str
     asr_model: str = Field(min_length=1)
     language: str | None = None
+    extract_keyframes: bool = False
 
 
 class RetryTaskRequest(BaseModel):
@@ -151,7 +152,10 @@ def create_app(config: AppConfig, store: TaskStore | None = None, worker: TaskWo
             status=TaskStatus.queued,
             platform=platform,
             video_id=video_id,
-            extra={"language": payload.language or config.asr.language or "auto"},
+            extra={
+                "language": payload.language or config.asr.language or "auto",
+                "extract_keyframes": bool(payload.extract_keyframes),
+            },
         )
         store.insert(task)
         worker.submit(task)
@@ -161,6 +165,7 @@ def create_app(config: AppConfig, store: TaskStore | None = None, worker: TaskWo
             "asr_model": task.asr_model,
             "asr_label": asr_label(task.asr_model),
             "language": task.extra["language"],
+            "extract_keyframes": bool(task.extra.get("extract_keyframes")),
             "message": "Added to queue",
         }
 
@@ -276,14 +281,17 @@ def _enrich_task(task: Task, config: AppConfig) -> dict[str, Any]:
     if not task.video_id:
         return payload
     artifacts = ArtifactStore(config.paths.artifacts, task.video_id)
-    if not payload.get("candidate_count"):
-        payload["candidate_count"] = len(artifacts.load_candidates() or [])
-    if not payload.get("keyframe_count"):
-        payload["keyframe_count"] = len(artifacts.load_keyframes() or [])
-    if not payload.get("selected_count"):
-        analysis = artifacts.load_frame_analysis()
-        if analysis is not None:
-            payload["selected_count"] = sum(1 for item in analysis if item.kept)
+    if "extract_keyframes" not in (task.extra or {}) and artifacts.keyframes_path.exists():
+        payload["extract_keyframes"] = True
+    if payload.get("extract_keyframes"):
+        if not payload.get("candidate_count"):
+            payload["candidate_count"] = len(artifacts.load_candidates() or [])
+        if not payload.get("keyframe_count"):
+            payload["keyframe_count"] = len(artifacts.load_keyframes() or [])
+        if not payload.get("selected_count"):
+            analysis = artifacts.load_frame_analysis()
+            if analysis is not None:
+                payload["selected_count"] = sum(1 for item in analysis if item.kept)
     if not payload.get("segment_count"):
         payload["segment_count"] = len(artifacts.load_named() or [])
     payload["has_multimodal"] = artifacts.multimodal_path.exists()

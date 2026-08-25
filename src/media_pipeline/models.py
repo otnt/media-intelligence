@@ -288,6 +288,7 @@ class Task:
             "selected_count": int(self.extra.get("selected_count") or 0),
             "image_count": int(self.extra.get("image_count") or 0),
             "media_kind": str(self.extra.get("media_kind") or ""),
+            "extract_keyframes": _extract_keyframes_flag(self.extra),
             "visual": dict(self.extra.get("visual") or {}),
             "rerun_stage": str(self.extra.get("rerun_stage") or ""),
             "stage_timings": {
@@ -341,3 +342,10 @@ def frame_filename(seconds: float) -> str:
 
 def expand_path(value: str | Path) -> Path:
     return Path(value).expanduser().resolve()
+
+
+def _extract_keyframes_flag(extra: dict[str, Any] | None) -> bool:
+    payload = extra or {}
+    if "extract_keyframes" in payload:
+        return bool(payload.get("extract_keyframes"))
+    return int(payload.get("keyframe_count") or 0) > 0

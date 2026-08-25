@@ -158,7 +158,7 @@
       <div class="list" id="tasks"></div>
     </aside>
     <main class="main" id="main">
-      <div class="empty">Select a task to inspect candidates, keyframes, and rerun stages.</div>
+      <div class="empty">Select a task to inspect the transcript, optional keyframes, and rerun stages.</div>
     </main>
   </div>
   <script>
@@ -254,7 +254,9 @@
       tasks = data.tasks || [];
       tasksEl.innerHTML = tasks.map((task) => {
         const title = task.title || task.video_id || task.url;
-        const counts = `${task.segment_count || 0} segs · ${task.candidate_count || 0} cand · ${task.keyframe_count || 0} keys`;
+        const counts = task.media_kind === "image"
+          ? `${task.image_count || 0} images`
+          : `${task.segment_count || 0} segs · ${task.extract_keyframes ? (task.keyframe_count || 0) + " keys" : "transcript"}`;
         return `<button class="task ${task.id === selectedId ? "active" : ""}" data-id="${task.id}">
           <div class="title">${esc(title)}</div>
           <div class="meta">${esc(task.status)} · ${esc(task.platform || "")} · ${esc(counts)}</div>
@@ -343,6 +345,7 @@
           <span class="chip" id="task-status">${esc(task.status)}</span>
           <span class="chip">${esc(task.asr_label || task.asr_model)}</span>
           <span class="chip">${esc(task.platform)} ${esc(task.video_id)}</span>
+          <span class="chip">${esc(task.media_kind === "image" ? "Images" : (task.extract_keyframes ? "Keyframes on" : "Transcript only"))}</span>
           <span class="chip">${task.segment_count || 0} transcript segments</span>
           <span class="chip">${task.candidate_count || 0} candidates</span>
           <span class="chip">${task.keyframe_count || 0} keyframes</span>
@@ -375,6 +378,7 @@
           </div>
           <div class="actions">
             <button class="btn primary" id="rerun">Queue rerun</button>
+            ${task.extract_keyframes || task.media_kind === "image" ? "" : `<button class="btn" id="extract-keyframes">Extract keyframes</button>`}
           </div>
         </div>
         <div class="panel" id="summary-panel">
@@ -393,6 +397,8 @@
         <div class="grid" id="gallery"></div>
       `;
       document.getElementById("rerun").onclick = rerun;
+      const extractBtn = document.getElementById("extract-keyframes");
+      if (extractBtn) extractBtn.onclick = extractKeyframes;
       document.getElementById("summarize").onclick = summarize;
       const promptEl = document.getElementById("summary-prompt");
       summaryPromptDirty = false;
@@ -520,6 +526,15 @@
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ stage: stage || "deduplicating_frames" }),
+      });
+      await openTask(debug.id);
+    }
+
+    async function extractKeyframes() {
+      await api(`/v1/tasks/${debug.id}/retry`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ stage: "detecting_scenes" }),
       });
       await openTask(debug.id);
     }

@@ -11,7 +11,7 @@ from media_pipeline.models import (
     TranscriptSegment,
     VideoMetadata,
 )
-from media_pipeline.pipeline import RERUN_STAGES, Pipeline
+from media_pipeline.pipeline import RERUN_STAGES, VISUAL_RERUN_STAGES, Pipeline
 from media_pipeline.store import TaskStore
 
 
@@ -122,6 +122,7 @@ def test_pipeline_reuses_download_and_audio(tmp_path: Path, monkeypatch):
             url=metadata.url,
             asr_model="whisper-large-v3-turbo",
             video_id="BVxxxx",
+            extra={"extract_keyframes": True, "language": "auto"},
         )
     )
     result = pipeline.run(first)
@@ -154,6 +155,7 @@ def test_pipeline_reuses_download_and_audio(tmp_path: Path, monkeypatch):
             url=metadata.url,
             asr_model="whisper-large-v3-turbo",
             video_id="BVxxxx",
+            extra={"extract_keyframes": True},
         )
     )
     reused = pipeline.run(second)
@@ -194,6 +196,127 @@ def test_pipeline_writes_failure_note_when_metadata_fails(tmp_path: Path, monkey
 def test_rerun_stages_include_frame_filter():
     assert "filtering_frames" in RERUN_STAGES
     assert "deduplicating_frames" in RERUN_STAGES
+    assert "detecting_scenes" in VISUAL_RERUN_STAGES
+    assert "all" not in VISUAL_RERUN_STAGES
+
+
+def test_pipeline_skips_keyframes_by_default(tmp_path: Path, monkeypatch):
+    config = _config(tmp_path)
+    store = TaskStore(config.paths.db)
+    asr = FakeASR()
+    metadata = VideoMetadata(
+        url="https://www.bilibili.com/video/BVxxxx",
+        title="Talk only",
+        platform="Bilibili",
+        author="Example Author",
+        video_id="BVxxxx",
+        duration=24.0,
+        published="2026-08-01",
+        description="",
+        thumbnail_url="",
+        asr_model="whisper-large-v3-turbo",
+    )
+
+    def fake_fetch(url, asr_model, cfg):
+        return metadata
+
+    def fake_download(url, video_id, dest_dir, cfg):
+        path = dest_dir / f"{video_id}.mp4"
+        path.write_bytes(b"video")
+        return path
+
+    def fake_extract(video_path, audio_path):
+        audio_path.write_bytes(b"audio")
+        return audio_path
+
+    monkeypatch.setattr("media_pipeline.pipeline.fetch_metadata", fake_fetch)
+    monkeypatch.setattr("media_pipeline.pipeline.download_video", fake_download)
+    monkeypatch.setattr("media_pipeline.pipeline.extract_audio", fake_extract)
+    monkeypatch.setattr("media_pipeline.pipeline.require_provider", lambda model_id: asr)
+
+    visual = FakeVisual()
+    visual.run = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("visual"))
+    pipeline = Pipeline(config, store, diarization=NullDiarizationProvider(), visual=visual)
+    task = store.insert(
+        Task(
+            id="task-transcript",
+            url=metadata.url,
+            asr_model="whisper-large-v3-turbo",
+            video_id="BVxxxx",
+        )
+    )
+    result = pipeline.run(task)
+    assert result.status == TaskStatus.completed
+    assert asr.calls == 1
+    assert result.extra.get("extract_keyframes") is False
+    note = Path(result.note_path).read_text(encoding="utf-8")
+    assert "### [00:00:00] Speaker 1" in note
+    assert "00-00-01.000.jpg" not in note
+    assert not ArtifactStore(config.paths.artifacts, "BVxxxx").multimodal_path.exists()
+    timings = result.extra.get("stage_timings") or {}
+    assert "detecting_scenes" not in timings
+    assert timings["writing_outputs"]["status"] == "succeeded"
+
+
+def test_pipeline_enables_keyframes_when_rerunning_visual_stage(tmp_path: Path, monkeypatch):
+    config = _config(tmp_path)
+    store = TaskStore(config.paths.db)
+    asr = FakeASR()
+    metadata = VideoMetadata(
+        url="https://www.bilibili.com/video/BVxxxx",
+        title="Talk then stills",
+        platform="Bilibili",
+        author="Example Author",
+        video_id="BVxxxx",
+        duration=24.0,
+        published="2026-08-01",
+        description="",
+        thumbnail_url="",
+        asr_model="whisper-large-v3-turbo",
+    )
+
+    def fake_fetch(url, asr_model, cfg):
+        return metadata
+
+    def fake_download(url, video_id, dest_dir, cfg):
+        path = dest_dir / f"{video_id}.mp4"
+        path.write_bytes(b"video")
+        return path
+
+    def fake_extract(video_path, audio_path):
+        audio_path.write_bytes(b"audio")
+        return audio_path
+
+    monkeypatch.setattr("media_pipeline.pipeline.fetch_metadata", fake_fetch)
+    monkeypatch.setattr("media_pipeline.pipeline.download_video", fake_download)
+    monkeypatch.setattr("media_pipeline.pipeline.extract_audio", fake_extract)
+    monkeypatch.setattr("media_pipeline.pipeline.require_provider", lambda model_id: asr)
+
+    visual = FakeVisual()
+    calls = {"n": 0}
+    original = visual.run
+
+    def tracked(*args, **kwargs):
+        calls["n"] += 1
+        return original(*args, **kwargs)
+
+    visual.run = tracked
+    pipeline = Pipeline(config, store, diarization=NullDiarizationProvider(), visual=visual)
+    task = store.insert(
+        Task(
+            id="task-visual-rerun",
+            url=metadata.url,
+            asr_model="whisper-large-v3-turbo",
+            video_id="BVxxxx",
+            extra={"rerun_stage": "detecting_scenes"},
+        )
+    )
+    result = pipeline.run(task)
+    assert result.status == TaskStatus.completed
+    assert calls["n"] == 1
+    assert result.extra.get("extract_keyframes") is True
+    note = Path(result.note_path).read_text(encoding="utf-8")
+    assert "00-00-01.000.jpg" in note
 
 
 def test_pipeline_image_post_downloads_only(tmp_path: Path, monkeypatch):

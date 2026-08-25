@@ -9,12 +9,22 @@ let selectedModel = MDP_DEFAULT_MODEL;
 let models = MDP_FALLBACK_MODELS;
 let currentUrl = "";
 let serviceOk = false;
+let extractKeyframes = false;
 
 init();
 
 async function init() {
-  const stored = await chrome.storage.local.get(["asrModel"]);
+  const stored = await chrome.storage.local.get(["asrModel", "extractKeyframes"]);
   if (stored.asrModel) selectedModel = stored.asrModel;
+  extractKeyframes = Boolean(stored.extractKeyframes);
+  const keyframesEl = document.getElementById("keyframes");
+  if (keyframesEl) {
+    keyframesEl.checked = extractKeyframes;
+    keyframesEl.addEventListener("change", () => {
+      extractKeyframes = keyframesEl.checked;
+      chrome.storage.local.set({ extractKeyframes });
+    });
+  }
   await Promise.all([loadHealth(), loadTab(), loadModels(), loadTasks()]);
   renderModels();
   startEl.addEventListener("click", submitTask);
@@ -112,6 +122,7 @@ async function submitTask() {
     type: "CREATE_TASK",
     url: currentUrl,
     asr_model: selectedModel,
+    extract_keyframes: extractKeyframes,
   });
   updateStartEnabled();
   if (!response.ok) {
@@ -119,8 +130,8 @@ async function submitTask() {
     statusEl.textContent = response.error || "Could not add the task.";
     return;
   }
-  chrome.storage.local.set({ asrModel: selectedModel });
+  chrome.storage.local.set({ asrModel: selectedModel, extractKeyframes });
   statusEl.className = "status ok";
-  statusEl.textContent = `✓ Queued\nASR: ${response.asr_label || selectedModel}`;
+  statusEl.textContent = `✓ Queued\nASR: ${response.asr_label || selectedModel}${extractKeyframes ? "\nKeyframes: on" : ""}`;
   await loadTasks();
 }

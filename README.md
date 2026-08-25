@@ -1,17 +1,22 @@
 # Local Video → Obsidian Extraction Pipeline
 
 One-click capture from Bilibili, YouTube, and Xiaohongshu.
-The local service downloads the media, then for video posts extracts a timestamped speaker-aware transcript, representative keyframes, and writes an Obsidian note plus `multimodal.json`.
+The local service downloads the media, then for video posts extracts a timestamped speaker-aware transcript and writes an Obsidian note.
+Keyframe extraction is off by default because it is slow.
+Check **Extract keyframes** in the extension, pass `--keyframes` on the CLI, or click **Extract keyframes** on the dashboard to add stills and `multimodal.json`.
 Image/text Xiaohongshu posts are downloaded into the vault without ASR or visual extraction.
 
 ## What V1 does
 
 Open a Bilibili, YouTube, or Xiaohongshu page.
 Click **✨ Extract**.
-Choose an ASR model, then submit.
+Choose an ASR model.
+Leave **Extract keyframes** unchecked unless you want stills in the note.
+Then submit.
 The browser can be closed.
-Inspect progress and candidate frames at `http://127.0.0.1:8765/`.
-Later, the Obsidian vault contains metadata, transcript, and a visual timeline for videos, or the post text and images for Xiaohongshu image posts.
+Inspect progress at `http://127.0.0.1:8765/`.
+Later, the Obsidian vault contains metadata and a transcript for videos, or the post text and images for Xiaohongshu image posts.
+If you opted into keyframes, the note also includes a visual timeline.
 
 This stage is high-recall extraction, not summarization.
 
@@ -91,13 +96,16 @@ Transcribe one Bilibili, YouTube, or Xiaohongshu URL without the browser:
 ```bash
 uv run media-pipeline transcribe 'https://www.bilibili.com/video/BVxxxx'
 uv run media-pipeline transcribe 'http://xhslink.com/o/xxxxxxxx'
+uv run media-pipeline transcribe --keyframes 'https://www.bilibili.com/video/BVxxxx'
 ```
 
-Xiaohongshu video posts follow the same download → audio → ASR → visual path as Bilibili and YouTube.
+Xiaohongshu video posts follow the same download → audio → ASR path as Bilibili and YouTube.
+Pass `--keyframes` to also run scene detection, stills, and the visual timeline.
 Image/text posts are saved to `~/AIContent/videos/{note_id}/` and copied into the vault as wikilinked attachments.
 Xiaohongshu uses Chrome cookies (`download.cookies_from_browser`) and `curl-cffi` to fetch note pages.
 
-The command runs in the foreground, writes the Obsidian note as soon as metadata is available, then fills in the transcript and visual timeline.
+The command runs in the foreground and writes the Obsidian note as soon as metadata is available, then fills in the transcript.
+Visual stills are included only when `--keyframes` is set.
 The default ASR model is `qwen3-asr-1.7b` with `language: auto`, so mixed Chinese/English is kept when the model can hear it.
 Use `--asr-model whisper-large-v3-turbo` or `whisper-large-v3` to pick Whisper instead.
 
@@ -110,6 +118,7 @@ Use `--asr-model whisper-large-v3-turbo` or `whisper-large-v3` to pick Whisper i
 
 The button appears on Bilibili, YouTube, and Xiaohongshu post pages, including `xhslink.com` short links.
 The last ASR model you used is remembered.
+**Extract keyframes** stays off unless you check it; that choice is remembered too.
 
 ## Output
 
@@ -139,11 +148,16 @@ POST /v1/tasks
 {
   "url": "https://www.bilibili.com/video/BVxxxx",
   "asr_model": "qwen3-asr-1.7b",
-  "language": "auto"
+  "language": "auto",
+  "extract_keyframes": false
 }
 ```
 
+`extract_keyframes` defaults to `false`.
+Set it to `true` to run scene detection and stills after ASR.
+
 Task states for videos: `queued` → `fetching_metadata` → `downloading` → `extracting_audio` → `transcribing` → `diarizing` → `aligning` → `completed`.
+When keyframes are enabled, scene detection, frame sampling, and multimodal alignment run after the transcript is aligned.
 Xiaohongshu image posts skip audio and ASR and go from `downloading` to `writing_outputs` → `completed`.
 Any stage may transition to `failed`.
 
