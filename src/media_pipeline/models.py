@@ -217,6 +217,7 @@ class VideoMetadata:
     description: str
     thumbnail_url: str
     asr_model: str
+    media_kind: str = "video"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -234,6 +235,7 @@ class VideoMetadata:
             description=str(data.get("description") or ""),
             thumbnail_url=str(data.get("thumbnail_url") or ""),
             asr_model=str(data.get("asr_model") or ""),
+            media_kind=str(data.get("media_kind") or "video"),
         )
 
 
@@ -284,6 +286,8 @@ class Task:
             "candidate_count": int(self.extra.get("candidate_count") or 0),
             "keyframe_count": int(self.extra.get("keyframe_count") or 0),
             "selected_count": int(self.extra.get("selected_count") or 0),
+            "image_count": int(self.extra.get("image_count") or 0),
+            "media_kind": str(self.extra.get("media_kind") or ""),
             "visual": dict(self.extra.get("visual") or {}),
             "rerun_stage": str(self.extra.get("rerun_stage") or ""),
             "stage_timings": {

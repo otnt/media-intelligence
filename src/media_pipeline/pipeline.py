@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import shutil
 from contextlib import AbstractContextManager, contextmanager, nullcontext
 from pathlib import Path
 from typing import Iterator
@@ -107,6 +108,19 @@ class Pipeline:
         self._create_note(task, metadata, artifacts)
 
         video_path = self._download(task, metadata, artifacts)
+        task.extra["media_kind"] = metadata.media_kind
+        self.store.update(task)
+        if metadata.media_kind == "image":
+            self._write_image_post(task, metadata, artifacts, video_path)
+            task.status = TaskStatus.completed
+            task.error = ""
+            task.error_stage = ""
+            task.extra.pop("rerun_stage", None)
+            self.store.update(task)
+            if task.note_path:
+                self.notes.update_progress(Path(task.note_path), task, metadata)
+            logger.info("Task %s completed Xiaohongshu image post %s", task.id, metadata.video_id)
+            return task
         audio_path = self._extract_audio(task, metadata, video_path, artifacts)
         transcript = self._transcribe(task, metadata, artifacts, audio_path)
         diarization = self._diarize(task, artifacts, audio_path)
@@ -141,8 +155,9 @@ class Pipeline:
                 task.video_id = cached.video_id
                 task.platform = cached.platform
                 task.title = cached.title
+                task.extra["media_kind"] = cached.media_kind
                 if not task.video_path:
-                    task.video_path = str(self.config.paths.videos / f"{cached.video_id}.mp4")
+                    task.video_path = str(_media_destination(self.config, cached))
                 self.store.update(task)
                 return cached
         with self._stage(task, TaskStatus.fetching_metadata):
@@ -150,7 +165,8 @@ class Pipeline:
         task.video_id = metadata.video_id
         task.platform = metadata.platform
         task.title = metadata.title
-        task.video_path = str(self.config.paths.videos / f"{metadata.video_id}.mp4")
+        task.extra["media_kind"] = metadata.media_kind
+        task.video_path = str(_media_destination(self.config, metadata))
         self.store.update(task)
         return metadata
 
@@ -319,6 +335,32 @@ class Pipeline:
             if task.note_path:
                 self.notes.update_progress(Path(task.note_path), task, metadata, named, body=body)
 
+    def _write_image_post(
+        self,
+        task: Task,
+        metadata: VideoMetadata,
+        artifacts: ArtifactStore,
+        media_path: Path,
+    ) -> None:
+        from media_pipeline.xhs import find_xhs_images, render_image_post
+
+        with self._stage(task, TaskStatus.writing_outputs, metadata, artifacts):
+            images = find_xhs_images(media_path)
+            if not images:
+                raise PipelineError(TaskStatus.writing_outputs, "Xiaohongshu image files were not found")
+            names = [path.name for path in images]
+            notes_dir = self.config.notes_dir()
+            if notes_dir is not None:
+                attachment_dir = notes_dir / "attachments" / metadata.video_id
+                attachment_dir.mkdir(parents=True, exist_ok=True)
+                for image in images:
+                    shutil.copy2(image, attachment_dir / image.name)
+            body = render_image_post(metadata.video_id, metadata.description, names)
+            if task.note_path:
+                self.notes.update_progress(Path(task.note_path), task, metadata, body=body)
+            task.extra["image_count"] = len(images)
+            self.store.update(task)
+
     def _set_status(self, task: Task, status: TaskStatus, metadata: VideoMetadata | None = None) -> None:
         task.status = status
         self.store.update(task)
@@ -416,6 +458,12 @@ class Pipeline:
         if label:
             task.extra["detected_languages"] = label
         self.store.update(task)
+
+
+def _media_destination(config: AppConfig, metadata: VideoMetadata) -> Path:
+    if metadata.media_kind == "image":
+        return config.paths.videos / metadata.video_id
+    return config.paths.videos / f"{metadata.video_id}.mp4"
 
 
 def _asr_context(metadata: VideoMetadata) -> str:

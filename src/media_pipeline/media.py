@@ -46,7 +46,14 @@ def parse_video_ref(url: str) -> tuple[str, str]:
         if not video_id:
             raise UnsupportedURLError(f"Could not parse a Bilibili video id from {url}")
         return "Bilibili", video_id
-    raise UnsupportedURLError("Only Bilibili and YouTube URLs are supported in V1")
+    if host.endswith("xiaohongshu.com") or host in {"xhslink.com"}:
+        from media_pipeline.xhs import parse_xhs_ref
+
+        try:
+            return parse_xhs_ref(raw)
+        except ValueError as exc:
+            raise UnsupportedURLError(f"Could not parse a Xiaohongshu note id from {url}") from exc
+    raise UnsupportedURLError("Only Bilibili, YouTube, and Xiaohongshu URLs are supported")
 
 
 def canonicalize_url(url: str) -> str:
@@ -61,6 +68,10 @@ def canonicalize_url(url: str) -> str:
         return f"https://www.bilibili.com/video/{video_id}"
     if platform == "YouTube" and video_id:
         return f"https://www.youtube.com/watch?v={video_id}"
+    if platform == "Xiaohongshu":
+        from media_pipeline.xhs import canonicalize_xhs_url
+
+        return canonicalize_xhs_url(url, video_id)
     return url
 
 
@@ -105,6 +116,10 @@ def _bilibili_id(parsed) -> str:
 def fetch_metadata(url: str, asr_model: str, config: AppConfig) -> VideoMetadata:
     page_url = canonicalize_url(url)
     platform, fallback_id = _safe_parse(page_url)
+    if platform == "Xiaohongshu":
+        from media_pipeline.xhs import fetch_xhs_metadata
+
+        return fetch_xhs_metadata(page_url, asr_model, config)
     info = _yt_dlp_info(page_url, config, download=False)
     video_id = str(info.get("id") or fallback_id)
     extractor = str(info.get("extractor_key") or info.get("extractor") or "").lower()
@@ -144,6 +159,11 @@ def download_video(url: str, video_id: str, dest_dir: Path, config: AppConfig) -
         logger.info("Reusing downloaded video %s", existing)
         return existing
     page_url = canonicalize_url(url)
+    platform, _fallback = _safe_parse(page_url)
+    if platform == "Xiaohongshu":
+        from media_pipeline.xhs import download_xhs_post
+
+        return download_xhs_post(page_url, video_id, dest_dir, config)
     opts = _base_ydl_opts(config)
     opts.update(
         {
@@ -252,6 +272,12 @@ def find_media_file(directory: Path, video_id: str) -> Path | None:
     for match in matches:
         if match.is_file() and match.stat().st_size > 0:
             return match
+    folder = directory / video_id
+    if folder.is_dir():
+        from media_pipeline.xhs import find_xhs_images
+
+        if find_xhs_images(folder):
+            return folder
     return None
 
 

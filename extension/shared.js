@@ -25,6 +25,16 @@ function mdpIsSupportedVideoUrl(urlString) {
       return false;
     }
     if (host === "b23.tv") return url.pathname.replace(/\/$/, "").length > 1;
+    if (host === "xiaohongshu.com" || host.endsWith(".xiaohongshu.com")) {
+      const parts = url.pathname.split("/").filter(Boolean);
+      if (parts[0] === "explore" && parts[1]) return true;
+      if (parts[0] === "discovery" && parts[1] === "item" && parts[2]) return true;
+      if (parts[0] === "user" && parts[1] === "profile" && parts.length >= 4) return true;
+      return false;
+    }
+    if (host === "xhslink.com" || host.endsWith(".xhslink.com")) {
+      return url.pathname.replace(/\/$/, "").length > 1;
+    }
     return false;
   } catch (_error) {
     return false;

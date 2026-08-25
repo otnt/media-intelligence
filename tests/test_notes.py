@@ -50,3 +50,38 @@ def test_note_round_trip(tmp_path: Path):
     parsed = NoteDocument.parse(failed)
     assert parsed.fields["Author"] == "Example Author"
     assert parsed.fields["Duration"] == "24:31"
+    assert parsed.fields["Kind"] == "Video"
+
+
+def test_image_note_omits_asr_fields(tmp_path: Path):
+    metadata = VideoMetadata(
+        url="https://www.xiaohongshu.com/explore/64aaaaaaaaaaaaaaaaaaaaaa",
+        title="A walk",
+        platform="Xiaohongshu",
+        author="Nana",
+        video_id="64aaaaaaaaaaaaaaaaaaaaaa",
+        duration=None,
+        published="2026-08-01",
+        description="photos",
+        thumbnail_url="",
+        asr_model="qwen3-asr-1.7b",
+        media_kind="image",
+    )
+    task = Task(
+        id="t-img",
+        url=metadata.url,
+        asr_model="qwen3-asr-1.7b",
+        status=TaskStatus.completed,
+        video_id=metadata.video_id,
+        extra={"media_kind": "image"},
+        video_path="/tmp/64aaaaaaaaaaaaaaaaaaaaaa",
+    )
+    writer = NoteWriter(tmp_path)
+    path = writer.create_or_open(metadata, task)
+    text = path.read_text(encoding="utf-8")
+    assert "Kind: Image" in text
+    assert "ASR Model:" not in text
+    assert "Language Mode:" not in text
+    assert "Audio Path:" not in text
+    assert "Duration:" not in text
+

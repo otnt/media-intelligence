@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "media-pipeline"
 version = "0.1.0"
-description = "One-click Bilibili/YouTube save, transcribe, and Obsidian note pipeline."
+description = "One-click Bilibili/YouTube/Xiaohongshu save, transcribe, and Obsidian note pipeline."
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
 license = { text = "MIT" }
@@ -17,6 +17,7 @@ dependencies = [
   "yt-dlp>=2025.1.0",
   "pyyaml>=6.0.2",
   "pillow>=11.0.0",
+  "curl-cffi>=0.16.0",
 ]
 
 [project.optional-dependencies]

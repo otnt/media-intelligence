@@ -195,3 +195,60 @@ def test_rerun_stages_include_frame_filter():
     assert "filtering_frames" in RERUN_STAGES
     assert "deduplicating_frames" in RERUN_STAGES
 
+
+def test_pipeline_image_post_downloads_only(tmp_path: Path, monkeypatch):
+    config = _config(tmp_path)
+    store = TaskStore(config.paths.db)
+    asr = FakeASR()
+    metadata = VideoMetadata(
+        url="https://www.xiaohongshu.com/explore/64aaaaaaaaaaaaaaaaaaaaaa",
+        title="A walk",
+        platform="Xiaohongshu",
+        author="Nana",
+        video_id="64aaaaaaaaaaaaaaaaaaaaaa",
+        duration=None,
+        published="2026-08-01",
+        description="street photos",
+        thumbnail_url="",
+        asr_model="qwen3-asr-1.7b",
+        media_kind="image",
+    )
+
+    def fake_fetch(url, asr_model, cfg):
+        return metadata
+
+    def fake_download(url, video_id, dest_dir, cfg):
+        folder = dest_dir / video_id
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "01.jpg").write_bytes(b"img1")
+        (folder / "02.jpg").write_bytes(b"img2")
+        return folder
+
+    monkeypatch.setattr("media_pipeline.pipeline.fetch_metadata", fake_fetch)
+    monkeypatch.setattr("media_pipeline.pipeline.download_video", fake_download)
+    monkeypatch.setattr("media_pipeline.pipeline.require_provider", lambda model_id: asr)
+    monkeypatch.setattr("media_pipeline.pipeline.extract_audio", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("audio")))
+
+    pipeline = Pipeline(config, store, diarization=NullDiarizationProvider(), visual=FakeVisual())
+    task = store.insert(
+        Task(
+            id="task-xhs-img",
+            url=metadata.url,
+            asr_model="qwen3-asr-1.7b",
+            extra={"media_kind": "image"},
+        )
+    )
+    result = pipeline.run(task)
+    assert result.status == TaskStatus.completed
+    assert asr.calls == 0
+    assert result.extra.get("media_kind") == "image"
+    assert result.extra.get("image_count") == 2
+    note = Path(result.note_path).read_text(encoding="utf-8")
+    assert "Kind: Image" in note
+    assert "ASR Model:" not in note
+    assert "![[attachments/64aaaaaaaaaaaaaaaaaaaaaa/01.jpg]]" in note
+    assert (config.notes_dir() / "attachments" / metadata.video_id / "01.jpg").exists()
+    assert "transcribing" not in (result.extra.get("stage_timings") or {})
+    assert (result.extra.get("stage_timings") or {})["writing_outputs"]["status"] == "succeeded"
+
+

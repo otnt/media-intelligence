@@ -16,6 +16,9 @@ import pytest
             "Bilibili",
             "BV1fP4y1j76Q",
         ),
+        ("https://www.xiaohongshu.com/explore/64aaaaaaaaaaaaaaaaaaaaaa", "Xiaohongshu", "64aaaaaaaaaaaaaaaaaaaaaa"),
+        ("http://xhslink.com/o/2x5jqGA2hr6", "Xiaohongshu", "2x5jqGA2hr6"),
+        ("https://www.xiaohongshu.com/discovery/item/64aaaaaaaaaaaaaaaaaaaaaa", "Xiaohongshu", "64aaaaaaaaaaaaaaaaaaaaaa"),
     ],
 )
 def test_parse_supported_urls(url, platform, video_id):
@@ -31,7 +34,7 @@ def test_canonicalizes_watchlater_to_video_page():
 
 def test_parse_rejects_other_sites():
     with pytest.raises(UnsupportedURLError):
-        parse_video_ref("https://www.xiaohongshu.com/explore/123")
+        parse_video_ref("https://twitter.com/x/status/1")
 
 
 def test_duration_and_timestamp_formatting():

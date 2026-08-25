@@ -24,7 +24,7 @@ def main(argv: list[str] | None = None) -> int:
     doctor.add_argument("--config", type=Path, default=None)
 
     transcribe = sub.add_parser("transcribe", help="Download, transcribe, and write an Obsidian note for one URL")
-    transcribe.add_argument("url", help="Bilibili or YouTube video URL")
+    transcribe.add_argument("url", help="Bilibili, YouTube, or Xiaohongshu URL")
     transcribe.add_argument(
         "--asr-model",
         default=None,
@@ -134,6 +134,12 @@ def cmd_doctor(config: AppConfig) -> int:
 
     analysis_ok, analysis_detail = probe_vlm(config)
     checks.append(("analysis:qwen3.8", analysis_ok, analysis_detail or "ok"))
+    try:
+        import curl_cffi
+
+        checks.append(("curl-cffi", True, getattr(curl_cffi, "__version__", "ok")))
+    except Exception as exc:
+        checks.append(("curl-cffi", False, str(exc)))
     vault = config.paths.vault
     checks.append(("obsidian vault", bool(vault and vault.exists()), str(vault) if vault else "not configured"))
     notes = config.notes_dir()

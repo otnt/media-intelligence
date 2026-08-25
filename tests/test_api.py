@@ -65,6 +65,32 @@ def test_create_task_accepts_bilibili_url(tmp_path: Path):
     assert stored.extra["language"] == "auto"
 
 
+def test_create_task_accepts_xiaohongshu_url(tmp_path: Path):
+    config = AppConfig(
+        paths=PathsConfig(
+            videos=tmp_path / "videos",
+            audio=tmp_path / "audio",
+            artifacts=tmp_path / "artifacts",
+            logs=tmp_path / "logs",
+            vault=tmp_path / "vault",
+            db=tmp_path / "tasks.sqlite3",
+        )
+    )
+    config.ensure_directories()
+    store = TaskStore(config.paths.db)
+    worker = DummyWorker()
+    client = TestClient(create_app(config, store=store, worker=worker))
+    response = client.post(
+        "/v1/tasks",
+        json={"url": "http://xhslink.com/o/2x5jqGA2hr6", "asr_model": "qwen3-asr-1.7b"},
+    )
+    assert response.status_code == 202
+    stored = store.get(response.json()["id"])
+    assert stored is not None
+    assert stored.platform == "Xiaohongshu"
+    assert stored.video_id == "2x5jqGA2hr6"
+
+
 def test_rejects_unknown_model_and_platform(tmp_path: Path):
     config = AppConfig(
         paths=PathsConfig(

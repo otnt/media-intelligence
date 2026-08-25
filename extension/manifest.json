@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Save & Transcribe",
   "version": "0.1.5",
-  "description": "Save Bilibili and YouTube videos to Obsidian with local speech recognition.",
+  "description": "Save Bilibili, YouTube, and Xiaohongshu posts to Obsidian with local speech recognition.",
   "permissions": ["storage", "activeTab", "tabs"],
   "host_permissions": [
     "http://127.0.0.1/*",
@@ -12,7 +12,11 @@
     "*://youtu.be/*",
     "*://*.bilibili.com/*",
     "*://bilibili.com/*",
-    "*://b23.tv/*"
+    "*://b23.tv/*",
+    "*://*.xiaohongshu.com/*",
+    "*://xiaohongshu.com/*",
+    "*://xhslink.com/*",
+    "*://*.xhslink.com/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -33,7 +37,12 @@
         "*://youtube.com/*",
         "*://m.youtube.com/*",
         "*://www.bilibili.com/*",
-        "*://bilibili.com/*"
+        "*://bilibili.com/*",
+        "*://www.xiaohongshu.com/*",
+        "*://xiaohongshu.com/*",
+        "*://*.xiaohongshu.com/*",
+        "*://xhslink.com/*",
+        "*://*.xhslink.com/*"
       ],
       "js": ["shared.js", "content.js"],
       "css": ["content.css"],

@@ -16,7 +16,7 @@ from media_pipeline.transcript import render_transcript
 
 _INVALID_FILENAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _HEADER_END = re.compile(r"\n---\s*\n", re.MULTILINE)
-_FIELD = re.compile(r"^(URL|Platform|Author|Duration|Published|Thumbnail|Description|ASR Model|Language Mode|Languages|Status|Video Path|Audio Path|Error Stage|Error|Created|Updated):\s*(.*)$")
+_FIELD = re.compile(r"^(URL|Platform|Kind|Author|Duration|Published|Thumbnail|Description|ASR Model|Language Mode|Languages|Status|Video Path|Audio Path|Error Stage|Error|Created|Updated):\s*(.*)$")
 
 
 class NoteWriter:
@@ -84,20 +84,22 @@ class NoteDocument:
         fields = {
             "URL": metadata.url,
             "Platform": metadata.platform,
+            "Kind": _kind_label(metadata, task),
             "Author": metadata.author,
             "Duration": format_duration(metadata.duration),
             "Published": metadata.published,
             "Thumbnail": metadata.thumbnail_url,
             "Description": _one_line(metadata.description, 500),
-            "ASR Model": asr_label(task.asr_model),
-            "Language Mode": str(task.extra.get("language") or "auto"),
-            "Languages": str(task.extra.get("detected_languages") or ""),
             "Status": task.status.value if task.status != TaskStatus.queued else TaskStatus.downloading.value,
             "Video Path": task.video_path,
-            "Audio Path": task.audio_path,
             "Created": stamp,
             "Updated": now_stamp(),
         }
+        if not _is_image_post(metadata, task):
+            fields["ASR Model"] = asr_label(task.asr_model)
+            fields["Language Mode"] = str(task.extra.get("language") or "auto")
+            fields["Languages"] = str(task.extra.get("detected_languages") or "")
+            fields["Audio Path"] = task.audio_path
         return cls(title=metadata.title, fields=fields)
 
     def apply_task(self, task: Task, metadata: VideoMetadata | None = None) -> None:
@@ -105,21 +107,28 @@ class NoteDocument:
             self.title = metadata.title or self.title
             self.fields["URL"] = metadata.url
             self.fields["Platform"] = metadata.platform
+            self.fields["Kind"] = _kind_label(metadata, task)
             self.fields["Author"] = metadata.author
             self.fields["Duration"] = format_duration(metadata.duration)
             self.fields["Published"] = metadata.published
             self.fields["Thumbnail"] = metadata.thumbnail_url
             self.fields["Description"] = _one_line(metadata.description, 500)
-        self.fields["ASR Model"] = asr_label(task.asr_model)
-        self.fields["Language Mode"] = str(task.extra.get("language") or "auto")
-        detected = str(task.extra.get("detected_languages") or "")
-        if detected:
-            self.fields["Languages"] = detected
-        else:
+        if _is_image_post(metadata, task):
+            self.fields.pop("ASR Model", None)
+            self.fields.pop("Language Mode", None)
             self.fields.pop("Languages", None)
+            self.fields.pop("Audio Path", None)
+        else:
+            self.fields["ASR Model"] = asr_label(task.asr_model)
+            self.fields["Language Mode"] = str(task.extra.get("language") or "auto")
+            detected = str(task.extra.get("detected_languages") or "")
+            if detected:
+                self.fields["Languages"] = detected
+            else:
+                self.fields.pop("Languages", None)
+            self.fields["Audio Path"] = task.audio_path
         self.fields["Status"] = task.status.value
         self.fields["Video Path"] = task.video_path
-        self.fields["Audio Path"] = task.audio_path
         self.fields["Updated"] = now_stamp()
         if task.status == TaskStatus.failed:
             self.fields["Error Stage"] = task.error_stage
@@ -133,6 +142,7 @@ class NoteDocument:
         order = [
             "URL",
             "Platform",
+            "Kind",
             "Author",
             "Duration",
             "Published",
@@ -153,7 +163,7 @@ class NoteDocument:
             if key not in self.fields:
                 continue
             value = self.fields.get(key, "")
-            if key in {"Thumbnail", "Description", "Languages"} and not value:
+            if key in {"Thumbnail", "Description", "Languages", "Duration", "Audio Path"} and not value:
                 continue
             lines.append(f"{key}: {value}")
         if self.transcript_markdown.strip():
@@ -193,3 +203,13 @@ def _one_line(value: str, limit: int) -> str:
     if len(collapsed) > limit:
         return collapsed[: limit - 1].rstrip() + "…"
     return collapsed
+
+
+def _is_image_post(metadata: VideoMetadata | None, task: Task) -> bool:
+    if metadata is not None and metadata.media_kind == "image":
+        return True
+    return str(task.extra.get("media_kind") or "") == "image"
+
+
+def _kind_label(metadata: VideoMetadata | None, task: Task) -> str:
+    return "Image" if _is_image_post(metadata, task) else "Video"

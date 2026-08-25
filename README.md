@@ -1,16 +1,17 @@
 # Local Video → Obsidian Extraction Pipeline
 
-One-click capture from Bilibili and YouTube.
-The local service downloads the video, extracts a timestamped speaker-aware transcript, representative keyframes, and writes an Obsidian note plus `multimodal.json`.
+One-click capture from Bilibili, YouTube, and Xiaohongshu.
+The local service downloads the media, then for video posts extracts a timestamped speaker-aware transcript, representative keyframes, and writes an Obsidian note plus `multimodal.json`.
+Image/text Xiaohongshu posts are downloaded into the vault without ASR or visual extraction.
 
 ## What V1 does
 
-Open a Bilibili or YouTube video page.
+Open a Bilibili, YouTube, or Xiaohongshu page.
 Click **✨ Extract**.
 Choose an ASR model, then submit.
 The browser can be closed.
 Inspect progress and candidate frames at `http://127.0.0.1:8765/`.
-Later, the Obsidian vault contains metadata, transcript, and a visual timeline.
+Later, the Obsidian vault contains metadata, transcript, and a visual timeline for videos, or the post text and images for Xiaohongshu image posts.
 
 This stage is high-recall extraction, not summarization.
 
@@ -85,11 +86,16 @@ uv run media-pipeline doctor
 
 ## Command line
 
-Transcribe one Bilibili or YouTube URL without the browser:
+Transcribe one Bilibili, YouTube, or Xiaohongshu URL without the browser:
 
 ```bash
 uv run media-pipeline transcribe 'https://www.bilibili.com/video/BVxxxx'
+uv run media-pipeline transcribe 'http://xhslink.com/o/xxxxxxxx'
 ```
+
+Xiaohongshu video posts follow the same download → audio → ASR → visual path as Bilibili and YouTube.
+Image/text posts are saved to `~/AIContent/videos/{note_id}/` and copied into the vault as wikilinked attachments.
+Xiaohongshu uses Chrome cookies (`download.cookies_from_browser`) and `curl-cffi` to fetch note pages.
 
 The command runs in the foreground, writes the Obsidian note as soon as metadata is available, then fills in the transcript and visual timeline.
 The default ASR model is `qwen3-asr-1.7b` with `language: auto`, so mixed Chinese/English is kept when the model can hear it.
@@ -102,12 +108,13 @@ Use `--asr-model whisper-large-v3-turbo` or `whisper-large-v3` to pick Whisper i
 3. Click **Load unpacked**.
 4. Select the `extension` folder in this repository.
 
-The button appears on `bilibili.com/video/...` and `youtube.com/watch?...`.
+The button appears on Bilibili, YouTube, and Xiaohongshu post pages, including `xhslink.com` short links.
 The last ASR model you used is remembered.
 
 ## Output
 
 Videos land in `~/AIContent/videos/`.
+Xiaohongshu image posts land in `~/AIContent/videos/{note_id}/`.
 Audio lands in `~/AIContent/audio/`.
 Intermediate JSON artifacts land in `~/AIContent/artifacts/{video_id}/`.
 Obsidian notes land in `{vault}/Transcripts/{Video Title}.md`.
@@ -136,10 +143,11 @@ POST /v1/tasks
 }
 ```
 
-Task states: `queued` → `fetching_metadata` → `downloading` → `extracting_audio` → `transcribing` → `diarizing` → `aligning` → `completed`.
+Task states for videos: `queued` → `fetching_metadata` → `downloading` → `extracting_audio` → `transcribing` → `diarizing` → `aligning` → `completed`.
+Xiaohongshu image posts skip audio and ASR and go from `downloading` to `writing_outputs` → `completed`.
 Any stage may transition to `failed`.
 
 ## Out of scope for V1
 
-Summarization, scoring, keyframes, OCR, cloud inference, and other sites are intentionally omitted.
+Summarization, scoring, cloud inference, and other sites are intentionally omitted.
 ASR model choice and a future analysis-model choice are separate settings.

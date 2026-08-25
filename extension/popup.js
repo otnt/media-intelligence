@@ -41,7 +41,7 @@ async function loadTab() {
     return;
   }
   if (!mdpIsSupportedVideoUrl(currentUrl)) {
-    pageEl.textContent = `Not a Bilibili/YouTube video page:\n${currentUrl}`;
+    pageEl.textContent = `Not a Bilibili, YouTube, or Xiaohongshu page:\n${currentUrl}`;
     return;
   }
   pageEl.textContent = tab.title || currentUrl;
@@ -100,7 +100,7 @@ function updateStartEnabled() {
   }
   if (!serviceOk) statusEl.textContent = "Start is disabled until the local service is running.";
   else if (!currentUrl) statusEl.textContent = "Start is disabled because this tab URL could not be read.";
-  else if (!urlOk) statusEl.textContent = "Start is disabled until you are on a Bilibili or YouTube video.";
+  else if (!urlOk) statusEl.textContent = "Start is disabled until you are on a Bilibili, YouTube, or Xiaohongshu page.";
   else if (!modelOk) statusEl.textContent = "Start is disabled because the selected ASR model is not installed.";
 }
 
