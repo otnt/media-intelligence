@@ -5,6 +5,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from media_pipeline.visual.timestamps import CHANGE_PAIR_GAP_SEC, pair_change_timestamps
+
 logger = logging.getLogger(__name__)
 
 
@@ -51,7 +53,10 @@ def visual_change_timestamps(
     width: int = 160,
     height: int = 90,
 ) -> list[float]:
-    """Scan a low-resolution 1 fps stream and emit times where the picture changes."""
+    """Scan a low-resolution 1 fps stream and emit times where the picture changes.
+
+    Each spike yields the gray frame before the change and the frame after it.
+    """
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg or duration <= 0:
         return []
@@ -78,7 +83,7 @@ def visual_change_timestamps(
         return []
     assert proc.stdout is not None
     previous: list[int] | None = None
-    stamps: list[float] = []
+    after_stamps: list[float] = []
     index = 0
     try:
         while True:
@@ -90,14 +95,15 @@ def visual_change_timestamps(
                 delta = _l1(hist, previous) / (2 * len(raw))
                 if delta >= threshold:
                     stamp = round(index / fps, 3)
-                    if stamp < duration and (not stamps or stamp - stamps[-1] >= 0.75):
-                        stamps.append(stamp)
+                    if stamp < duration and (not after_stamps or stamp - after_stamps[-1] >= 0.75):
+                        after_stamps.append(stamp)
             previous = hist
             index += 1
     finally:
         proc.kill()
         proc.wait(timeout=5)
-    return stamps
+    gap = CHANGE_PAIR_GAP_SEC if fps <= 0 else 1.0 / fps
+    return pair_change_timestamps(after_stamps, gap_sec=gap, duration=duration)
 
 
 def _gray_hist(raw: bytes) -> list[int]:

@@ -5,7 +5,7 @@ from PIL import Image
 from media_pipeline.models import NamedSegment, frame_filename
 from media_pipeline.visual.align import align_keyframes, render_visual_timeline
 from media_pipeline.visual.dedup import apply_dedup
-from media_pipeline.visual.models import CandidateFrame, Keyframe
+from media_pipeline.visual.models import CandidateFrame, Keyframe, SceneSpan
 from media_pipeline.visual.ocr import text_change_ratio
 from media_pipeline.visual.timestamps import (
     SOURCE_CHANGE,
@@ -13,7 +13,9 @@ from media_pipeline.visual.timestamps import (
     SOURCE_SCENE,
     candidates_from_groups,
     merge_candidate_times,
+    pair_change_timestamps,
     periodic_timestamps,
+    scene_boundary_timestamps,
 )
 
 
@@ -28,6 +30,26 @@ def test_periodic_sampling_covers_the_timeline():
     assert 12.0 in stamps
     assert stamps[-1] >= 48.0
     assert all(stamp < 60.0 for stamp in stamps)
+
+
+def test_scene_boundaries_include_start_and_pre_cut_not_raw_end():
+    scenes = [
+        SceneSpan(0.0, 10.0),
+        SceneSpan(10.0, 20.0),
+        SceneSpan(20.0, 20.3),
+    ]
+    stamps = scene_boundary_timestamps(scenes)
+    assert stamps == [0.0, 9.5, 10.0, 19.5, 20.0]
+    assert 10.0 in stamps
+    assert 20.0 in stamps
+    assert 20.3 not in stamps
+
+
+def test_visual_change_keeps_frame_before_and_after_spike():
+    stamps = pair_change_timestamps([41.0, 80.0], gap_sec=1.0, duration=90.0)
+    assert stamps == [40.0, 41.0, 79.0, 80.0]
+    clipped = pair_change_timestamps([0.0, 12.0], gap_sec=1.0, duration=12.5)
+    assert clipped == [0.0, 11.0, 12.0]
 
 
 def test_candidate_sources_merge_nearby_timestamps():
