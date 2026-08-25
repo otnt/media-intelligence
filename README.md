@@ -1,6 +1,6 @@
 # Local Video → Obsidian Extraction Pipeline
 
-One-click capture from Bilibili, YouTube, and Xiaohongshu.
+One-click capture from Bilibili, YouTube, Xiaohongshu, and RedNote.
 The local service downloads the media, then for video posts extracts a timestamped speaker-aware transcript and writes an Obsidian note.
 Keyframe extraction is off by default because it is slow.
 Check **Extract keyframes** in the extension, pass `--keyframes` on the CLI, or click **Extract keyframes** on the dashboard to add stills and `multimodal.json`.
@@ -8,7 +8,7 @@ Image/text Xiaohongshu posts are downloaded into the vault without ASR or visual
 
 ## What V1 does
 
-Open a Bilibili, YouTube, or Xiaohongshu page.
+Open a Bilibili, YouTube, Xiaohongshu, or RedNote page.
 Click **✨ Extract**.
 Choose an ASR model.
 Leave **Extract keyframes** unchecked unless you want stills in the note.
@@ -116,7 +116,9 @@ Use `--asr-model whisper-large-v3-turbo` or `whisper-large-v3` to pick Whisper i
 3. Click **Load unpacked**.
 4. Select the `extension` folder in this repository.
 
-The button appears on Bilibili, YouTube, and Xiaohongshu post pages, including `xhslink.com` short links.
+The button appears on Bilibili, YouTube, Xiaohongshu, and RedNote (`rednote.com`) post pages, including `xhslink.com` short links.
+On the Explore feed, search, and profile grids, each post card also gets an **✨ Extract** button.
+One click queues that note; ASR model and keyframe settings come from the floating panel or the extension popup.
 The last ASR model you used is remembered.
 **Extract keyframes** stays off unless you check it; that choice is remembered too.
 

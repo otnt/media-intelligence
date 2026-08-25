@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>RedNote Explore fixture</title>
+  <link rel="stylesheet" href="/extension/content.css">
+  <style>
+    body { margin: 0; background: #f5f5f5; font-family: sans-serif; }
+    .feeds-container { display: flex; gap: 16px; padding: 24px; }
+    section.note-item { width: 220px; background: #fff; }
+    a.cover { display: block; position: relative; width: 220px; height: 280px; }
+    a.cover img { width: 220px; height: 280px; object-fit: cover; }
+    #mdp-result { margin: 16px 24px; font: 14px/1.4 ui-monospace, monospace; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <p id="mdp-result">waiting</p>
+  <div class="feeds-container">
+    <section class="note-item">
+      <a class="cover" href="https://www.rednote.com/explore/64aaaaaaaaaaaaaaaaaaaaaa?xsec_token=feed-token-abc&amp;xsec_source=pc_feed">
+        <img width="220" height="280" alt="cover" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7">
+      </a>
+      <p>Post A</p>
+    </section>
+    <section class="note-item">
+      <a class="cover" href="https://www.rednote.com/explore/64bbbbbbbbbbbbbbbbbbbbbb">
+        <img width="220" height="280" alt="cover" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7">
+      </a>
+      <p>Post B</p>
+    </section>
+    <section class="note-item">
+      <a class="cover" href="https://www.rednote.com/explore/64cccccccccccccccccccccc?xsec_token=feed-token-ghi&amp;xsec_source=pc_feed">
+        <img width="220" height="280" alt="cover" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7">
+      </a>
+      <p>Post C</p>
+    </section>
+  </div>
+  <script>
+    window.__MDP_TEST_FEED = true;
+    window.__mdpMessages = [];
+    window.__mdpClickError = "";
+    window.__INITIAL_STATE__ = {
+      feed: {
+        feeds: [
+          {
+            id: "64bbbbbbbbbbbbbbbbbbbbbb",
+            modelType: "note",
+            xsecToken: "feed-token-def",
+            xsecSource: "pc_feed",
+            noteCard: { noteId: "64bbbbbbbbbbbbbbbbbbbbbb" },
+          },
+        ],
+      },
+    };
+
+    // Vue-like feed: any click that lands on the card is swallowed.
+    const eatCard = (event) => {
+      const node = event.target && event.target.closest && event.target.closest("section.note-item, a.cover");
+      if (!node) return;
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+    };
+    document.addEventListener("click", eatCard, true);
+    document.addEventListener("pointerdown", eatCard, true);
+    document.addEventListener("mousedown", eatCard, true);
+
+    const stored = { asrModel: "qwen3-asr-1.7b", extractKeyframes: false };
+    window.chrome = {
+      storage: {
+        local: {
+          get(keys, cb) {
+            if (typeof keys === "function") {
+              keys(stored);
+              return Promise.resolve(stored);
+            }
+            if (typeof cb === "function") cb(stored);
+            return Promise.resolve(stored);
+          },
+          set() { return Promise.resolve(); },
+        },
+      },
+      runtime: {
+        lastError: null,
+        onMessage: { addListener() {} },
+        getURL(path) { return "/extension/" + path; },
+        sendMessage(message, cb) {
+          if (message && message.type === "MODELS") {
+            const models = { ok: true, models: [], default: stored.asrModel };
+            if (typeof cb === "function") cb(models);
+            return;
+          }
+          window.__mdpMessages.push(message);
+          fetch("/clicked", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(message || {}),
+          }).catch((error) => { window.__mdpClickError = String(error); });
+          const response = { ok: true, asr_label: "Qwen3-ASR-1.7B" };
+          if (typeof cb === "function") window.setTimeout(() => cb(response), 0);
+        },
+      },
+    };
+  </script>
+  <script src="/extension/shared.js"></script>
+  <script src="/extension/content.js"></script>
+  <script>
+    function report(status, extra) {
+      const payload = { status, extra, messages: window.__mdpMessages, error: window.__mdpClickError };
+      document.getElementById("mdp-result").textContent = JSON.stringify(payload, null, 2);
+      document.documentElement.dataset.mdpStatus = status;
+      fetch("/clicked", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "TEST_STATUS", ...payload }),
+      }).catch(() => {});
+    }
+
+    function cardLayout() {
+      const cards = [...document.querySelectorAll("section.note-item")];
+      const hosts = [...document.querySelectorAll(".mdp-card-extract")];
+      return {
+        cardCount: cards.length,
+        buttonCount: hosts.length,
+        overlay: Boolean(document.getElementById("mdp-extract-layer")),
+        perCard: cards.map((card) => {
+          const host = [...card.children].find((node) => node.classList.contains("mdp-card-extract"));
+          return {
+            buttons: card.querySelectorAll(":scope > .mdp-card-extract").length,
+            insideCover: Boolean(card.querySelector("a.cover .mdp-card-extract")),
+            noteId: host ? host.dataset.mdpNoteId : "",
+          };
+        }),
+      };
+    }
+
+    function dispatchUserClick(el) {
+      const rect = el.getBoundingClientRect();
+      const x = rect.left + Math.min(16, Math.max(4, rect.width / 2));
+      const y = rect.top + Math.min(16, Math.max(4, rect.height / 2));
+      const target = document.elementFromPoint(x, y) || el;
+      const common = { bubbles: true, cancelable: true, composed: true, clientX: x, clientY: y, view: window };
+      target.dispatchEvent(new PointerEvent("pointerdown", { ...common, pointerId: 1, isPrimary: true, buttons: 1 }));
+      target.dispatchEvent(new MouseEvent("mousedown", { ...common, button: 0, buttons: 1 }));
+      target.dispatchEvent(new PointerEvent("pointerup", { ...common, pointerId: 1, isPrimary: true, buttons: 0 }));
+      target.dispatchEvent(new MouseEvent("mouseup", { ...common, button: 0, buttons: 0 }));
+      target.dispatchEvent(new MouseEvent("click", { ...common, button: 0, buttons: 0 }));
+    }
+
+    async function waitForExtractHost() {
+      for (let i = 0; i < 50; i += 1) {
+        const host = document.querySelector(".mdp-card-extract");
+        if (host && host.shadowRoot && host.shadowRoot.querySelector("button")) {
+          const rect = host.getBoundingClientRect();
+          if (rect.width > 4 && rect.height > 4 && host.style.display !== "none") return host;
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, 100));
+      }
+      throw new Error("Extract button never appeared");
+    }
+
+    async function runAutotest() {
+      try {
+        await waitForExtractHost();
+        const layout = cardLayout();
+        fetch("/clicked", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ type: "LAYOUT", ...layout }),
+        }).catch(() => {});
+        if (layout.overlay) {
+          report("fail", { reason: "extract buttons must sit on cards, not a page overlay", ...layout });
+          return;
+        }
+        if (layout.buttonCount !== layout.cardCount) {
+          report("fail", { reason: "expected one Extract button per card", ...layout });
+          return;
+        }
+        if (layout.perCard.some((row) => row.buttons !== 1 || row.insideCover || !row.noteId)) {
+          report("fail", { reason: "each card must own its Extract button outside the cover link", ...layout });
+          return;
+        }
+        const second = document.querySelectorAll("section.note-item")[1].querySelector(":scope > .mdp-card-extract");
+        dispatchUserClick(second);
+        for (let i = 0; i < 40; i += 1) {
+          const created = window.__mdpMessages.find((item) => item && item.type === "CREATE_TASK");
+          if (created) {
+            report("ok", { url: created.url, asr_model: created.asr_model, ...layout });
+            return;
+          }
+          await new Promise((resolve) => window.setTimeout(resolve, 50));
+        }
+        report("fail", { reason: "click did not send CREATE_TASK", ...layout });
+      } catch (error) {
+        report("fail", { reason: error.message || String(error) });
+      }
+    }
+
+    if (new URLSearchParams(location.search).get("autotest") === "1") {
+      window.addEventListener("load", () => window.setTimeout(runAutotest, 50));
+    }
+  </script>
+</body>
+</html>

@@ -5,8 +5,10 @@ import pytest
 from media_pipeline.config import AppConfig
 from media_pipeline.xhs import (
     _POST_CACHE,
+    _cookie_matches_url,
     _image_urls,
     _note_from_html,
+    _require_xsec_token,
     _video_urls,
     canonicalize_xhs_url,
     extract_xhs_post,
@@ -32,9 +34,38 @@ def _html_for(note: dict) -> str:
 
 def test_parse_xhs_urls():
     assert parse_xhs_ref("https://www.xiaohongshu.com/explore/" + NOTE_ID) == ("Xiaohongshu", NOTE_ID)
+    assert parse_xhs_ref(f"https://www.rednote.com/explore/{NOTE_ID}") == ("Xiaohongshu", NOTE_ID)
     assert parse_xhs_ref(f"https://www.xiaohongshu.com/discovery/item/{NOTE_ID}") == ("Xiaohongshu", NOTE_ID)
     assert parse_xhs_ref(f"https://www.xiaohongshu.com/user/profile/123/{NOTE_ID}") == ("Xiaohongshu", NOTE_ID)
-    assert parse_xhs_ref("http://xhslink.com/o/2x5jqGA2hr6") == ("Xiaohongshu", "2x5jqGA2hr6")
+    assert parse_xhs_ref(f"https://www.xiaohongshu.com/search_result/{NOTE_ID}?xsec_token=tok") == (
+        "Xiaohongshu",
+        NOTE_ID,
+    )
+
+
+def test_require_xsec_token_on_bare_explore_url():
+    from media_pipeline.media import MediaError
+
+    with pytest.raises(MediaError, match="xsec_token"):
+        _require_xsec_token(f"https://www.rednote.com/explore/{NOTE_ID}")
+    _require_xsec_token(f"https://www.rednote.com/explore/{NOTE_ID}?xsec_token=abc")
+    _require_xsec_token("http://xhslink.com/o/21VSXCZSZ9s")
+
+
+def test_cookie_filter_keeps_rednote_and_xiaohongshu_apart():
+    assert _cookie_matches_url(".rednote.com", "https://www.rednote.com/explore/abc")
+    assert not _cookie_matches_url(".xiaohongshu.com", "https://www.rednote.com/explore/abc")
+    assert _cookie_matches_url(".xiaohongshu.com", "https://www.xiaohongshu.com/explore/abc")
+    assert not _cookie_matches_url(".rednote.com", "https://www.xiaohongshu.com/explore/abc")
+
+
+def test_parse_rejects_explore_feed_and_profile_listing():
+    with pytest.raises(ValueError):
+        parse_xhs_ref("https://www.xiaohongshu.com/explore")
+    with pytest.raises(ValueError):
+        parse_xhs_ref("https://www.xiaohongshu.com/explore?channel=fashion")
+    with pytest.raises(ValueError):
+        parse_xhs_ref("https://www.xiaohongshu.com/user/profile/64bbbbbbbbbbbbbbbbbbbbbb")
 
 
 def test_canonicalize_keeps_xsec_token():
@@ -43,6 +74,12 @@ def test_canonicalize_keeps_xsec_token():
     assert canonical.startswith(f"https://www.xiaohongshu.com/explore/{NOTE_ID}?")
     assert "xsec_token=abc" in canonical
     assert canonicalize_xhs_url("http://xhslink.com/o/2x5jqGA2hr6") == "http://xhslink.com/o/2x5jqGA2hr6"
+    rednote = canonicalize_xhs_url(
+        f"https://www.rednote.com/explore/{NOTE_ID}?xsec_token=abc&xsec_source=pc_feed",
+        NOTE_ID,
+    )
+    assert rednote.startswith(f"https://www.rednote.com/explore/{NOTE_ID}?")
+    assert "xsec_token=abc" in rednote
 
 
 def test_parse_video_note_from_initial_state():

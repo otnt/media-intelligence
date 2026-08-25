@@ -24,7 +24,7 @@ def main(argv: list[str] | None = None) -> int:
     doctor.add_argument("--config", type=Path, default=None)
 
     transcribe = sub.add_parser("transcribe", help="Download, transcribe, and write an Obsidian note for one URL")
-    transcribe.add_argument("url", help="Bilibili, YouTube, or Xiaohongshu URL")
+    transcribe.add_argument("url", help="Bilibili, YouTube, Xiaohongshu, or RedNote URL")
     transcribe.add_argument(
         "--asr-model",
         default=None,

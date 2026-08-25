@@ -43,29 +43,46 @@ _POST_CACHE: dict[str, XhsPost] = {}
 
 def is_xhs_url(url: str) -> bool:
     host = (urlparse(url).hostname or "").lower().removeprefix("www.")
-    return host in {"xiaohongshu.com", "xhslink.com"} or host.endswith(".xiaohongshu.com")
+    return _is_xhs_host(host)
+
+
+def _is_xhs_host(host: str) -> bool:
+    name = (host or "").lower().removeprefix("www.")
+    return (
+        name in {"xiaohongshu.com", "xhslink.com", "rednote.com"}
+        or name.endswith(".xiaohongshu.com")
+        or name.endswith(".rednote.com")
+        or name.endswith(".xhslink.com")
+    )
+
+
+def _page_origin(url: str) -> str:
+    host = (urlparse(url).hostname or "").lower()
+    if "rednote.com" in host:
+        return "https://www.rednote.com"
+    return "https://www.xiaohongshu.com"
 
 
 def parse_xhs_ref(url: str) -> tuple[str, str]:
     parsed = urlparse((url or "").strip())
     host = (parsed.hostname or "").lower().removeprefix("www.")
-    if host not in {"xiaohongshu.com", "xhslink.com"} and not host.endswith(".xiaohongshu.com"):
+    if not _is_xhs_host(host):
         raise ValueError(url)
     parts = [item for item in (parsed.path or "").split("/") if item]
-    if host == "xhslink.com":
+    if host == "xhslink.com" or host.endswith(".xhslink.com"):
         if len(parts) >= 2 and parts[0] == "o":
             return "Xiaohongshu", parts[1]
         if parts:
             return "Xiaohongshu", parts[-1]
         raise ValueError(url)
-    if len(parts) >= 2 and parts[0] == "explore":
+    if len(parts) >= 2 and parts[0] == "explore" and _NOTE_ID_RE.fullmatch(parts[1]):
         return "Xiaohongshu", parts[1]
-    if len(parts) >= 3 and parts[0] == "discovery" and parts[1] == "item":
+    if len(parts) >= 3 and parts[0] == "discovery" and parts[1] == "item" and _NOTE_ID_RE.fullmatch(parts[2]):
         return "Xiaohongshu", parts[2]
-    if len(parts) >= 4 and parts[0] == "user" and parts[1] == "profile":
+    if len(parts) >= 2 and parts[0] == "search_result" and _NOTE_ID_RE.fullmatch(parts[1]):
+        return "Xiaohongshu", parts[1]
+    if len(parts) >= 4 and parts[0] == "user" and parts[1] == "profile" and _NOTE_ID_RE.fullmatch(parts[3]):
         return "Xiaohongshu", parts[3]
-    if parts:
-        return "Xiaohongshu", parts[-1]
     raise ValueError(url)
 
 
@@ -73,13 +90,16 @@ def canonicalize_xhs_url(url: str, note_id: str = "") -> str:
     if not (note_id and _NOTE_ID_RE.fullmatch(note_id)):
         return url
     parsed = urlparse(url)
+    host = (parsed.hostname or "").lower().removeprefix("www.")
+    if host == "xhslink.com" or host.endswith(".xhslink.com"):
+        return url
     query = parse_qs(parsed.query)
     params: dict[str, str] = {}
     if token := (query.get("xsec_token") or [""])[0]:
         params["xsec_token"] = token
     if source := (query.get("xsec_source") or [""])[0]:
         params["xsec_source"] = source
-    base = f"https://www.xiaohongshu.com/explore/{note_id}"
+    base = f"{_page_origin(url)}/explore/{note_id}"
     if params:
         return f"{base}?{urlencode(params)}"
     return base
@@ -112,7 +132,7 @@ def download_xhs_post(url: str, note_id: str, dest_dir: Path, config: AppConfig)
             return target
         if not post.download_urls:
             raise _media_error("downloading", "Xiaohongshu video URL was not found")
-        _download_first(post.download_urls, target, config)
+        _download_first(post.download_urls, target, config, origin=_page_origin(url))
         return target
     folder = dest_dir / note_id
     existing = find_xhs_images(folder)
@@ -123,7 +143,7 @@ def download_xhs_post(url: str, note_id: str, dest_dir: Path, config: AppConfig)
     folder.mkdir(parents=True, exist_ok=True)
     for index, media_url in enumerate(post.download_urls, start=1):
         dest = folder / f"{index:02d}.jpg"
-        _download_file(media_url, dest, config)
+        _download_file(media_url, dest, config, origin=_page_origin(url))
     return folder
 
 
@@ -232,12 +252,18 @@ def _post_from_xhs_row(row: dict[str, Any], fallback_url: str) -> XhsPost:
 
 
 def _extract_with_curl(url: str, config: AppConfig) -> XhsPost:
+    _require_xsec_token(url)
     html, final_url = _fetch_html(url, config)
+    if "/404" in (final_url or "") or "error_code=300031" in (final_url or ""):
+        raise _media_error(
+            "fetching_metadata",
+            "Xiaohongshu/RedNote returned 404 for this note. The xsec_token is missing or expired. Click ✨ Extract on the Explore card again.",
+        )
     note = _note_from_html(html)
     if not note:
         raise _media_error(
             "fetching_metadata",
-            "Could not parse Xiaohongshu note data. Log into Xiaohongshu in Chrome so cookies can be read.",
+            "Could not parse Xiaohongshu note data. Log into Xiaohongshu or RedNote in Chrome so cookies can be read.",
         )
     note_id = str(note.get("noteId") or parse_xhs_ref(final_url)[1])
     image_list = note.get("imageList") or []
@@ -273,7 +299,14 @@ def _fetch_html(url: str, config: AppConfig) -> tuple[str, str]:
     return response.text, str(getattr(response, "url", "") or url)
 
 
-def _http_get(url: str, config: AppConfig, *, stream: bool = False, stage: str = "fetching_metadata"):
+def _http_get(
+    url: str,
+    config: AppConfig,
+    *,
+    stream: bool = False,
+    stage: str = "fetching_metadata",
+    origin: str = "",
+):
     try:
         from curl_cffi import requests as cf_requests
     except ImportError as exc:
@@ -281,7 +314,8 @@ def _http_get(url: str, config: AppConfig, *, stream: bool = False, stage: str =
             stage,
             "curl-cffi is required for Xiaohongshu. uv pip install curl-cffi",
         ) from exc
-    cookies = _browser_cookies(config)
+    cookies = _browser_cookies(config, url)
+    site = origin or _page_origin(url)
     try:
         return cf_requests.get(
             url,
@@ -293,19 +327,19 @@ def _http_get(url: str, config: AppConfig, *, stream: bool = False, stage: str =
             headers={
                 "Accept": "*/*",
                 "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-                "Referer": "https://www.xiaohongshu.com/",
-                "Origin": "https://www.xiaohongshu.com",
+                "Referer": f"{site}/",
+                "Origin": site,
             },
         )
     except Exception as exc:
         raise _media_error(stage, f"Xiaohongshu request failed: {exc}") from exc
 
 
-def _download_first(urls: list[str], dest: Path, config: AppConfig) -> None:
+def _download_first(urls: list[str], dest: Path, config: AppConfig, origin: str = "") -> None:
     errors: list[str] = []
     for media_url in urls:
         try:
-            _download_file(media_url, dest, config)
+            _download_file(media_url, dest, config, origin=origin)
             return
         except Exception as exc:
             errors.append(str(exc))
@@ -315,9 +349,9 @@ def _download_first(urls: list[str], dest: Path, config: AppConfig) -> None:
     raise _media_error("downloading", f"Failed to download Xiaohongshu video: {detail}")
 
 
-def _download_file(url: str, dest: Path, config: AppConfig) -> None:
+def _download_file(url: str, dest: Path, config: AppConfig, origin: str = "") -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
-    response = _http_get(url, config, stream=True, stage="downloading")
+    response = _http_get(url, config, stream=True, stage="downloading", origin=origin)
     if response.status_code >= 400:
         raise _media_error("downloading", f"Failed to download {url}: HTTP {response.status_code}")
     ctype = str(response.headers.get("content-type") or "").lower()
@@ -336,7 +370,20 @@ def _download_file(url: str, dest: Path, config: AppConfig) -> None:
         raise _media_error("downloading", f"Downloaded empty file from {url}")
 
 
-def _browser_cookies(config: AppConfig) -> dict[str, str]:
+def _require_xsec_token(url: str) -> None:
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if "xhslink.com" in host:
+        return
+    if (parse_qs(parsed.query).get("xsec_token") or [""])[0]:
+        return
+    raise _media_error(
+        "fetching_metadata",
+        "This Xiaohongshu/RedNote URL is missing xsec_token, so the note cannot be opened. Click ✨ Extract on the Explore card.",
+    )
+
+
+def _browser_cookies(config: AppConfig, url: str = "") -> dict[str, str]:
     browser = (config.download.cookies_from_browser or "").strip()
     if not browser:
         return {}
@@ -350,9 +397,18 @@ def _browser_cookies(config: AppConfig) -> dict[str, str]:
     cookies: dict[str, str] = {}
     for cookie in jar:
         domain = str(getattr(cookie, "domain", "") or "").lower()
-        if "xiaohongshu" in domain or "xhscdn" in domain or "xhslink" in domain or "xhs" in domain:
+        if _cookie_matches_url(domain, url):
             cookies[cookie.name] = cookie.value
     return cookies
+
+
+def _cookie_matches_url(domain: str, url: str) -> bool:
+    host = (urlparse(url).hostname or "").lower()
+    if "rednote.com" in host:
+        return "rednote" in domain or "xhscdn" in domain
+    if "xiaohongshu.com" in host or "xhslink.com" in host:
+        return "xiaohongshu" in domain or "xhslink" in domain or "xhscdn" in domain or domain.endswith(".xhs.com")
+    return "xiaohongshu" in domain or "xhscdn" in domain or "xhslink" in domain or "rednote" in domain or "xhs" in domain
 
 
 def _note_from_html(html: str) -> dict[str, Any] | None:

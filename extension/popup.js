@@ -50,11 +50,15 @@ async function loadTab() {
     pageEl.textContent = "Could not read the current tab. Reload the extension, then open this popup from a video page.";
     return;
   }
-  if (!mdpIsSupportedVideoUrl(currentUrl)) {
-    pageEl.textContent = `Not a Bilibili, YouTube, or Xiaohongshu page:\n${currentUrl}`;
+  if (mdpIsSupportedVideoUrl(currentUrl)) {
+    pageEl.textContent = tab.title || currentUrl;
     return;
   }
-  pageEl.textContent = tab.title || currentUrl;
+  if (mdpIsXiaohongshuHost(currentUrl)) {
+    pageEl.textContent = "Xiaohongshu / RedNote feed: click ✨ Extract on a post card, or open a note and press Extract here.";
+    return;
+  }
+  pageEl.textContent = `Not a Bilibili, YouTube, Xiaohongshu, or RedNote page:\n${currentUrl}`;
 }
 
 async function loadModels() {
@@ -110,7 +114,13 @@ function updateStartEnabled() {
   }
   if (!serviceOk) statusEl.textContent = "Start is disabled until the local service is running.";
   else if (!currentUrl) statusEl.textContent = "Start is disabled because this tab URL could not be read.";
-  else if (!urlOk) statusEl.textContent = "Start is disabled until you are on a Bilibili, YouTube, or Xiaohongshu page.";
+  else if (!urlOk) {
+    if (mdpIsXiaohongshuHost(currentUrl)) {
+      statusEl.textContent = "On Explore, click ✨ Extract on a post card. Open a note to use this Extract button.";
+    } else {
+      statusEl.textContent = "Start is disabled until you are on a Bilibili, YouTube, Xiaohongshu, or RedNote page.";
+    }
+  }
   else if (!modelOk) statusEl.textContent = "Start is disabled because the selected ASR model is not installed.";
 }
 

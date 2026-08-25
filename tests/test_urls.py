@@ -19,6 +19,16 @@ import pytest
         ("https://www.xiaohongshu.com/explore/64aaaaaaaaaaaaaaaaaaaaaa", "Xiaohongshu", "64aaaaaaaaaaaaaaaaaaaaaa"),
         ("http://xhslink.com/o/2x5jqGA2hr6", "Xiaohongshu", "2x5jqGA2hr6"),
         ("https://www.xiaohongshu.com/discovery/item/64aaaaaaaaaaaaaaaaaaaaaa", "Xiaohongshu", "64aaaaaaaaaaaaaaaaaaaaaa"),
+        (
+            "https://www.xiaohongshu.com/search_result/64aaaaaaaaaaaaaaaaaaaaaa?xsec_token=abc",
+            "Xiaohongshu",
+            "64aaaaaaaaaaaaaaaaaaaaaa",
+        ),
+        (
+            "https://www.rednote.com/explore/64aaaaaaaaaaaaaaaaaaaaaa?xsec_token=abc",
+            "Xiaohongshu",
+            "64aaaaaaaaaaaaaaaaaaaaaa",
+        ),
     ],
 )
 def test_parse_supported_urls(url, platform, video_id):

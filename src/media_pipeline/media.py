@@ -46,14 +46,14 @@ def parse_video_ref(url: str) -> tuple[str, str]:
         if not video_id:
             raise UnsupportedURLError(f"Could not parse a Bilibili video id from {url}")
         return "Bilibili", video_id
-    if host.endswith("xiaohongshu.com") or host in {"xhslink.com"}:
+    if host.endswith("xiaohongshu.com") or host.endswith("rednote.com") or host in {"xhslink.com"}:
         from media_pipeline.xhs import parse_xhs_ref
 
         try:
             return parse_xhs_ref(raw)
         except ValueError as exc:
             raise UnsupportedURLError(f"Could not parse a Xiaohongshu note id from {url}") from exc
-    raise UnsupportedURLError("Only Bilibili, YouTube, and Xiaohongshu URLs are supported")
+    raise UnsupportedURLError("Only Bilibili, YouTube, and Xiaohongshu (RedNote) URLs are supported")
 
 
 def canonicalize_url(url: str) -> str:

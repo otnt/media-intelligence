@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Save & Transcribe",
-  "version": "0.1.5",
-  "description": "Save Bilibili, YouTube, and Xiaohongshu posts to Obsidian with local speech recognition.",
+  "version": "0.1.11",
+  "description": "Save Bilibili, YouTube, Xiaohongshu, and RedNote posts to Obsidian with local speech recognition.",
   "permissions": ["storage", "activeTab", "tabs"],
   "host_permissions": [
     "http://127.0.0.1/*",
@@ -15,6 +15,8 @@
     "*://b23.tv/*",
     "*://*.xiaohongshu.com/*",
     "*://xiaohongshu.com/*",
+    "*://*.rednote.com/*",
+    "*://rednote.com/*",
     "*://xhslink.com/*",
     "*://*.xhslink.com/*"
   ],
@@ -41,17 +43,31 @@
         "*://www.xiaohongshu.com/*",
         "*://xiaohongshu.com/*",
         "*://*.xiaohongshu.com/*",
+        "*://www.rednote.com/*",
+        "*://rednote.com/*",
+        "*://*.rednote.com/*",
         "*://xhslink.com/*",
         "*://*.xhslink.com/*"
       ],
       "js": ["shared.js", "content.js"],
       "css": ["content.css"],
-      "run_at": "document_idle"
+      "run_at": "document_start"
     }
   ],
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
-  }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["page-bridge.js"],
+      "matches": [
+        "*://*.xiaohongshu.com/*",
+        "*://xiaohongshu.com/*",
+        "*://*.rednote.com/*",
+        "*://rednote.com/*"
+      ]
+    }
+  ]
 }
