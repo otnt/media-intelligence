@@ -75,8 +75,9 @@ def build_multimodal_document(
     segments: list[NamedSegment],
     keyframes: list[Keyframe],
     timeline: list[TimelineItem],
+    analysis: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    return {
+    payload = {
         "metadata": {
             "title": metadata.title,
             "url": metadata.url,
@@ -98,5 +99,8 @@ def build_multimodal_document(
         "keyframes": [frame.to_dict() for frame in keyframes],
         "timeline": [item.to_dict() for item in timeline],
     }
+    if analysis is not None:
+        payload["frame_analysis"] = analysis
+    return payload
 
 

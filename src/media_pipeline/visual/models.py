@@ -55,6 +55,40 @@ class DedupInfo:
 
 
 @dataclass
+class FrameVerdict:
+    filename: str
+    timestamp: float
+    informative: bool
+    score: float
+    category: str
+    reason: str
+    caption: str
+    kept: bool
+    decision: str = "auto"
+    model: str = ""
+    prompt_version: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> FrameVerdict:
+        return cls(
+            filename=str(data.get("filename") or ""),
+            timestamp=float(data.get("timestamp") or 0.0),
+            informative=bool(data.get("informative")),
+            score=float(data.get("score") or 0.0),
+            category=str(data.get("category") or "other"),
+            reason=str(data.get("reason") or ""),
+            caption=str(data.get("caption") or ""),
+            kept=bool(data.get("kept")),
+            decision=str(data.get("decision") or "auto"),
+            model=str(data.get("model") or ""),
+            prompt_version=str(data.get("prompt_version") or ""),
+        )
+
+
+@dataclass
 class Keyframe:
     timestamp: float
     image_path: str

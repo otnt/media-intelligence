@@ -3,6 +3,19 @@ from pathlib import Path
 from media_pipeline.config import load_config, persist_worker_config
 
 
+def test_load_config_reads_analysis_and_vlm_threshold(tmp_path: Path):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "analysis:\n  enabled: false\n  model: mlx-community/Qwen3.8-27B-4bit\n  idle_unload_sec: 30\n"
+        "visual:\n  vlm_keep_threshold: 0.7\n",
+        encoding="utf-8",
+    )
+    config = load_config(path)
+    assert config.analysis.enabled is False
+    assert config.analysis.idle_unload_sec == 30
+    assert config.visual.vlm_keep_threshold == 0.7
+
+
 def test_load_config_defaults_worker_concurrency(tmp_path: Path):
     path = tmp_path / "config.yaml"
     path.write_text("server:\n  host: 127.0.0.1\n", encoding="utf-8")

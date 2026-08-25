@@ -11,7 +11,7 @@ from media_pipeline.models import (
     TranscriptSegment,
     VideoMetadata,
 )
-from media_pipeline.pipeline import Pipeline
+from media_pipeline.pipeline import RERUN_STAGES, Pipeline
 from media_pipeline.store import TaskStore
 
 
@@ -38,6 +38,8 @@ class FakeVisual:
             "scenes": [],
             "candidates": [],
             "keyframes": keyframes,
+            "selected": keyframes,
+            "analysis": [],
             "timeline": timeline,
             "document": document,
         }
@@ -187,4 +189,9 @@ def test_pipeline_writes_failure_note_when_metadata_fails(tmp_path: Path, monkey
     text = Path(result.note_path).read_text(encoding="utf-8")
     assert "Status: failed" in text
     assert "Error Stage: fetching_metadata" in text
+
+
+def test_rerun_stages_include_frame_filter():
+    assert "filtering_frames" in RERUN_STAGES
+    assert "deduplicating_frames" in RERUN_STAGES
 

@@ -35,6 +35,14 @@ worker:
   # Local MLX/pyannote jobs. Keep this low on Apple Silicon.
   model_jobs: 1
 
+analysis:
+  # Local Qwen3.8-27B judges each keyframe after dedup. Install with: uv pip install -e '.[analysis]'
+  enabled: true
+  model: mlx-community/Qwen3.8-27B-4bit
+  # Unload the ~16GB weights after this many idle seconds. 0 keeps the model resident.
+  idle_unload_sec: 600
+  max_tokens: 256
+
 visual:
   sample_interval_sec: 12
   scene_detector: auto
@@ -45,3 +53,5 @@ visual:
   ocr_change_threshold: 0.45
   context_before_sec: 10
   context_after_sec: 20
+  # Frames with VLM score below this are dropped from the note. Cached verdicts are reused.
+  vlm_keep_threshold: 0.45

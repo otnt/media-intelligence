@@ -56,6 +56,18 @@ def test_render_transcript_inserts_frames_before_covering_block():
     assert markdown.index("00-00-25.000.jpg") < markdown.index("now look at the slide")
 
 
+def test_render_transcript_includes_caption_under_frame():
+    markdown = render_transcript(
+        [NamedSegment(0, 10, "s0", "Host", "hello")],
+        video_id="BVtest",
+        frames=[(5.0, "keyframes/00-00-05.000.jpg", "Cover of three recommended books")],
+    )
+    assert "![[attachments/BVtest/00-00-05.000.jpg]]" in markdown
+    assert "*Cover of three recommended books*" in markdown
+    assert markdown.index("00-00-05.000.jpg") < markdown.index("Cover of three recommended books")
+    assert markdown.index("Cover of three recommended books") < markdown.index("hello")
+
+
 def test_collapse_does_not_summarize_unique_content():
     text = "The first thing we should talk about is alignment."
     assert collapse_repeated_ngrams(text) == text

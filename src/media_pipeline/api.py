@@ -179,10 +179,13 @@ def create_app(config: AppConfig, store: TaskStore | None = None, worker: TaskWo
         payload = _enrich_task(task, config)
         if task.video_id:
             artifacts = ArtifactStore(config.paths.artifacts, task.video_id)
-            payload["debug"] = artifacts.debug_summary()
-            payload["decisions"] = artifacts.load_candidate_decisions()
+            summary = artifacts.debug_summary()
+            payload["debug"] = summary
+            payload["decisions"] = summary.get("decisions") or []
             payload["overrides"] = artifacts.load_overrides()
             payload["scenes"] = [item.to_dict() for item in (artifacts.load_scenes() or [])]
+            if not payload.get("selected_count"):
+                payload["selected_count"] = int(summary.get("selected_count") or 0)
         return payload
 
     @app.post("/v1/tasks/{task_id}/retry")
@@ -243,6 +246,10 @@ def _enrich_task(task: Task, config: AppConfig) -> dict[str, Any]:
         payload["candidate_count"] = len(artifacts.load_candidates() or [])
     if not payload.get("keyframe_count"):
         payload["keyframe_count"] = len(artifacts.load_keyframes() or [])
+    if not payload.get("selected_count"):
+        analysis = artifacts.load_frame_analysis()
+        if analysis is not None:
+            payload["selected_count"] = sum(1 for item in analysis if item.kept)
     if not payload.get("segment_count"):
         payload["segment_count"] = len(artifacts.load_named() or [])
     payload["has_multimodal"] = artifacts.multimodal_path.exists()

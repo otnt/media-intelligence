@@ -257,13 +257,14 @@
     }
 
     const KNOB_HELP = {
-      stage: "Which pipeline step to restart from. Artifacts produced by that step and everything after it are discarded, then the job is queued again.\n\nRe-run deduplication: keep existing candidate JPEGs and recompute keep/drop with the similarity threshold and your manual Keep/Drop overrides.\n\nRe-run candidate generation: recut stills from scene boundaries, the sample interval, and visual-change spikes, then dedup again.\n\nRe-run scene detection: detect cuts again with the scene threshold and min scene length, then regenerate candidates and keyframes.\n\nRebuild multimodal alignment: keep keyframes; rebuild transcript context windows in multimodal.json. The Obsidian note puts each frame above the transcript block covering that timestamp.\n\nRe-run ASR: transcribe audio again, then redo diarization and transcript alignment. Video and WAV files are reused. Visual stills are kept unless a later visual stage is also selected.\n\nRe-run diarization: refresh speaker labels and realign the transcript. Frames stay; the multimodal timeline is rebuilt.\n\nFull rerun: redo ASR through note writing. Download and audio extraction run only if those files are missing.",
+      stage: "Which pipeline step to restart from. Artifacts produced by that step and everything after it are discarded, then the job is queued again.\n\nRe-run Qwen3.8 frame filter: keep existing keyframe JPEGs and re-score which ones belong in the note. Changing the VLM keep threshold reuses cached verdicts and does not reload the model.\n\nRe-run deduplication: keep existing candidate JPEGs and recompute keep/drop with the similarity threshold and your manual Keep/Drop overrides.\n\nRe-run candidate generation: recut stills from scene boundaries, the sample interval, and visual-change spikes, then dedup again.\n\nRe-run scene detection: detect cuts again with the scene threshold and min scene length, then regenerate candidates and keyframes.\n\nRebuild multimodal alignment: keep keyframes; rebuild transcript context windows in multimodal.json. The Obsidian note puts each frame above the transcript block covering that timestamp.\n\nRe-run ASR: transcribe audio again, then redo diarization and transcript alignment. Video and WAV files are reused. Visual stills are kept unless a later visual stage is also selected.\n\nRe-run diarization: refresh speaker labels and realign the transcript. Frames stay; the multimodal timeline is rebuilt.\n\nFull rerun: redo ASR through note writing. Download and audio extraction run only if those files are missing.",
       sample_interval_sec: "How often to grab a still even when the picture is not changing, in seconds. Default 12.\n\nSmaller values catch more slides, title cards, and UI states, and produce more candidate JPEGs. Periodic samples are merged with scene cuts and visual-change spikes when they land within 0.4 seconds of each other.\n\nUsed when you rerun candidate generation or an earlier visual stage.",
       scene_threshold: "How sensitive scene-cut detection is. Default 27, in PySceneDetect ContentDetector units (about 0.30 as an ffmpeg scene score).\n\nLower values create more cuts and therefore more candidate frames. Higher values ignore small motion, zooms, and talking-head jitter.\n\nCuts shorter than Min scene are merged into the previous scene. Used when you rerun scene detection or a full visual rerun.",
       similarity_threshold: "When two candidate frames are similar enough to drop the later one as a duplicate. Default 0.92.\n\nEach candidate is compared to kept frames in the previous 30 seconds using dHash plus color histogram. It is auto-dropped only if similarity is at least this value. Lower means more aggressive dropping of talking-head frames; higher keeps more near-duplicates.\n\nManual Keep/Drop always wins. A large OCR text change can force-keep a frame that would otherwise drop.\n\nUsed when you rerun deduplication.",
       min_scene_duration_sec: "Shortest scene that is kept as its own span, in seconds. Default 0.8.\n\nShorter detected cuts are merged into the previous scene so a fade, blink, or flash does not emit a burst of extra frames.\n\nUsed when you rerun scene detection.",
       context_before_sec: "How many seconds of transcript to attach before each keyframe in multimodal.json. Default 10.\n\nThis window is stored for later analysis. It does not move images in the Obsidian note. The note places each frame above the speech block whose time range covers that frame.\n\nUsed when you rebuild multimodal alignment.",
       context_after_sec: "How many seconds of transcript to attach after each keyframe in multimodal.json. Default 20, because speakers often put a slide up and then talk about it.\n\nTogether with Context before, this is the machine-readable window on each keyframe. It does not change where frames appear in the note.\n\nUsed when you rebuild multimodal alignment.",
+      vlm_keep_threshold: "Minimum Qwen3.8 score (0-1) for a keyframe to appear in the Obsidian note. Default 0.45.\n\nThe model scores how much unique visual information the frame adds beyond the transcript. Talking-heads, transitions, and blur typically score low; slides, book covers, UI, and diagrams score high.\n\nRe-running the Qwen3.8 frame filter with a new threshold reuses cached verdicts. It does not call the model again unless a frame has no verdict yet. Manual Keep/Drop still wins.",
     };
 
     const STAGE_ROWS = [
@@ -276,6 +277,7 @@
       ["detecting_scenes", "Scene detection", "scenes"],
       ["sampling_frames", "Candidate frames", "candidates"],
       ["deduplicating_frames", "Deduplicated keyframes", "keyframes"],
+      ["filtering_frames", "Qwen3.8 frame filter", "frame_analysis"],
       ["aligning_multimodal", "Multimodal alignment", "multimodal"],
       ["writing_outputs", "Writing outputs", "outputs"],
     ];
@@ -301,7 +303,7 @@
         if (gallery) {
           gallery.innerHTML = decisions.map((item) => cardHtml(debug.video_id, item)).join("") || `<div class="empty">No candidate frames yet.</div>`;
           gallery.querySelectorAll("[data-act]").forEach((button) => {
-            button.onclick = () => decide(button.dataset.file, button.dataset.act);
+            button.onclick = () => decide(button.dataset.file, button.dataset.act, button.dataset.stage);
           });
         }
       }
@@ -326,6 +328,7 @@
           <span class="chip">${task.segment_count || 0} transcript segments</span>
           <span class="chip">${task.candidate_count || 0} candidates</span>
           <span class="chip">${task.keyframe_count || 0} keyframes</span>
+          <span class="chip">${task.selected_count || (task.debug && task.debug.selected_count) || 0} kept by Qwen</span>
         </div>
         <p class="empty" id="task-error" style="padding:0 0 12px">${esc(task.url || "")}${task.error ? " · " + esc(task.error) : ""}</p>
         <div class="panel">
@@ -335,6 +338,7 @@
           <strong>Rerun a stage</strong>
           <div class="fields" style="margin-top:10px">
             ${knobField("stage", "Stage", `<select id="stage">
+                <option value="filtering_frames">Re-run Qwen3.8 frame filter</option>
                 <option value="deduplicating_frames">Re-run deduplication</option>
                 <option value="sampling_frames">Re-run candidate generation</option>
                 <option value="detecting_scenes">Re-run scene detection</option>
@@ -349,6 +353,7 @@
             ${knobField("min_scene_duration_sec", "Min scene (s)", `<input id="min_scene_duration_sec" type="number" step="0.1" value="${esc(visual.min_scene_duration_sec ?? 0.8)}" />`)}
             ${knobField("context_before_sec", "Context before (s)", `<input id="context_before_sec" type="number" value="${esc(visual.context_before_sec ?? 10)}" />`)}
             ${knobField("context_after_sec", "Context after (s)", `<input id="context_after_sec" type="number" value="${esc(visual.context_after_sec ?? 20)}" />`)}
+            ${knobField("vlm_keep_threshold", "VLM keep threshold", `<input id="vlm_keep_threshold" type="number" step="0.05" min="0" max="1" value="${esc(visual.vlm_keep_threshold ?? 0.45)}" />`)}
           </div>
           <div class="actions">
             <button class="btn primary" id="rerun">Queue rerun</button>
@@ -362,7 +367,7 @@
       const decisions = task.decisions || [];
       gallery.innerHTML = decisions.map((item) => cardHtml(task.video_id, item)).join("") || `<div class="empty">No candidate frames yet.</div>`;
       gallery.querySelectorAll("[data-act]").forEach((button) => {
-        button.onclick = () => decide(button.dataset.file, button.dataset.act);
+        button.onclick = () => decide(button.dataset.file, button.dataset.act, button.dataset.stage);
       });
     }
 
@@ -386,6 +391,7 @@
         scenes: Boolean(d.scenes),
         candidates: Boolean(d.candidates),
         keyframes: Boolean(d.keyframes),
+        frame_analysis: Boolean(d.frame_analysis),
         multimodal: Boolean(d.multimodal),
         outputs: task.status === "completed",
       };
@@ -438,27 +444,38 @@
 
     function cardHtml(videoId, item) {
       const name = (item.path || "").split("/").pop();
-      const kept = Boolean(item.dedup && item.dedup.kept);
+      const vlm = item.analysis;
+      const dedupKept = Boolean(item.dedup && item.dedup.kept);
+      const kept = vlm ? Boolean(vlm.kept) : dedupKept;
       const src = `/v1/videos/${encodeURIComponent(videoId)}/frames/candidate_frames/${encodeURIComponent(name)}`;
       const sources = (item.sources || []).join(" + ") || "unknown";
       const sim = item.dedup ? Number(item.dedup.similarity || 0).toFixed(2) : "—";
       const nearest = item.dedup?.nearest_frame || "—";
-      const decision = item.dedup?.decision || "auto";
+      const decision = vlm ? (vlm.decision || "vlm") : (item.dedup?.decision || "auto");
+      const score = vlm && vlm.score != null ? Number(vlm.score).toFixed(2) : "";
+      const category = vlm && vlm.category ? vlm.category : "";
+      const caption = vlm && vlm.caption ? vlm.caption : "";
+      const reason = vlm && vlm.reason ? vlm.reason : "";
+      const retryStage = vlm && dedupKept ? "filtering_frames" : "deduplicating_frames";
+      const vlmLine = vlm
+        ? `Qwen: ${esc(category || "—")} · score ${esc(score || "—")}${reason ? "<br />" + esc(reason) : ""}${caption ? "<br />" + esc(caption) : ""}<br />`
+        : "";
       return `<article class="card ${kept ? "kept" : "dropped"}">
         <img src="${src}" alt="${esc(name)}" />
         <div class="body">
           <strong>${fmt(item.timestamp)} · ${kept ? "KEEP" : "DROP"}</strong>
           Source: ${esc(sources)}<br />
-          Nearest: ${esc(nearest)} · similarity ${esc(sim)} · ${esc(decision)}
+          Nearest: ${esc(nearest)} · similarity ${esc(sim)} · ${esc(decision)}<br />
+          ${vlmLine}
           <div class="actions">
-            <button class="btn keep" data-act="keep" data-file="${esc(name)}">Keep</button>
-            <button class="btn drop" data-act="drop" data-file="${esc(name)}">Drop</button>
+            <button class="btn keep" data-act="keep" data-file="${esc(name)}" data-stage="${retryStage}">Keep</button>
+            <button class="btn drop" data-act="drop" data-file="${esc(name)}" data-stage="${retryStage}">Drop</button>
           </div>
         </div>
       </article>`;
     }
 
-    async function decide(filename, decision) {
+    async function decide(filename, decision, stage) {
       await api(`/v1/videos/${encodeURIComponent(debug.video_id)}/frames/${encodeURIComponent(filename)}/decision`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -467,14 +484,14 @@
       await api(`/v1/tasks/${debug.id}/retry`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ stage: "deduplicating_frames" }),
+        body: JSON.stringify({ stage: stage || "deduplicating_frames" }),
       });
       await openTask(debug.id);
     }
 
     async function rerun() {
       const visual = {};
-      for (const key of ["sample_interval_sec", "scene_threshold", "similarity_threshold", "min_scene_duration_sec", "context_before_sec", "context_after_sec"]) {
+      for (const key of ["sample_interval_sec", "scene_threshold", "similarity_threshold", "min_scene_duration_sec", "context_before_sec", "context_after_sec", "vlm_keep_threshold"]) {
         const node = document.getElementById(key);
         if (node && node.value !== "") visual[key] = Number(node.value);
       }

@@ -60,6 +60,7 @@ class VisualConfig:
     ocr_change_threshold: float = 0.45
     context_before_sec: float = 10.0
     context_after_sec: float = 20.0
+    vlm_keep_threshold: float = 0.45
 
     def as_dict(self) -> dict[str, float | str]:
         return {
@@ -72,6 +73,7 @@ class VisualConfig:
             "ocr_change_threshold": self.ocr_change_threshold,
             "context_before_sec": self.context_before_sec,
             "context_after_sec": self.context_after_sec,
+            "vlm_keep_threshold": self.vlm_keep_threshold,
         }
 
     def merged(self, overrides: dict | None) -> dict:
@@ -125,6 +127,14 @@ class WorkerConfig:
 
 
 @dataclass
+class AnalysisConfig:
+    enabled: bool = True
+    model: str = "mlx-community/Qwen3.8-27B-4bit"
+    idle_unload_sec: float = 600.0
+    max_tokens: int = 256
+
+
+@dataclass
 class AppConfig:
     server: ServerConfig = field(default_factory=ServerConfig)
     paths: PathsConfig = field(default_factory=PathsConfig)
@@ -132,6 +142,7 @@ class AppConfig:
     download: DownloadConfig = field(default_factory=DownloadConfig)
     diarization: DiarizationConfig = field(default_factory=DiarizationConfig)
     visual: VisualConfig = field(default_factory=VisualConfig)
+    analysis: AnalysisConfig = field(default_factory=AnalysisConfig)
     worker: WorkerConfig = field(default_factory=WorkerConfig)
     source_path: Path | None = None
 
@@ -187,6 +198,7 @@ def load_config(path: Path | None = None) -> AppConfig:
     download_raw = raw.get("download") or {}
     diar_raw = raw.get("diarization") or {}
     visual_raw = raw.get("visual") or {}
+    analysis_raw = raw.get("analysis") or {}
     worker_raw = raw.get("worker") or {}
 
     vault_value = paths_raw.get("vault") or ""
@@ -237,11 +249,26 @@ def load_config(path: Path | None = None) -> AppConfig:
             ocr_change_threshold=float(visual_raw.get("ocr_change_threshold") or 0.45),
             context_before_sec=float(visual_raw.get("context_before_sec") or 10),
             context_after_sec=float(visual_raw.get("context_after_sec") or 20),
+            vlm_keep_threshold=float(visual_raw.get("vlm_keep_threshold") or 0.45),
+        ),
+        analysis=AnalysisConfig(
+            enabled=_as_bool(analysis_raw.get("enabled"), True),
+            model=str(analysis_raw.get("model") or "mlx-community/Qwen3.8-27B-4bit"),
+            idle_unload_sec=float(analysis_raw.get("idle_unload_sec") or 600),
+            max_tokens=int(analysis_raw.get("max_tokens") or 256),
         ),
         worker=_worker_from_raw(worker_raw),
         source_path=config_path if config_path.exists() else None,
     )
     return config
+
+
+def _as_bool(value: Any, default: bool) -> bool:
+    if value is None or value == "":
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def clamp_concurrency(value: Any, default: int, minimum: int = 0) -> int:

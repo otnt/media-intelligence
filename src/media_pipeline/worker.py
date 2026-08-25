@@ -12,6 +12,7 @@ from media_pipeline.models import Task, TaskStatus
 from media_pipeline.pipeline import Pipeline
 from media_pipeline.stage_timing import clear_invalidated_timings
 from media_pipeline.store import TaskStore
+from media_pipeline.visual.vlm import VisionProvider
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +109,7 @@ class TaskWorker:
         self._model_slots = ResizableSlots(config.worker.model_jobs)
         self._diarization: DiarizationProvider | None = None
         self._diarization_lock = threading.Lock()
+        self._vision: VisionProvider | None = None
 
     def start(self) -> None:
         if self._dispatcher and self._dispatcher.is_alive():
@@ -132,6 +134,7 @@ class TaskWorker:
             if remaining <= 0:
                 break
             thread.join(timeout=max(0.0, remaining))
+        self._unload_vision()
 
     def submit(self, task: Task) -> None:
         with self._lock:
@@ -194,6 +197,7 @@ class TaskWorker:
     def _loop(self) -> None:
         while not self._stop.is_set():
             self._dispatch()
+            self._maybe_unload_vision()
             self._wake.wait(timeout=0.2)
             self._wake.clear()
 
@@ -235,11 +239,15 @@ class TaskWorker:
                     self.config,
                     self.store,
                     diarization=self._diarization,
+                    vision=self._vision,
                     model_lock=self._model_slots,
                 )
                 provider = getattr(pipeline, "diarization", None)
                 if provider is not None:
                     self._diarization = provider
+                vision = getattr(pipeline, "vision", None)
+                if vision is not None:
+                    self._vision = vision
             pipeline.run(task)
         except Exception:
             logger.exception("Worker crashed while running task %s", task_id)
@@ -251,3 +259,32 @@ class TaskWorker:
 
     def _reap(self) -> None:
         self._jobs = [thread for thread in self._jobs if thread.is_alive()]
+
+    def _maybe_unload_vision(self) -> None:
+        idle = float(self.config.analysis.idle_unload_sec)
+        if idle <= 0:
+            return
+        with self._lock:
+            busy = bool(self._inflight) or bool(self._pending)
+        if busy:
+            return
+        self._unload_vision(idle_only=True, idle_sec=idle)
+
+    def _unload_vision(self, *, idle_only: bool = False, idle_sec: float = 0.0) -> None:
+        with self._diarization_lock:
+            provider = self._vision
+            if provider is None:
+                return
+            if idle_only:
+                if not provider.loaded:
+                    return
+                last = float(getattr(provider, "last_used", 0.0) or 0.0)
+                if last <= 0 or time.monotonic() - last < idle_sec:
+                    return
+                provider.unload()
+                return
+            if provider.loaded:
+                provider.unload()
+            closer = getattr(provider, "close", None)
+            if callable(closer):
+                closer()

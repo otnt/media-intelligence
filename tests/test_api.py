@@ -167,6 +167,11 @@ def test_dashboard_and_frame_override(tmp_path: Path):
     assert "Started" in home.text
     assert "class=\"help\"" in home.text
     assert "Sample interval" in home.text
+    assert "Qwen3.8 frame filter" in home.text
+    assert "vlm_keep_threshold" in home.text
+    visual = client.get("/v1/visual/config").json()
+    assert visual["visual"]["vlm_keep_threshold"] == 0.45
+    assert "filtering_frames" in visual["stages"]
     assert "Concurrency" in home.text
     assert "YouTube max" in home.text
     assert "Bilibili max" in home.text
@@ -175,7 +180,10 @@ def test_dashboard_and_frame_override(tmp_path: Path):
         json={"url": "https://www.bilibili.com/video/BV181KNeuEi2", "asr_model": "qwen3-asr-1.7b"},
     )
     task_id = created.json()["id"]
-    rerun = client.post(f"/v1/tasks/{task_id}/retry", json={"stage": "deduplicating_frames", "visual": {"sample_interval_sec": 5}})
+    rerun = client.post(
+        f"/v1/tasks/{task_id}/retry",
+        json={"stage": "filtering_frames", "visual": {"vlm_keep_threshold": 0.5}},
+    )
     assert rerun.status_code == 200
     assert worker.submitted[-1] == task_id
     decision = client.post(

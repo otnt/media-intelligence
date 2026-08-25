@@ -28,6 +28,8 @@ from media_pipeline.stage_timing import begin_stage, clear_invalidated_timings, 
 from media_pipeline.store import TaskStore
 from media_pipeline.transcript import clean_transcript, render_transcript
 from media_pipeline.visual.extract import VisualExtractor, copy_keyframes_to_vault
+from media_pipeline.visual.filtering import caption_for
+from media_pipeline.visual.vlm import VisionProvider, build_vision_provider
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +41,7 @@ RERUN_STAGES = frozenset(
         "detecting_scenes",
         "sampling_frames",
         "deduplicating_frames",
+        "filtering_frames",
         "aligning_multimodal",
         "writing_outputs",
         "all",
@@ -59,6 +62,7 @@ class Pipeline:
         store: TaskStore,
         diarization: DiarizationProvider | None = None,
         visual: VisualExtractor | None = None,
+        vision: VisionProvider | None = None,
         model_lock: AbstractContextManager[object] | None = None,
     ) -> None:
         self.config = config
@@ -72,7 +76,8 @@ class Pipeline:
             config.diarization.model,
             config.diarization.hf_token,
         )
-        self.visual = visual if visual is not None else VisualExtractor()
+        self.vision = vision if vision is not None else build_vision_provider(config)
+        self.visual = visual if visual is not None else VisualExtractor(vision=self.vision, model_lock=model_lock)
         self._model_lock = model_lock
 
     def run(self, task: Task) -> Task:
@@ -287,6 +292,7 @@ class Pipeline:
             self._complete_stage(task, open_stage[0], artifacts, succeeded=True)
         task.extra["candidate_count"] = len(result.get("candidates") or [])
         task.extra["keyframe_count"] = len(result.get("keyframes") or [])
+        task.extra["selected_count"] = len(result.get("selected") or result.get("keyframes") or [])
         self.store.update(task)
         return result
 
@@ -299,12 +305,16 @@ class Pipeline:
         visual_result: dict,
     ) -> None:
         with self._stage(task, TaskStatus.writing_outputs, metadata, artifacts):
+            keyframes = visual_result.get("selected") or visual_result.get("keyframes") or []
+            analysis = visual_result.get("analysis") or []
             notes_dir = self.config.notes_dir()
             if notes_dir is not None:
                 attachment_dir = notes_dir / "attachments" / metadata.video_id
-                copy_keyframes_to_vault(visual_result.get("keyframes") or [], artifacts.root, attachment_dir)
-            keyframes = visual_result.get("keyframes") or []
-            frames = [(frame.timestamp, frame.image_path) for frame in keyframes]
+                copy_keyframes_to_vault(keyframes, artifacts.root, attachment_dir)
+            frames = [
+                (frame.timestamp, frame.image_path, caption_for(frame, analysis))
+                for frame in keyframes
+            ]
             body = render_transcript(named, video_id=metadata.video_id, frames=frames)
             if task.note_path:
                 self.notes.update_progress(Path(task.note_path), task, metadata, named, body=body)

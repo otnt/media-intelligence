@@ -130,6 +130,10 @@ def cmd_doctor(config: AppConfig) -> int:
         checks.append(("pillow", True, "ok"))
     except ImportError:
         checks.append(("pillow", False, "required for keyframe hashing"))
+    from media_pipeline.visual.vlm import probe_vlm
+
+    analysis_ok, analysis_detail = probe_vlm(config)
+    checks.append(("analysis:qwen3.8", analysis_ok, analysis_detail or "ok"))
     vault = config.paths.vault
     checks.append(("obsidian vault", bool(vault and vault.exists()), str(vault) if vault else "not configured"))
     notes = config.notes_dir()
@@ -137,7 +141,7 @@ def cmd_doctor(config: AppConfig) -> int:
 
     failed = 0
     for name, ok, detail in checks:
-        optional = name.startswith("asr:qwen") or name == "pyannote.audio"
+        optional = name.startswith("asr:qwen") or name.startswith("analysis:") or name == "pyannote.audio"
         if ok:
             mark = "ok"
         elif optional:

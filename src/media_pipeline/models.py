@@ -19,6 +19,7 @@ class TaskStatus(str, Enum):
     detecting_scenes = "detecting_scenes"
     sampling_frames = "sampling_frames"
     deduplicating_frames = "deduplicating_frames"
+    filtering_frames = "filtering_frames"
     aligning_multimodal = "aligning_multimodal"
     writing_outputs = "writing_outputs"
     completed = "completed"
@@ -282,6 +283,7 @@ class Task:
             "segment_count": int(self.extra.get("segment_count") or 0),
             "candidate_count": int(self.extra.get("candidate_count") or 0),
             "keyframe_count": int(self.extra.get("keyframe_count") or 0),
+            "selected_count": int(self.extra.get("selected_count") or 0),
             "visual": dict(self.extra.get("visual") or {}),
             "rerun_stage": str(self.extra.get("rerun_stage") or ""),
             "stage_timings": {

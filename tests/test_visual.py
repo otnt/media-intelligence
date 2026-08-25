@@ -3,9 +3,10 @@ from pathlib import Path
 from PIL import Image
 
 from media_pipeline.models import NamedSegment, frame_filename
-from media_pipeline.visual.align import align_keyframes
+from media_pipeline.visual.align import align_keyframes, build_multimodal_document
 from media_pipeline.visual.dedup import apply_dedup
-from media_pipeline.visual.models import CandidateFrame, Keyframe, SceneSpan
+from media_pipeline.visual.extract import copy_keyframes_to_vault
+from media_pipeline.visual.models import CandidateFrame, FrameVerdict, Keyframe, SceneSpan
 from media_pipeline.visual.ocr import text_change_ratio
 from media_pipeline.visual.timestamps import (
     SOURCE_CHANGE,
@@ -107,6 +108,55 @@ def test_keyframe_gets_transcript_window_not_nearest_only():
     assert "Intro before the slide." not in texts
     assert "Unrelated later talk." not in texts
     assert timeline[0].frame == "keyframes/00-00-24.000.jpg"
+
+
+def test_copy_keyframes_to_vault_keeps_only_selected(tmp_path: Path):
+    artifact_root = tmp_path / "artifacts"
+    key_dir = artifact_root / "keyframes"
+    key_dir.mkdir(parents=True)
+    keep = key_dir / "00-00-01.000.jpg"
+    drop = key_dir / "00-00-02.000.jpg"
+    _solid(keep, (10, 20, 30))
+    _solid(drop, (40, 50, 60))
+    vault = tmp_path / "vault" / "attachments" / "BVtest"
+    vault.mkdir(parents=True)
+    leftover = vault / "00-00-02.000.jpg"
+    leftover.write_bytes(drop.read_bytes())
+    copy_keyframes_to_vault(
+        [Keyframe(1.0, "keyframes/00-00-01.000.jpg", sources=["periodic"])],
+        artifact_root,
+        vault,
+    )
+    assert (vault / "00-00-01.000.jpg").exists()
+    assert not leftover.exists()
+
+
+def test_multimodal_document_includes_frame_analysis():
+    metadata = NamedSegment(0, 1, "s0", "Host", "hello")
+    from media_pipeline.models import VideoMetadata
+
+    meta = VideoMetadata(
+        url="https://www.bilibili.com/video/BVtest",
+        title="Demo",
+        platform="Bilibili",
+        author="Host",
+        video_id="BVtest",
+        duration=10.0,
+        published="",
+        description="",
+        thumbnail_url="",
+        asr_model="qwen3-asr-1.7b",
+    )
+    frame = Keyframe(1.0, "keyframes/00-00-01.000.jpg", sources=["periodic"])
+    timeline = align_keyframes([frame], [metadata], before_sec=10, after_sec=20)
+    document = build_multimodal_document(
+        meta,
+        [metadata],
+        [frame],
+        timeline,
+        analysis=[FrameVerdict("00-00-01.000.jpg", 1.0, True, 0.9, "slide", "text", "A slide", True).to_dict()],
+    )
+    assert document["frame_analysis"][0]["caption"] == "A slide"
 
 
 def test_ocr_change_ratio_detects_slide_text_swap():

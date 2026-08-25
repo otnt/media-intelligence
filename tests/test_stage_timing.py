@@ -37,6 +37,9 @@ def test_invalidation_matches_artifact_scope():
     assert "detecting_scenes" in stage_keys_invalidated_by("detecting_scenes")
     assert "writing_outputs" in stage_keys_invalidated_by("deduplicating_frames")
     assert "downloading" not in stage_keys_invalidated_by("all")
+    assert "filtering_frames" in stage_keys_invalidated_by("filtering_frames")
+    assert "filtering_frames" in stage_keys_invalidated_by("deduplicating_frames")
+    assert "detecting_scenes" not in stage_keys_invalidated_by("filtering_frames")
     extra = {
         "stage_timings": {
             "transcribing": {"status": "succeeded", "duration_sec": 9},

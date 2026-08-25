@@ -148,3 +148,22 @@ def test_raising_youtube_limit_starts_waiting_job(tmp_path: Path, monkeypatch):
     finally:
         gate.set()
         worker.stop()
+
+
+def test_worker_unloads_idle_vision(tmp_path: Path):
+    class FakeVision:
+        name = "fake"
+        loaded = True
+        last_used = 0.0
+
+        def unload(self) -> None:
+            self.loaded = False
+
+    config = _config(tmp_path)
+    config.analysis.idle_unload_sec = 1
+    worker = TaskWorker(config, TaskStore(config.paths.db))
+    provider = FakeVision()
+    provider.last_used = time.monotonic() - 30
+    worker._vision = provider
+    worker._maybe_unload_vision()
+    assert provider.loaded is False

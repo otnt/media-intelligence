@@ -13,7 +13,7 @@ from media_pipeline.models import (
     VideoMetadata,
 )
 from media_pipeline.stage_timing import public_entry, public_timings, stage_keys_invalidated_by
-from media_pipeline.visual.models import CandidateFrame, DedupInfo, Keyframe, SceneSpan
+from media_pipeline.visual.models import CandidateFrame, DedupInfo, FrameVerdict, Keyframe, SceneSpan
 
 
 class ArtifactStore:
@@ -36,6 +36,7 @@ class ArtifactStore:
         self.keyframes_path = self.root / "keyframes.json"
         self.overrides_path = self.root / "overrides.json"
         self.multimodal_path = self.root / "multimodal.json"
+        self.frame_analysis_path = self.root / "frame_analysis.json"
         self.timings_path = self.root / "stage_timings.json"
 
     def asr_path(self, model_id: str) -> Path:
@@ -149,12 +150,24 @@ class ArtifactStore:
         self.write_json(self.overrides_path, overrides)
         return overrides
 
+    def save_frame_analysis(self, verdicts: list[FrameVerdict]) -> None:
+        self.write_json(self.frame_analysis_path, [item.to_dict() for item in verdicts])
+
+    def load_frame_analysis(self) -> list[FrameVerdict] | None:
+        if not self.frame_analysis_path.exists():
+            return None
+        data = self.read_json(self.frame_analysis_path)
+        if not isinstance(data, list):
+            return None
+        return [FrameVerdict.from_dict(item) for item in data if isinstance(item, dict)]
+
     def invalidate_from(self, stage: str) -> None:
         """Drop downstream visual/audio artifacts so a stage can be rerun."""
         visual_from_scenes = {"detecting_scenes", "all"}
         visual_from_sample = visual_from_scenes | {"sampling_frames"}
         visual_from_dedup = visual_from_sample | {"deduplicating_frames"}
-        visual_from_align = visual_from_dedup | {"aligning_multimodal", "writing_outputs"}
+        visual_from_filter = visual_from_dedup | {"filtering_frames"}
+        visual_from_align = visual_from_filter | {"aligning_multimodal", "writing_outputs"}
         if stage in {"transcribing", "all"}:
             for path in self.asr_dir.glob("*.json"):
                 path.unlink(missing_ok=True)
@@ -176,6 +189,7 @@ class ArtifactStore:
             if self.keyframe_dir.exists():
                 shutil.rmtree(self.keyframe_dir)
             self.keyframe_dir.mkdir(parents=True, exist_ok=True)
+            self.frame_analysis_path.unlink(missing_ok=True)
         if stage in visual_from_align:
             self.multimodal_path.unlink(missing_ok=True)
         self.clear_invalidated_timings(stage)
@@ -209,6 +223,15 @@ class ArtifactStore:
         keyframes = self.load_keyframes() or []
         named = self.load_named() or []
         decisions = self.load_candidate_decisions()
+        analysis = self.load_frame_analysis() or []
+        by_name = {item.filename: item.to_dict() for item in analysis}
+        attached = []
+        for row in decisions:
+            payload = dict(row)
+            name = Path(str(payload.get("path") or "")).name
+            if name in by_name:
+                payload["analysis"] = by_name[name]
+            attached.append(payload)
         return {
             "video_id": self.video_id,
             "metadata": self.metadata_path.exists(),
@@ -221,9 +244,12 @@ class ArtifactStore:
             "candidate_count": len(candidates),
             "keyframes": self.keyframes_path.exists(),
             "keyframe_count": len(keyframes),
+            "frame_analysis": bool(analysis),
+            "selected_count": sum(1 for item in analysis if item.kept) if analysis else len(keyframes),
             "multimodal": self.multimodal_path.exists(),
             "overrides": self.load_overrides(),
             "segment_count": len(named),
-            "decisions": decisions,
+            "decisions": attached,
+            "analysis": [item.to_dict() for item in analysis],
             "stage_timings": self.load_stage_timings(),
         }

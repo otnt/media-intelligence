@@ -14,6 +14,7 @@ STAGE_ORDER = (
     "detecting_scenes",
     "sampling_frames",
     "deduplicating_frames",
+    "filtering_frames",
     "aligning_multimodal",
     "writing_outputs",
 )
@@ -21,7 +22,8 @@ STAGE_ORDER = (
 _VISUAL_FROM_SCENES = frozenset({"detecting_scenes", "all"})
 _VISUAL_FROM_SAMPLE = _VISUAL_FROM_SCENES | {"sampling_frames"}
 _VISUAL_FROM_DEDUP = _VISUAL_FROM_SAMPLE | {"deduplicating_frames"}
-_VISUAL_FROM_ALIGN = _VISUAL_FROM_DEDUP | {"aligning_multimodal", "writing_outputs"}
+_VISUAL_FROM_FILTER = _VISUAL_FROM_DEDUP | {"filtering_frames"}
+_VISUAL_FROM_ALIGN = _VISUAL_FROM_FILTER | {"aligning_multimodal", "writing_outputs"}
 
 
 def now_iso(moment: datetime | None = None) -> str:
@@ -113,6 +115,8 @@ def stage_keys_invalidated_by(stage: str) -> set[str]:
         keys.add("sampling_frames")
     if stage in _VISUAL_FROM_DEDUP:
         keys.add("deduplicating_frames")
+    if stage in _VISUAL_FROM_FILTER:
+        keys.add("filtering_frames")
     if stage in _VISUAL_FROM_ALIGN:
         keys.add("aligning_multimodal")
         keys.add("writing_outputs")

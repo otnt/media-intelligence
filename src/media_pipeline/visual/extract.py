@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import shutil
+from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Callable
 
@@ -9,6 +10,7 @@ from media_pipeline.media import probe_duration
 from media_pipeline.models import NamedSegment, VideoMetadata, frame_filename
 from media_pipeline.visual.align import align_keyframes, build_multimodal_document
 from media_pipeline.visual.dedup import apply_dedup, keyframes_from_dedup
+from media_pipeline.visual.filtering import apply_threshold_and_overrides, filter_keyframes, selected_from_verdicts
 from media_pipeline.visual.frames import extract_frame, visual_change_timestamps
 from media_pipeline.visual.models import CandidateFrame, Keyframe, SceneSpan
 from media_pipeline.visual.ocr import build_ocr_engine, ocr_keep_names
@@ -21,6 +23,7 @@ from media_pipeline.visual.timestamps import (
     periodic_timestamps,
     scene_boundary_timestamps,
 )
+from media_pipeline.visual.vlm import VisionProvider
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +31,14 @@ ProgressFn = Callable[[str, dict], None]
 
 
 class VisualExtractor:
+    def __init__(
+        self,
+        vision: VisionProvider | None = None,
+        model_lock: AbstractContextManager[object] | None = None,
+    ) -> None:
+        self.vision = vision
+        self._model_lock = model_lock
+
     def detect_scenes(self, video_path: Path, duration: float, settings: dict) -> list[SceneSpan]:
         detector = build_scene_detector(str(settings.get("scene_detector") or "auto"))
         scenes = detector.detect(
@@ -128,6 +139,13 @@ class VisualExtractor:
             "deduplicating_frames",
             "all",
         }
+        force_filter = from_stage in {
+            "detecting_scenes",
+            "sampling_frames",
+            "deduplicating_frames",
+            "filtering_frames",
+            "all",
+        }
 
         scenes = artifacts.load_scenes()
         if scenes is None or force_scenes:
@@ -178,20 +196,56 @@ class VisualExtractor:
             )
             _notify(progress, "deduplicating_frames", {"keyframe_count": len(keyframes)}, event="done")
 
-        _notify(progress, "aligning_multimodal", {"keyframe_count": len(keyframes)})
+        existing_analysis = artifacts.load_frame_analysis()
+        if existing_analysis is not None and not force_filter:
+            _notify(progress, "filtering_frames", {"keyframe_count": len(keyframes)}, event="skip")
+            threshold = float(settings.get("vlm_keep_threshold") or 0.45)
+            analysis = [
+                apply_threshold_and_overrides(item, threshold, artifacts.load_overrides())
+                for item in existing_analysis
+            ]
+            artifacts.save_frame_analysis(analysis)
+            selected = selected_from_verdicts(keyframes, analysis)
+        else:
+            _notify(progress, "filtering_frames", {"keyframe_count": len(keyframes)})
+            analysis, selected = filter_keyframes(
+                keyframes,
+                artifacts,
+                metadata,
+                segments,
+                settings,
+                self.vision,
+                model_lock=self._model_lock,
+            )
+            _notify(
+                progress,
+                "filtering_frames",
+                {"keyframe_count": len(keyframes), "selected_count": len(selected)},
+                event="done",
+            )
+
+        _notify(progress, "aligning_multimodal", {"keyframe_count": len(selected)})
         timeline = align_keyframes(
-            keyframes,
+            selected,
             segments,
             before_sec=float(settings.get("context_before_sec") or 10),
             after_sec=float(settings.get("context_after_sec") or 20),
         )
-        document = build_multimodal_document(metadata, segments, keyframes, timeline)
+        document = build_multimodal_document(
+            metadata,
+            segments,
+            selected,
+            timeline,
+            analysis=[item.to_dict() for item in analysis],
+        )
         artifacts.save_multimodal(document)
-        _notify(progress, "aligning_multimodal", {"keyframe_count": len(keyframes)}, event="done")
+        _notify(progress, "aligning_multimodal", {"keyframe_count": len(selected)}, event="done")
         return {
             "scenes": scenes,
             "candidates": candidates,
             "keyframes": keyframes,
+            "selected": selected,
+            "analysis": analysis,
             "timeline": timeline,
             "document": document,
         }
@@ -207,9 +261,13 @@ def _notify(progress: ProgressFn | None, status: str, extra: dict | None = None,
 
 def copy_keyframes_to_vault(keyframes: list[Keyframe], artifact_root: Path, vault_dir: Path) -> None:
     vault_dir.mkdir(parents=True, exist_ok=True)
+    keep_names = {frame_filename(frame.timestamp) for frame in keyframes}
     for frame in keyframes:
         source = artifact_root / frame.image_path
         if not source.exists():
             continue
         dest = vault_dir / frame_filename(frame.timestamp)
         shutil.copy2(source, dest)
+    for leftover in vault_dir.glob("*.jpg"):
+        if leftover.name not in keep_names:
+            leftover.unlink(missing_ok=True)
