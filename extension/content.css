@@ -1,0 +1,13 @@
+#mdp-root {
+  display: inline-flex;
+  vertical-align: middle;
+  margin-left: 8px;
+  z-index: 2147483000;
+}
+
+#mdp-root.mdp-floating {
+  position: fixed;
+  top: 88px;
+  right: 20px;
+  margin-left: 0;
+}

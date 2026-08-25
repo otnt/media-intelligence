@@ -1,0 +1,25 @@
+server:
+  host: 127.0.0.1
+  port: 8765
+
+paths:
+  videos: ~/AIContent/videos
+  audio: ~/AIContent/audio
+  artifacts: ~/AIContent/artifacts
+  logs: ~/AIContent/logs
+  vault: ""
+  notes_folder: Transcripts
+
+asr:
+  default: whisper-large-v3-turbo
+
+download:
+  # Moderate quality is enough for transcription.
+  format: "bv*[height<=480]+ba/b[height<=480]/bv*[height<=720]+ba/b[height<=720]/b"
+  # Chrome cookies help with Bilibili and occasional YouTube restrictions.
+  cookies_from_browser: chrome
+
+diarization:
+  provider: pyannote
+  model: pyannote/speaker-diarization-community-1
+  hf_token: ""

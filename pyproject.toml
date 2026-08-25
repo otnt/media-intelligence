@@ -1,0 +1,38 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "media-pipeline"
+version = "0.1.0"
+description = "One-click Bilibili/YouTube save, transcribe, and Obsidian note pipeline."
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+license = { text = "MIT" }
+authors = [{ name = "HappyPony" }]
+dependencies = [
+  "fastapi>=0.115.0",
+  "uvicorn[standard]>=0.32.0",
+  "pydantic>=2.10.0",
+  "yt-dlp>=2025.1.0",
+  "pyyaml>=6.0.2",
+]
+
+[project.optional-dependencies]
+whisper = ["mlx-whisper>=0.4.0"]
+qwen = ["qwen-asr>=0.0.4", "torch>=2.4.0", "torchaudio>=2.4.0"]
+diarize = ["pyannote.audio>=3.3.0"]
+dev = ["pytest>=8.3.0", "httpx>=0.27.0"]
+
+[project.scripts]
+media-pipeline = "media_pipeline.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/media_pipeline"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.uv]
+package = true
