@@ -23,6 +23,15 @@ def main(argv: list[str] | None = None) -> int:
     doctor = sub.add_parser("doctor", help="Check local dependencies and configuration")
     doctor.add_argument("--config", type=Path, default=None)
 
+    transcribe = sub.add_parser("transcribe", help="Download, transcribe, and write an Obsidian note for one URL")
+    transcribe.add_argument("url", help="Bilibili or YouTube video URL")
+    transcribe.add_argument(
+        "--asr-model",
+        default=None,
+        help=f"ASR model id. Default comes from config. Choices: {', '.join(ASR_MODELS)}",
+    )
+    transcribe.add_argument("--config", type=Path, default=None)
+
     retry = sub.add_parser("retry", help="Re-queue a task, reusing downloaded artifacts")
     retry.add_argument("task_id")
     retry.add_argument("--asr-model", default=None)
@@ -46,6 +55,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_serve(config, host=args.host, port=args.port)
     if args.command == "doctor":
         return cmd_doctor(config)
+    if args.command == "transcribe":
+        return cmd_transcribe(config, args.url, args.asr_model)
     if args.command == "retry":
         return cmd_retry(config, args.task_id, args.asr_model)
     if args.command == "status":
@@ -118,6 +129,59 @@ def cmd_doctor(config: AppConfig) -> int:
     print(f"config: {config.source_path or '(defaults)'}")
     print(f"API:    http://{config.server.host}:{config.server.port}")
     return 0 if failed == 0 else 1
+
+
+def cmd_transcribe(config: AppConfig, url: str, asr_model: str | None) -> int:
+    import uuid
+
+    from media_pipeline.media import UnsupportedURLError, parse_video_ref
+    from media_pipeline.models import Task, TaskStatus, asr_label
+    from media_pipeline.pipeline import Pipeline
+    from media_pipeline.store import TaskStore
+
+    model_id = (asr_model or config.asr.default).strip()
+    if model_id not in ASR_MODELS:
+        print(f"Unknown ASR model {model_id!r}. Supported: {', '.join(ASR_MODELS)}", file=sys.stderr)
+        return 2
+    try:
+        platform, video_id = parse_video_ref(url)
+    except UnsupportedURLError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    if config.notes_dir() is None:
+        print(
+            "Obsidian vault was not found. Set paths.vault in ~/.config/media-pipeline/config.yaml",
+            file=sys.stderr,
+        )
+        return 1
+    _configure_logging(config)
+    config.ensure_directories()
+    store = TaskStore(config.paths.db)
+    task = Task(
+        id=str(uuid.uuid4()),
+        url=url.strip(),
+        asr_model=model_id,
+        status=TaskStatus.queued,
+        platform=platform,
+        video_id=video_id,
+    )
+    store.insert(task)
+    print(f"Task: {task.id}")
+    print(f"ASR:  {asr_label(model_id)}")
+    print(f"URL:  {task.url}")
+    result = Pipeline(config, store).run(task)
+    print()
+    print(f"Status: {result.status.value}")
+    if result.note_path:
+        print(f"Note:   {result.note_path}")
+    if result.video_path:
+        print(f"Video:  {result.video_path}")
+    if result.audio_path:
+        print(f"Audio:  {result.audio_path}")
+    if result.error:
+        print(f"Stage:  {result.error_stage}")
+        print(f"Error:  {result.error}", file=sys.stderr)
+    return 0 if result.status == TaskStatus.completed else 1
 
 
 def cmd_retry(config: AppConfig, task_id: str, asr_model: str | None) -> int:

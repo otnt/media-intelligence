@@ -69,6 +69,17 @@ Check the machine:
 uv run media-pipeline doctor
 ```
 
+## Command line
+
+Transcribe one Bilibili or YouTube URL without the browser:
+
+```bash
+uv run media-pipeline transcribe 'https://www.bilibili.com/video/BVxxxx' --asr-model whisper-large-v3-turbo
+```
+
+The command runs in the foreground, writes the Obsidian note as soon as metadata is available, then fills in the transcript.
+Use `whisper-large-v3` or `qwen3-asr-1.7b` to pick a different ASR model.
+
 ## Load the Chrome extension
 
 1. Open `chrome://extensions`.
