@@ -1,15 +1,17 @@
 {
   "manifest_version": 3,
   "name": "Save & Transcribe",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Save Bilibili and YouTube videos to Obsidian with local speech recognition.",
-  "permissions": ["storage", "activeTab"],
+  "permissions": ["storage", "activeTab", "tabs"],
   "host_permissions": [
     "http://127.0.0.1/*",
     "http://localhost/*",
     "*://*.youtube.com/*",
+    "*://youtube.com/*",
     "*://youtu.be/*",
     "*://*.bilibili.com/*",
+    "*://bilibili.com/*",
     "*://b23.tv/*"
   ],
   "background": {

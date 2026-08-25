@@ -34,14 +34,14 @@ async function loadHealth() {
 }
 
 async function loadTab() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const tab = await mdpGetActiveTab();
   currentUrl = tab?.url || "";
   if (!currentUrl) {
-    pageEl.textContent = "Could not read the current tab.";
+    pageEl.textContent = "Could not read the current tab. Reload the extension, then open this popup from a video page.";
     return;
   }
   if (!mdpIsSupportedVideoUrl(currentUrl)) {
-    pageEl.textContent = "Open a Bilibili or YouTube video page, then click Start.";
+    pageEl.textContent = `Not a Bilibili/YouTube video page:\n${currentUrl}`;
     return;
   }
   pageEl.textContent = tab.title || currentUrl;
@@ -92,7 +92,16 @@ async function loadTasks() {
 function updateStartEnabled() {
   const model = models.find((item) => item.id === selectedModel);
   const modelOk = Boolean(model && model.available !== false);
-  startEl.disabled = !(serviceOk && mdpIsSupportedVideoUrl(currentUrl) && modelOk);
+  const urlOk = mdpIsSupportedVideoUrl(currentUrl);
+  startEl.disabled = !(serviceOk && urlOk && modelOk);
+  if (!startEl.disabled) {
+    if (statusEl.textContent.startsWith("Start is disabled")) statusEl.textContent = "";
+    return;
+  }
+  if (!serviceOk) statusEl.textContent = "Start is disabled until the local service is running.";
+  else if (!currentUrl) statusEl.textContent = "Start is disabled because this tab URL could not be read.";
+  else if (!urlOk) statusEl.textContent = "Start is disabled until you are on a Bilibili or YouTube video.";
+  else if (!modelOk) statusEl.textContent = "Start is disabled because the selected ASR model is not installed.";
 }
 
 async function submitTask() {

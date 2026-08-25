@@ -73,6 +73,12 @@ const STYLE = `
 
 init();
 
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message.type === "GET_PAGE") {
+    sendResponse({ url: location.href, title: document.title });
+  }
+});
+
 function init() {
   chrome.storage.local.get(["asrModel"], (stored) => {
     if (stored.asrModel) selectedModel = stored.asrModel;

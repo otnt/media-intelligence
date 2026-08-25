@@ -10,19 +10,52 @@ function mdpIsSupportedVideoUrl(urlString) {
     const url = new URL(urlString);
     const host = (url.hostname || "").replace(/^www\./, "").toLowerCase();
     if (host === "youtu.be") return url.pathname.replace(/\/$/, "").length > 1;
-    if (host === "youtube.com" || host === "m.youtube.com") {
-      if (url.pathname === "/watch") return Boolean(url.searchParams.get("v"));
+    if (host === "youtube.com" || host === "m.youtube.com" || host === "music.youtube.com") {
+      if (url.searchParams.get("v")) return true;
+      if (url.pathname === "/watch") return true;
       if (url.pathname.startsWith("/shorts/")) return url.pathname.split("/").filter(Boolean).length >= 2;
+      if (url.pathname.startsWith("/live/")) return url.pathname.split("/").filter(Boolean).length >= 2;
+      if (url.pathname.startsWith("/embed/")) return url.pathname.split("/").filter(Boolean).length >= 2;
       return false;
     }
-    if (host === "bilibili.com" || host === "m.bilibili.com") {
-      return /\/video\/(?:BV|av)/i.test(url.pathname);
+    if (host === "bilibili.com" || host === "m.bilibili.com" || host.endsWith(".bilibili.com")) {
+      return /\/video\/(?:BV|bv|av|AV)/i.test(url.pathname);
     }
     if (host === "b23.tv") return url.pathname.replace(/\/$/, "").length > 1;
     return false;
   } catch (_error) {
     return false;
   }
+}
+
+async function mdpGetActiveTab() {
+  const queries = [
+    { active: true, lastFocusedWindow: true },
+    { active: true, currentWindow: true },
+  ];
+  for (const query of queries) {
+    const tabs = await chrome.tabs.query(query);
+    for (const tab of tabs || []) {
+      if (!tab?.id || tab.url?.startsWith("chrome-extension://")) continue;
+      const fromPage = await mdpAskTabForPage(tab.id);
+      const url = fromPage?.url || tab.url || tab.pendingUrl || "";
+      if (!url || url.startsWith("chrome://") || url.startsWith("chrome-extension://")) continue;
+      return { id: tab.id, url, title: fromPage?.title || tab.title || url };
+    }
+  }
+  return null;
+}
+
+function mdpAskTabForPage(tabId) {
+  return new Promise((resolve) => {
+    chrome.tabs.sendMessage(tabId, { type: "GET_PAGE" }, (response) => {
+      if (chrome.runtime.lastError) {
+        resolve(null);
+        return;
+      }
+      resolve(response || null);
+    });
+  });
 }
 
 function mdpEscapeHtml(value) {
