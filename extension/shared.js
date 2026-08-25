@@ -1,6 +1,6 @@
 const MDP_DEFAULT_MODEL = "qwen3-asr-1.7b";
 const MDP_FALLBACK_MODELS = [
-  { id: "qwen3-asr-1.7b", label: "Qwen3-ASR-1.7B", runtime: "Qwen3-ASR", available: true, code_switching: true },
+  { id: "qwen3-asr-1.7b", label: "Qwen3-ASR-1.7B", runtime: "MLX Qwen3-ASR", available: true, code_switching: true },
   { id: "whisper-large-v3", label: "Whisper large-v3", runtime: "MLX Whisper", available: true, code_switching: false },
   { id: "whisper-large-v3-turbo", label: "Whisper large-v3-turbo", runtime: "MLX Whisper", available: true, code_switching: false },
 ];

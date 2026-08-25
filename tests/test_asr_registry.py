@@ -16,7 +16,7 @@ def test_registry_maps_whisper_variants_to_mlx_runtime():
 def test_registry_maps_qwen_to_its_own_provider():
     provider = get_provider("qwen3-asr-1.7b")
     assert isinstance(provider, Qwen3ASRProvider)
-    assert provider.runtime == "Qwen3-ASR"
+    assert provider.runtime == "MLX Qwen3-ASR"
 
 
 def test_list_models_includes_v1_choices():

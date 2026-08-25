@@ -15,7 +15,7 @@ Supported ASR models:
 
 - MLX Whisper — Whisper large-v3
 - MLX Whisper — Whisper large-v3-turbo
-- Qwen3-ASR-1.7B (multilingual, including mixed Chinese/English)
+- MLX Qwen3-ASR-1.7B (multilingual, including mixed Chinese/English; ~3.4 GB on Apple Silicon)
 
 ASR and speaker diarization are separate stages.
 Whisper and Qwen3-ASR answer *what was said*.
@@ -27,6 +27,7 @@ Language handling:
 - Default is `language: auto`.
 - Whisper auto-detects **one** language for the whole file, then transcribes in that language. Mixed Chinese/English speech often gets mangled.
 - Qwen3-ASR-1.7B auto-detects per utterance and can keep mixed-language / code-switched speech. Forcing `Chinese` or `English` turns that off.
+- Qwen runs on MLX, the same Apple Silicon stack as Whisper, instead of PyTorch/MPS.
 - Install the Qwen extra before choosing that model: `uv pip install -e '.[qwen]'`.
 
 ## Requirements

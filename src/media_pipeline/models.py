@@ -34,7 +34,7 @@ ASR_MODELS: dict[str, dict[str, str]] = {
     },
     "qwen3-asr-1.7b": {
         "label": "Qwen3-ASR-1.7B",
-        "runtime": "Qwen3-ASR",
+        "runtime": "MLX Qwen3-ASR",
         "provider": "qwen3",
         "backend_model": "qwen3-asr-1.7b",
     },
