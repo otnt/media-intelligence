@@ -3,7 +3,7 @@ from pathlib import Path
 from PIL import Image
 
 from media_pipeline.models import NamedSegment, frame_filename
-from media_pipeline.visual.align import align_keyframes, render_visual_timeline
+from media_pipeline.visual.align import align_keyframes
 from media_pipeline.visual.dedup import apply_dedup
 from media_pipeline.visual.models import CandidateFrame, Keyframe, SceneSpan
 from media_pipeline.visual.ocr import text_change_ratio
@@ -106,9 +106,7 @@ def test_keyframe_gets_transcript_window_not_nearest_only():
     assert "As you can see here." in texts
     assert "Intro before the slide." not in texts
     assert "Unrelated later talk." not in texts
-    markdown = render_visual_timeline(timeline, "BVtest")
-    assert "![[attachments/BVtest/00-00-24.000.jpg]]" in markdown
-    assert "Nearby transcript:" in markdown
+    assert timeline[0].frame == "keyframes/00-00-24.000.jpg"
 
 
 def test_ocr_change_ratio_detects_slide_text_swap():

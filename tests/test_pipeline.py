@@ -18,23 +18,26 @@ from media_pipeline.store import TaskStore
 class FakeVisual:
     def run(self, video_path, artifacts, metadata, named, settings, from_stage="", progress=None):
         from media_pipeline.visual.align import align_keyframes, build_multimodal_document
-        from media_pipeline.visual.models import SceneSpan
+        from media_pipeline.visual.models import Keyframe, SceneSpan
 
         if progress:
             progress("detecting_scenes", {})
             progress("sampling_frames", {"scene_count": 1})
             progress("deduplicating_frames", {"candidate_count": 0})
-            progress("aligning_multimodal", {"keyframe_count": 0})
+            progress("aligning_multimodal", {"keyframe_count": 1})
         artifacts.save_scenes([SceneSpan(0.0, float(metadata.duration or 0.0))])
         artifacts.save_candidates([])
-        artifacts.save_keyframes([])
-        timeline = align_keyframes([], named, before_sec=10, after_sec=20)
-        document = build_multimodal_document(metadata, named, [], timeline)
+        keyframes = [
+            Keyframe(timestamp=1.0, image_path="keyframes/00-00-01.000.jpg", sources=["periodic"]),
+        ]
+        artifacts.save_keyframes(keyframes)
+        timeline = align_keyframes(keyframes, named, before_sec=10, after_sec=20)
+        document = build_multimodal_document(metadata, named, keyframes, timeline)
         artifacts.save_multimodal(document)
         return {
             "scenes": [],
             "candidates": [],
-            "keyframes": [],
+            "keyframes": keyframes,
             "timeline": timeline,
             "document": document,
         }
@@ -131,6 +134,8 @@ def test_pipeline_reuses_download_and_audio(tmp_path: Path, monkeypatch):
     assert "Language Mode: auto" in note
     assert "Languages: en" in note
     assert "### [00:00:00] Speaker 1" in note
+    assert "## Visual Timeline" not in note
+    assert note.index("![[attachments/BVxxxx/00-00-01.000.jpg]]") < note.index("### [00:00:00] Speaker 1")
     assert ArtifactStore(config.paths.artifacts, "BVxxxx").asr_path("whisper-large-v3-turbo").exists()
     assert ArtifactStore(config.paths.artifacts, "BVxxxx").multimodal_path.exists()
     timings = result.extra.get("stage_timings") or {}

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from media_pipeline.models import NamedSegment, VideoMetadata, format_timestamp
+from media_pipeline.models import NamedSegment, VideoMetadata
 from media_pipeline.visual.models import Keyframe
 
 
@@ -100,26 +100,3 @@ def build_multimodal_document(
     }
 
 
-def render_visual_timeline(timeline: list[TimelineItem], video_id: str) -> str:
-    lines = ["## Visual Timeline", ""]
-    if not timeline:
-        lines.append("No keyframes extracted.")
-        lines.append("")
-        return "\n".join(lines)
-    for item in timeline:
-        lines.append(f"### {format_timestamp(item.timestamp)}")
-        lines.append("")
-        filename = item.frame.rsplit("/", 1)[-1]
-        lines.append(f"![[attachments/{video_id}/{filename}]]")
-        lines.append("")
-        nearby = item.transcript_context.segments
-        if nearby:
-            lines.append("Nearby transcript:")
-            lines.append("")
-            for segment in nearby:
-                lines.append(f"> **{segment.speaker_label} — {format_timestamp(segment.start)}**")
-                lines.append(f"> {segment.text}")
-                lines.append("")
-        lines.append("---")
-        lines.append("")
-    return "\n".join(lines).rstrip() + "\n"

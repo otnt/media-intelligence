@@ -27,7 +27,6 @@ from media_pipeline.speakers import name_speakers
 from media_pipeline.stage_timing import begin_stage, clear_invalidated_timings, finish_stage
 from media_pipeline.store import TaskStore
 from media_pipeline.transcript import clean_transcript, render_transcript
-from media_pipeline.visual.align import render_visual_timeline
 from media_pipeline.visual.extract import VisualExtractor, copy_keyframes_to_vault
 
 logger = logging.getLogger(__name__)
@@ -304,10 +303,9 @@ class Pipeline:
             if notes_dir is not None:
                 attachment_dir = notes_dir / "attachments" / metadata.video_id
                 copy_keyframes_to_vault(visual_result.get("keyframes") or [], artifacts.root, attachment_dir)
-            body = render_transcript(named)
-            timeline = visual_result.get("timeline") or []
-            if timeline or visual_result.get("keyframes"):
-                body = body.rstrip() + "\n\n" + render_visual_timeline(timeline, metadata.video_id)
+            keyframes = visual_result.get("keyframes") or []
+            frames = [(frame.timestamp, frame.image_path) for frame in keyframes]
+            body = render_transcript(named, video_id=metadata.video_id, frames=frames)
             if task.note_path:
                 self.notes.update_progress(Path(task.note_path), task, metadata, named, body=body)
 

@@ -153,18 +153,63 @@ def _needs_space(previous: str, token: str) -> bool:
     return True
 
 
-def render_transcript(segments: list[NamedSegment]) -> str:
+def render_transcript(
+    segments: list[NamedSegment],
+    *,
+    video_id: str = "",
+    frames: list[tuple[float, str]] | None = None,
+) -> str:
+    """Render the transcript, inserting keyframe wikilinks before covering blocks.
+
+    A frame is placed immediately above the first speech block whose [start, end]
+    contains its timestamp. If no block covers it, it sits above the next later
+    block, or after the last block if speech has already ended.
+    """
+    usable = [segment for segment in segments if segment.text.strip()]
+    placed = _place_frames(usable, frames or [])
     lines = ["## Transcript", ""]
-    if not segments:
+    if not usable and not (frames or []):
         lines.append("No speech detected.")
         lines.append("")
         return "\n".join(lines)
-    for segment in segments:
-        text = segment.text.strip()
-        if not text:
-            continue
+    for index, segment in enumerate(usable):
+        lines.extend(_frame_lines(video_id, placed[index]))
         lines.append(f"### [{format_timestamp(segment.start)}] {segment.speaker_label}")
         lines.append("")
-        lines.append(text)
+        lines.append(segment.text.strip())
         lines.append("")
+    lines.extend(_frame_lines(video_id, placed[-1] if placed else []))
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _place_frames(
+    segments: list[NamedSegment],
+    frames: list[tuple[float, str]],
+) -> list[list[tuple[float, str]]]:
+    buckets: list[list[tuple[float, str]]] = [[] for _ in range(len(segments) + 1)]
+    ordered = sorted(frames, key=lambda item: (item[0], item[1]))
+    for stamp, filename in ordered:
+        covering = next(
+            (index for index, segment in enumerate(segments) if segment.start <= stamp <= segment.end),
+            None,
+        )
+        if covering is not None:
+            buckets[covering].append((stamp, filename))
+            continue
+        later = next(
+            (index for index, segment in enumerate(segments) if segment.start > stamp),
+            len(segments),
+        )
+        buckets[later].append((stamp, filename))
+    return buckets
+
+
+def _frame_lines(video_id: str, frames: list[tuple[float, str]]) -> list[str]:
+    if not video_id or not frames:
+        return []
+    lines: list[str] = []
+    for _stamp, filename in frames:
+        name = filename.rsplit("/", 1)[-1]
+        lines.append(f"![[attachments/{video_id}/{name}]]")
+        lines.append("")
+    return lines
