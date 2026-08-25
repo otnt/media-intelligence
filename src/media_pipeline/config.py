@@ -35,6 +35,7 @@ class PathsConfig:
 @dataclass
 class ASRConfig:
     default: str = "whisper-large-v3-turbo"
+    language: str = "auto"
 
 
 @dataclass
@@ -133,7 +134,10 @@ def load_config(path: Path | None = None) -> AppConfig:
             notes_folder=str(paths_raw.get("notes_folder") or "Transcripts"),
             db=_as_path(paths_raw.get("db"), artifacts / "tasks.sqlite3"),
         ),
-        asr=ASRConfig(default=str(asr_raw.get("default") or "whisper-large-v3-turbo")),
+        asr=ASRConfig(
+            default=str(asr_raw.get("default") or "whisper-large-v3-turbo"),
+            language=str(asr_raw.get("language") or "auto"),
+        ),
         download=DownloadConfig(
             format=str(
                 download_raw.get("format")

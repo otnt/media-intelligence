@@ -18,9 +18,11 @@ from media_pipeline.store import TaskStore
 class FakeASR:
     def __init__(self) -> None:
         self.calls = 0
+        self.last_options: ASROptions | None = None
 
     def transcribe(self, audio_path: Path, options: ASROptions | None = None) -> Transcript:
         self.calls += 1
+        self.last_options = options
         return Transcript(
             language="en",
             provider="fake",
@@ -97,8 +99,12 @@ def test_pipeline_reuses_download_and_audio(tmp_path: Path, monkeypatch):
     assert downloads["count"] == 1
     assert extracts["count"] == 1
     assert asr.calls == 1
+    assert asr.last_options is not None
+    assert asr.last_options.language is None
     note = Path(result.note_path).read_text(encoding="utf-8")
     assert "Status: completed" in note
+    assert "Language Mode: auto" in note
+    assert "Languages: en" in note
     assert "### [00:00:00] Speaker 1" in note
     assert ArtifactStore(config.paths.artifacts, "BVxxxx").asr_path("whisper-large-v3-turbo").exists()
 

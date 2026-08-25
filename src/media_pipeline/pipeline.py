@@ -6,6 +6,7 @@ from pathlib import Path
 from media_pipeline.align import align_transcript
 from media_pipeline.artifacts import ArtifactStore
 from media_pipeline.asr.base import ASRNotAvailableError
+from media_pipeline.asr.language import format_detected_languages, resolve_provider_language
 from media_pipeline.asr.registry import require_provider
 from media_pipeline.config import AppConfig
 from media_pipeline.diarization import DiarizationProvider, NullDiarizationProvider, build_diarization_provider
@@ -18,7 +19,7 @@ from media_pipeline.media import (
     find_media_file,
     parse_video_ref,
 )
-from media_pipeline.models import ASROptions, Task, TaskStatus, VideoMetadata, asr_label
+from media_pipeline.models import ASR_MODELS, ASROptions, Task, TaskStatus, VideoMetadata, asr_label
 from media_pipeline.notes import NoteWriter
 from media_pipeline.speakers import name_speakers
 from media_pipeline.store import TaskStore
@@ -152,12 +153,23 @@ class Pipeline:
     def _transcribe(self, task: Task, metadata: VideoMetadata, artifacts: ArtifactStore, audio_path: Path):
         existing = artifacts.load_transcript(task.asr_model)
         if existing and existing.segments:
+            self._record_languages(task, existing.language)
             return existing
         self._set_status(task, TaskStatus.transcribing, metadata)
         provider = require_provider(task.asr_model)
         context = _asr_context(metadata)
-        transcript = provider.transcribe(audio_path, ASROptions(context=context))
+        provider_name = ASR_MODELS[task.asr_model]["provider"]
+        requested_language = str(task.extra.get("language") or self.config.asr.language or "auto")
+        task.extra["language"] = requested_language
+        transcript = provider.transcribe(
+            audio_path,
+            ASROptions(
+                context=context,
+                language=resolve_provider_language(provider_name, requested_language),
+            ),
+        )
         transcript = clean_transcript(transcript)
+        self._record_languages(task, transcript.language)
         artifacts.save_transcript(task.asr_model, transcript)
         return transcript
 
@@ -229,6 +241,13 @@ class Pipeline:
             logger.exception("Could not create a failure note for task %s", task.id)
             return
         task.note_path = str(path)
+
+    def _record_languages(self, task: Task, detected: object | None) -> None:
+        task.extra.setdefault("language", self.config.asr.language or "auto")
+        label = format_detected_languages(detected)
+        if label:
+            task.extra["detected_languages"] = label
+        self.store.update(task)
 
 
 def _asr_context(metadata: VideoMetadata) -> str:

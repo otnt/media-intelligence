@@ -19,6 +19,7 @@ from media_pipeline.worker import TaskWorker
 class CreateTaskRequest(BaseModel):
     url: str
     asr_model: str = Field(min_length=1)
+    language: str | None = None
 
 
 class RetryTaskRequest(BaseModel):
@@ -59,6 +60,7 @@ def create_app(config: AppConfig, store: TaskStore | None = None, worker: TaskWo
             "vault": str(config.paths.vault) if config.paths.vault else None,
             "notes_dir": str(notes_dir) if notes_dir else None,
             "default_asr_model": config.asr.default,
+            "default_language": config.asr.language,
         }
 
     @app.get("/v1/models")
@@ -72,6 +74,7 @@ def create_app(config: AppConfig, store: TaskStore | None = None, worker: TaskWo
                     "runtime": item.runtime,
                     "available": item.available,
                     "detail": item.detail,
+                    "code_switching": item.code_switching,
                 }
                 for item in list_models()
             ],
@@ -97,6 +100,7 @@ def create_app(config: AppConfig, store: TaskStore | None = None, worker: TaskWo
             status=TaskStatus.queued,
             platform=platform,
             video_id=video_id,
+            extra={"language": payload.language or config.asr.language or "auto"},
         )
         store.insert(task)
         worker.submit(task)
@@ -105,6 +109,7 @@ def create_app(config: AppConfig, store: TaskStore | None = None, worker: TaskWo
             "status": task.status.value,
             "asr_model": task.asr_model,
             "asr_label": asr_label(task.asr_model),
+            "language": task.extra["language"],
             "message": "Added to queue",
         }
 

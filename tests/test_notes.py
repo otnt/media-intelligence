@@ -36,6 +36,7 @@ def test_note_round_trip(tmp_path: Path):
     assert text.startswith("# How to Quickly Break the Ice and Build Relationships")
     assert "Status: downloading" in text
     assert "ASR Model: Whisper large-v3-turbo" in text
+    assert "Language Mode: auto" in text
     assert asr_label(task.asr_model) in text
 
     task.status = TaskStatus.failed

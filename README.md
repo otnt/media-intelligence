@@ -15,12 +15,19 @@ Supported ASR models:
 
 - MLX Whisper — Whisper large-v3
 - MLX Whisper — Whisper large-v3-turbo
-- Qwen3-ASR-1.7B
+- Qwen3-ASR-1.7B (multilingual, including mixed Chinese/English)
 
 ASR and speaker diarization are separate stages.
 Whisper and Qwen3-ASR answer *what was said*.
 A dedicated diarization stage answers *who spoke when*.
 Names are assigned only when the transcript or metadata contains evidence.
+
+Language handling:
+
+- Default is `language: auto`.
+- Whisper auto-detects **one** language for the whole file, then transcribes in that language. Mixed Chinese/English speech often gets mangled.
+- Qwen3-ASR-1.7B auto-detects per utterance and can keep mixed-language / code-switched speech. Forcing `Chinese` or `English` turns that off.
+- Install the Qwen extra before choosing that model: `uv pip install -e '.[qwen]'`.
 
 ## Requirements
 
@@ -80,6 +87,12 @@ uv run media-pipeline transcribe 'https://www.bilibili.com/video/BVxxxx' --asr-m
 The command runs in the foreground, writes the Obsidian note as soon as metadata is available, then fills in the transcript.
 Use `whisper-large-v3` or `qwen3-asr-1.7b` to pick a different ASR model.
 
+For mixed-language videos, use Qwen with automatic language detection:
+
+```bash
+uv run media-pipeline transcribe 'https://www.bilibili.com/video/BVxxxx' --asr-model qwen3-asr-1.7b --language auto
+```
+
 ## Load the Chrome extension
 
 1. Open `chrome://extensions`.
@@ -112,7 +125,8 @@ The extension talks only to `127.0.0.1`.
 POST /v1/tasks
 {
   "url": "https://www.bilibili.com/video/BVxxxx",
-  "asr_model": "whisper-large-v3-turbo"
+  "asr_model": "whisper-large-v3-turbo",
+  "language": "auto"
 }
 ```
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from media_pipeline.asr.base import ASRNotAvailableError, ASRProvider
+from media_pipeline.asr.language import supports_code_switching
 from media_pipeline.asr.mlx_whisper import MLXWhisperProvider
 from media_pipeline.asr.qwen3 import Qwen3ASRProvider
 from media_pipeline.models import ASR_MODELS
@@ -15,6 +16,7 @@ class ModelInfo:
     runtime: str
     available: bool
     detail: str = ""
+    code_switching: bool = False
 
 
 def get_provider(model_id: str) -> ASRProvider:
@@ -42,6 +44,7 @@ def list_models() -> list[ModelInfo]:
                 runtime=info["runtime"],
                 available=available,
                 detail=detail,
+                code_switching=supports_code_switching(model_id),
             )
         )
     return models

@@ -36,13 +36,15 @@ class MLXWhisperProvider(ASRProvider):
             ) from exc
 
         options = options or ASROptions()
+        # verbose=None hides Whisper's global "Detected language:" line.
+        # language=None still auto-detects, but Whisper then locks the whole file to one language.
         result = mlx_whisper.transcribe(
             str(audio_path),
             path_or_hf_repo=self._repo,
             word_timestamps=True,
             condition_on_previous_text=False,
             language=options.language,
-            verbose=False,
+            verbose=None,
         )
         segments: list[TranscriptSegment] = []
         for raw in result.get("segments") or []:

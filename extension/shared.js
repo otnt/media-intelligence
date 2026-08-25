@@ -1,8 +1,8 @@
 const MDP_DEFAULT_MODEL = "whisper-large-v3-turbo";
 const MDP_FALLBACK_MODELS = [
-  { id: "whisper-large-v3", label: "Whisper large-v3", runtime: "MLX Whisper", available: true },
-  { id: "whisper-large-v3-turbo", label: "Whisper large-v3-turbo", runtime: "MLX Whisper", available: true },
-  { id: "qwen3-asr-1.7b", label: "Qwen3-ASR-1.7B", runtime: "Qwen3-ASR", available: true },
+  { id: "whisper-large-v3", label: "Whisper large-v3", runtime: "MLX Whisper", available: true, code_switching: false },
+  { id: "whisper-large-v3-turbo", label: "Whisper large-v3-turbo", runtime: "MLX Whisper", available: true, code_switching: false },
+  { id: "qwen3-asr-1.7b", label: "Qwen3-ASR-1.7B", runtime: "Qwen3-ASR", available: true, code_switching: true },
 ];
 
 function mdpIsSupportedVideoUrl(urlString) {
@@ -86,7 +86,10 @@ function mdpRenderModelList(container, models, selectedId, onChange) {
     .map((model) => {
       const checked = model.id === selectedId ? "checked" : "";
       const unavailable = model.available === false;
-      const runtime = unavailable ? `${model.runtime} · not installed` : model.runtime;
+      const bits = [model.runtime];
+      if (model.code_switching) bits.push("multilingual");
+      if (unavailable) bits.push("not installed");
+      const runtime = bits.join(" · ");
       return `
         <label class="option ${unavailable ? "unavailable" : ""}">
           <input type="radio" name="asr" value="${mdpEscapeHtml(model.id)}" ${checked} ${unavailable ? "disabled" : ""}>

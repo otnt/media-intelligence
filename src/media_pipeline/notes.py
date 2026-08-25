@@ -16,7 +16,7 @@ from media_pipeline.transcript import render_transcript
 
 _INVALID_FILENAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _HEADER_END = re.compile(r"\n---\s*\n", re.MULTILINE)
-_FIELD = re.compile(r"^(URL|Platform|Author|Duration|Published|Thumbnail|Description|ASR Model|Status|Video Path|Audio Path|Error Stage|Error|Created|Updated):\s*(.*)$")
+_FIELD = re.compile(r"^(URL|Platform|Author|Duration|Published|Thumbnail|Description|ASR Model|Language Mode|Languages|Status|Video Path|Audio Path|Error Stage|Error|Created|Updated):\s*(.*)$")
 
 
 class NoteWriter:
@@ -87,6 +87,8 @@ class NoteDocument:
             "Thumbnail": metadata.thumbnail_url,
             "Description": _one_line(metadata.description, 500),
             "ASR Model": asr_label(task.asr_model),
+            "Language Mode": str(task.extra.get("language") or "auto"),
+            "Languages": str(task.extra.get("detected_languages") or ""),
             "Status": task.status.value if task.status != TaskStatus.queued else TaskStatus.downloading.value,
             "Video Path": task.video_path,
             "Audio Path": task.audio_path,
@@ -106,6 +108,12 @@ class NoteDocument:
             self.fields["Thumbnail"] = metadata.thumbnail_url
             self.fields["Description"] = _one_line(metadata.description, 500)
         self.fields["ASR Model"] = asr_label(task.asr_model)
+        self.fields["Language Mode"] = str(task.extra.get("language") or "auto")
+        detected = str(task.extra.get("detected_languages") or "")
+        if detected:
+            self.fields["Languages"] = detected
+        else:
+            self.fields.pop("Languages", None)
         self.fields["Status"] = task.status.value
         self.fields["Video Path"] = task.video_path
         self.fields["Audio Path"] = task.audio_path
@@ -128,6 +136,8 @@ class NoteDocument:
             "Thumbnail",
             "Description",
             "ASR Model",
+            "Language Mode",
+            "Languages",
             "Status",
             "Video Path",
             "Audio Path",
@@ -140,7 +150,7 @@ class NoteDocument:
             if key not in self.fields:
                 continue
             value = self.fields.get(key, "")
-            if key in {"Thumbnail", "Description"} and not value:
+            if key in {"Thumbnail", "Description", "Languages"} and not value:
                 continue
             lines.append(f"{key}: {value}")
         if self.transcript_markdown.strip():

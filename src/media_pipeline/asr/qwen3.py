@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from media_pipeline.asr.base import ASRNotAvailableError, ASRProvider
+from media_pipeline.asr.language import format_detected_languages
 from media_pipeline.models import (
     ASROptions,
     QWEN3_ALIGNER_REPO,
@@ -30,6 +31,7 @@ class Qwen3ASRProvider(ASRProvider):
     def transcribe(self, audio_path: Path, options: ASROptions | None = None) -> Transcript:
         options = options or ASROptions()
         model = self._load()
+        # language=None is multilingual auto-detect, including Chinese/English code-switching.
         kwargs: dict = {
             "audio": str(audio_path),
             "language": options.language,
@@ -39,7 +41,7 @@ class Qwen3ASRProvider(ASRProvider):
             kwargs["context"] = options.context
         results = model.transcribe(**kwargs)
         result = results[0] if isinstance(results, list) else results
-        language = getattr(result, "language", None) or None
+        language = format_detected_languages(getattr(result, "language", None)) or None
         text = str(getattr(result, "text", "") or "").strip()
         stamps = getattr(result, "time_stamps", None)
         words = _stamps_to_words(stamps)

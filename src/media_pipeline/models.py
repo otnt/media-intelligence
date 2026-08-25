@@ -271,6 +271,8 @@ class Task:
             "error": self.error,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+            "language": str(self.extra.get("language") or "auto"),
+            "detected_languages": str(self.extra.get("detected_languages") or ""),
         }
 
     @classmethod

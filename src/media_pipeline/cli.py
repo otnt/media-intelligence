@@ -30,6 +30,11 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help=f"ASR model id. Default comes from config. Choices: {', '.join(ASR_MODELS)}",
     )
+    transcribe.add_argument(
+        "--language",
+        default="auto",
+        help="auto (multilingual detect) or a language such as zh, en, Chinese, English",
+    )
     transcribe.add_argument("--config", type=Path, default=None)
 
     retry = sub.add_parser("retry", help="Re-queue a task, reusing downloaded artifacts")
@@ -56,7 +61,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "doctor":
         return cmd_doctor(config)
     if args.command == "transcribe":
-        return cmd_transcribe(config, args.url, args.asr_model)
+        return cmd_transcribe(config, args.url, args.asr_model, args.language)
     if args.command == "retry":
         return cmd_retry(config, args.task_id, args.asr_model)
     if args.command == "status":
@@ -131,7 +136,7 @@ def cmd_doctor(config: AppConfig) -> int:
     return 0 if failed == 0 else 1
 
 
-def cmd_transcribe(config: AppConfig, url: str, asr_model: str | None) -> int:
+def cmd_transcribe(config: AppConfig, url: str, asr_model: str | None, language: str | None = "auto") -> int:
     import uuid
 
     from media_pipeline.media import UnsupportedURLError, canonicalize_url, parse_video_ref
@@ -165,10 +170,12 @@ def cmd_transcribe(config: AppConfig, url: str, asr_model: str | None) -> int:
         status=TaskStatus.queued,
         platform=platform,
         video_id=video_id,
+        extra={"language": language or config.asr.language or "auto"},
     )
     store.insert(task)
     print(f"Task: {task.id}")
     print(f"ASR:  {asr_label(model_id)}")
+    print(f"Language: {task.extra['language']}")
     print(f"URL:  {task.url}")
     result = Pipeline(config, store).run(task)
     print()

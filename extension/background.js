@@ -29,7 +29,11 @@ async function handle(message) {
     return request(`${base}/v1/tasks`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url: message.url, asr_model: message.asr_model }),
+      body: JSON.stringify({
+        url: message.url,
+        asr_model: message.asr_model,
+        language: message.language || "auto",
+      }),
     });
   }
   return { ok: false, error: `Unknown message ${message.type}` };

@@ -12,6 +12,9 @@ paths:
 
 asr:
   default: whisper-large-v3-turbo
+  # auto = detect language(s). Qwen3-ASR can keep mixed Chinese/English in one transcript.
+  # Whisper still detects one language for the whole file.
+  language: auto
 
 download:
   # Moderate quality is enough for transcription.
