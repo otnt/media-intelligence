@@ -6,8 +6,10 @@
 }
 
 #mdp-root.mdp-floating {
-  position: fixed;
-  top: 88px;
-  right: 20px;
-  margin-left: 0;
+  position: fixed !important;
+  top: 96px !important;
+  right: 24px !important;
+  margin: 0 !important;
+  z-index: 2147483646 !important;
+  display: block !important;
 }
