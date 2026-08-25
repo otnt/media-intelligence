@@ -16,6 +16,7 @@ from media_pipeline.config import AppConfig, persist_worker_config
 from media_pipeline.media import UnsupportedURLError, canonicalize_url, parse_video_ref
 from media_pipeline.models import ASR_MODELS, Task, TaskStatus, asr_label
 from media_pipeline.pipeline import RERUN_STAGES
+from media_pipeline.stage_timing import merge_stage_timings
 from media_pipeline.store import TaskStore
 from media_pipeline.worker import TaskWorker
 
@@ -245,6 +246,10 @@ def _enrich_task(task: Task, config: AppConfig) -> dict[str, Any]:
     if not payload.get("segment_count"):
         payload["segment_count"] = len(artifacts.load_named() or [])
     payload["has_multimodal"] = artifacts.multimodal_path.exists()
+    payload["stage_timings"] = merge_stage_timings(
+        artifacts.load_stage_timings(),
+        payload.get("stage_timings"),
+    )
     return payload
 
 

@@ -164,6 +164,9 @@ def test_dashboard_and_frame_override(tmp_path: Path):
     home = client.get("/")
     assert home.status_code == 200
     assert "Extraction dashboard" in home.text
+    assert "Started" in home.text
+    assert "class=\"help\"" in home.text
+    assert "Sample interval" in home.text
     assert "Concurrency" in home.text
     assert "YouTube max" in home.text
     assert "Bilibili max" in home.text

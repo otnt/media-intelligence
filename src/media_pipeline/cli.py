@@ -209,8 +209,10 @@ def cmd_transcribe(config: AppConfig, url: str, asr_model: str | None, language:
 
 
 def cmd_retry(config: AppConfig, task_id: str, asr_model: str | None, stage: str | None = None) -> int:
+    from media_pipeline.artifacts import ArtifactStore
     from media_pipeline.models import TaskStatus
     from media_pipeline.pipeline import Pipeline
+    from media_pipeline.stage_timing import clear_invalidated_timings
     from media_pipeline.store import TaskStore
 
     if asr_model and asr_model not in ASR_MODELS:
@@ -226,6 +228,9 @@ def cmd_retry(config: AppConfig, task_id: str, asr_model: str | None, stage: str
         task.asr_model = asr_model
     if stage:
         task.extra["rerun_stage"] = stage
+        clear_invalidated_timings(task.extra, stage)
+        if task.video_id:
+            ArtifactStore(config.paths.artifacts, task.video_id).clear_invalidated_timings(stage)
     task.status = TaskStatus.queued
     task.error = ""
     task.error_stage = ""

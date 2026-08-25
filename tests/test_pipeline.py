@@ -133,6 +133,13 @@ def test_pipeline_reuses_download_and_audio(tmp_path: Path, monkeypatch):
     assert "### [00:00:00] Speaker 1" in note
     assert ArtifactStore(config.paths.artifacts, "BVxxxx").asr_path("whisper-large-v3-turbo").exists()
     assert ArtifactStore(config.paths.artifacts, "BVxxxx").multimodal_path.exists()
+    timings = result.extra.get("stage_timings") or {}
+    assert timings["transcribing"]["status"] == "succeeded"
+    assert "started_at" in timings["transcribing"]
+    assert timings["transcribing"]["duration_sec"] >= 0
+    persisted = ArtifactStore(config.paths.artifacts, "BVxxxx").load_stage_timings()
+    assert persisted["transcribing"]["status"] == "succeeded"
+    assert persisted["writing_outputs"]["status"] == "succeeded"
 
     second = store.insert(
         Task(
@@ -167,6 +174,10 @@ def test_pipeline_writes_failure_note_when_metadata_fails(tmp_path: Path, monkey
     result = pipeline.run(task)
     assert result.status == TaskStatus.failed
     assert result.error_stage == "fetching_metadata"
+    failed = (result.extra.get("stage_timings") or {}).get("fetching_metadata") or {}
+    assert failed.get("status") == "failed"
+    assert "duration_sec" not in failed
+    assert failed.get("started_at")
     assert result.note_path
     text = Path(result.note_path).read_text(encoding="utf-8")
     assert "Status: failed" in text

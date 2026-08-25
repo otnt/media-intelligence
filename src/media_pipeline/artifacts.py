@@ -12,6 +12,7 @@ from media_pipeline.models import (
     Transcript,
     VideoMetadata,
 )
+from media_pipeline.stage_timing import public_entry, public_timings, stage_keys_invalidated_by
 from media_pipeline.visual.models import CandidateFrame, DedupInfo, Keyframe, SceneSpan
 
 
@@ -35,6 +36,7 @@ class ArtifactStore:
         self.keyframes_path = self.root / "keyframes.json"
         self.overrides_path = self.root / "overrides.json"
         self.multimodal_path = self.root / "multimodal.json"
+        self.timings_path = self.root / "stage_timings.json"
 
     def asr_path(self, model_id: str) -> Path:
         return self.asr_dir / f"{model_id}.json"
@@ -176,6 +178,31 @@ class ArtifactStore:
             self.keyframe_dir.mkdir(parents=True, exist_ok=True)
         if stage in visual_from_align:
             self.multimodal_path.unlink(missing_ok=True)
+        self.clear_invalidated_timings(stage)
+
+    def load_stage_timings(self) -> dict[str, Any]:
+        if not self.timings_path.exists():
+            return {}
+        data = self.read_json(self.timings_path)
+        return public_timings(data if isinstance(data, dict) else {})
+
+    def save_stage_timing(self, key: str, entry: dict[str, Any]) -> None:
+        payload = public_entry(entry)
+        if not payload:
+            return
+        data = self.load_stage_timings()
+        data[key] = payload
+        self.write_json(self.timings_path, data)
+
+    def clear_invalidated_timings(self, stage: str) -> None:
+        drop = stage_keys_invalidated_by(stage)
+        if not drop:
+            return
+        data = {key: value for key, value in self.load_stage_timings().items() if key not in drop}
+        if data:
+            self.write_json(self.timings_path, data)
+        elif self.timings_path.exists():
+            self.timings_path.unlink(missing_ok=True)
 
     def debug_summary(self) -> dict[str, Any]:
         candidates = self.load_candidates() or []
@@ -198,4 +225,5 @@ class ArtifactStore:
             "overrides": self.load_overrides(),
             "segment_count": len(named),
             "decisions": decisions,
+            "stage_timings": self.load_stage_timings(),
         }

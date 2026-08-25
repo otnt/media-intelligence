@@ -129,35 +129,56 @@ class VisualExtractor:
             "all",
         }
 
-        if progress:
-            progress("detecting_scenes", {})
         scenes = artifacts.load_scenes()
         if scenes is None or force_scenes:
+            _notify(progress, "detecting_scenes")
             scenes = self.detect_scenes(video_path, duration, settings)
             artifacts.save_scenes(scenes)
+            _notify(progress, "detecting_scenes", {"scene_count": len(scenes)}, event="done")
+        else:
+            _notify(progress, "detecting_scenes", {"scene_count": len(scenes)}, event="skip")
 
-        if progress:
-            progress("sampling_frames", {"scene_count": len(scenes)})
-        candidates = self.collect_candidates(
-            video_path,
-            duration,
-            scenes,
-            settings,
-            artifacts,
-            force=force_sample,
-        )
+        existing_candidates = artifacts.load_candidates()
+        if existing_candidates and not force_sample:
+            candidates = existing_candidates
+            _notify(
+                progress,
+                "sampling_frames",
+                {"scene_count": len(scenes), "candidate_count": len(candidates)},
+                event="skip",
+            )
+        else:
+            _notify(progress, "sampling_frames", {"scene_count": len(scenes)})
+            candidates = self.collect_candidates(
+                video_path,
+                duration,
+                scenes,
+                settings,
+                artifacts,
+                force=force_sample,
+            )
+            _notify(progress, "sampling_frames", {"candidate_count": len(candidates)}, event="done")
 
-        if progress:
-            progress("deduplicating_frames", {"candidate_count": len(candidates)})
-        keyframes = self.deduplicate(
-            candidates,
-            artifacts,
-            settings,
-            force=force_dedup,
-        )
+        existing_keys = artifacts.load_keyframes()
+        if existing_keys and not force_dedup:
+            keyframes = existing_keys
+            _notify(
+                progress,
+                "deduplicating_frames",
+                {"candidate_count": len(candidates), "keyframe_count": len(keyframes)},
+                event="skip",
+            )
+        else:
+            _notify(progress, "deduplicating_frames", {"candidate_count": len(candidates)})
+            keyframes = self.deduplicate(
+                candidates,
+                artifacts,
+                settings,
+                force=force_dedup,
+            )
+            _notify(progress, "deduplicating_frames", {"keyframe_count": len(keyframes)}, event="done")
 
-        if progress:
-            progress("aligning_multimodal", {"keyframe_count": len(keyframes)})
+        _notify(progress, "aligning_multimodal", {"keyframe_count": len(keyframes)})
         timeline = align_keyframes(
             keyframes,
             segments,
@@ -166,6 +187,7 @@ class VisualExtractor:
         )
         document = build_multimodal_document(metadata, segments, keyframes, timeline)
         artifacts.save_multimodal(document)
+        _notify(progress, "aligning_multimodal", {"keyframe_count": len(keyframes)}, event="done")
         return {
             "scenes": scenes,
             "candidates": candidates,
@@ -173,6 +195,14 @@ class VisualExtractor:
             "timeline": timeline,
             "document": document,
         }
+
+
+def _notify(progress: ProgressFn | None, status: str, extra: dict | None = None, *, event: str = "start") -> None:
+    if progress is None:
+        return
+    payload = dict(extra or {})
+    payload["_event"] = event
+    progress(status, payload)
 
 
 def copy_keyframes_to_vault(keyframes: list[Keyframe], artifact_root: Path, vault_dir: Path) -> None:

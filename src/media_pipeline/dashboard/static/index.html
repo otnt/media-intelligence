@@ -55,11 +55,61 @@
     .btn.drop { background: #8a2d38; }
     .btn.primary { background: var(--accent); color: #0b0d12; font-weight: 700; }
     .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin: 16px 0; }
-    label.field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+    label.field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); position: relative; overflow: visible; }
     label.field input, label.field select { background: #10141c; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 7px 8px; }
-    .fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }
-    .stages { display: grid; gap: 6px; font-size: 13px; }
-    .stages div { display: flex; justify-content: space-between; border-bottom: 1px solid #222836; padding: 6px 0; }
+    .fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; overflow: visible; }
+    .label-row { display: flex; align-items: center; gap: 6px; }
+    .help {
+      flex: 0 0 auto;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      border: 1px solid var(--line);
+      background: #222836;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      line-height: 16px;
+      padding: 0;
+      cursor: help;
+    }
+    .help .tip {
+      display: none;
+      position: absolute;
+      z-index: 40;
+      left: 0;
+      top: calc(100% + 8px);
+      width: 280px;
+      max-width: min(280px, 70vw);
+      background: #0b0d12;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 12px;
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 400;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      box-shadow: 0 10px 28px rgba(0,0,0,0.45);
+      text-align: left;
+    }
+    .field:hover .help .tip,
+    .help:hover .tip,
+    .help:focus .tip,
+    .help:focus-visible .tip { display: block; }
+    .panel { overflow: visible; }
+    .stages { display: grid; gap: 0; font-size: 13px; }
+    .stage-head, .stage-row {
+      display: grid;
+      grid-template-columns: minmax(7.5rem, 1.5fr) 10rem 6.5rem 4.6rem;
+      gap: 8px;
+      align-items: center;
+      border-bottom: 1px solid #222836;
+      padding: 6px 0;
+    }
+    .stage-head { color: var(--muted); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; }
+    .stage-row .chip { justify-self: end; }
+    .time { font-variant-numeric: tabular-nums; color: var(--muted); }
     .kept { outline: 2px solid var(--keep); }
     .dropped { opacity: 0.55; }
   </style>
@@ -117,7 +167,7 @@
       await loadWorker();
       await loadTasks();
       if (selectedId) await openTask(selectedId);
-      setInterval(() => { loadTasks(); loadWorker(); }, 4000);
+      setInterval(() => { loadTasks(); loadWorker(); refreshSelected(); }, 4000);
       saveWorkerBtn.onclick = saveWorker;
     }
 
@@ -206,43 +256,85 @@
       await loadTasks();
     }
 
+    const KNOB_HELP = {
+      stage: "Which pipeline step to restart from. Artifacts produced by that step and everything after it are discarded, then the job is queued again.\n\nRe-run deduplication: keep existing candidate JPEGs and recompute keep/drop with the similarity threshold and your manual Keep/Drop overrides.\n\nRe-run candidate generation: recut stills from scene boundaries, the sample interval, and visual-change spikes, then dedup again.\n\nRe-run scene detection: detect cuts again with the scene threshold and min scene length, then regenerate candidates and keyframes.\n\nRebuild multimodal alignment: keep keyframes; rebuild transcript context windows and the Obsidian visual timeline using context before/after.\n\nRe-run ASR: transcribe audio again, then redo diarization and transcript alignment. Video and WAV files are reused. Visual stills are kept unless a later visual stage is also selected.\n\nRe-run diarization: refresh speaker labels and realign the transcript. Frames stay; the multimodal timeline is rebuilt.\n\nFull rerun: redo ASR through note writing. Download and audio extraction run only if those files are missing.",
+      sample_interval_sec: "How often to grab a still even when the picture is not changing, in seconds. Default 12.\n\nSmaller values catch more slides, title cards, and UI states, and produce more candidate JPEGs. Periodic samples are merged with scene cuts and visual-change spikes when they land within 0.4 seconds of each other.\n\nUsed when you rerun candidate generation or an earlier visual stage.",
+      scene_threshold: "How sensitive scene-cut detection is. Default 27, in PySceneDetect ContentDetector units (about 0.30 as an ffmpeg scene score).\n\nLower values create more cuts and therefore more candidate frames. Higher values ignore small motion, zooms, and talking-head jitter.\n\nCuts shorter than Min scene are merged into the previous scene. Used when you rerun scene detection or a full visual rerun.",
+      similarity_threshold: "When two candidate frames are similar enough to drop the later one as a duplicate. Default 0.92.\n\nEach candidate is compared to kept frames in the previous 30 seconds using dHash plus color histogram. It is auto-dropped only if similarity is at least this value. Lower means more aggressive dropping of talking-head frames; higher keeps more near-duplicates.\n\nManual Keep/Drop always wins. A large OCR text change can force-keep a frame that would otherwise drop.\n\nUsed when you rerun deduplication.",
+      min_scene_duration_sec: "Shortest scene that is kept as its own span, in seconds. Default 0.8.\n\nShorter detected cuts are merged into the previous scene so a fade, blink, or flash does not emit a burst of extra frames.\n\nUsed when you rerun scene detection.",
+      context_before_sec: "How many seconds of transcript to attach before each keyframe in multimodal.json and the Obsidian visual timeline. Default 10.\n\nEvery overlapping transcript segment in that window is included, not only the nearest sentence.\n\nUsed when you rebuild multimodal alignment.",
+      context_after_sec: "How many seconds of transcript to attach after each keyframe. Default 20, because speakers often put a slide up and then talk about it.\n\nTogether with Context before, this is the transcript window stored on each keyframe. Used when you rebuild multimodal alignment.",
+    };
+
+    const STAGE_ROWS = [
+      ["fetching_metadata", "Fetch metadata", "metadata"],
+      ["downloading", "Download", "video"],
+      ["extracting_audio", "Audio", "audio"],
+      ["transcribing", "ASR / transcript", "transcript"],
+      ["diarizing", "Diarization", "diarization"],
+      ["aligning_transcript", "Transcript alignment", "named"],
+      ["detecting_scenes", "Scene detection", "scenes"],
+      ["sampling_frames", "Candidate frames", "candidates"],
+      ["deduplicating_frames", "Deduplicated keyframes", "keyframes"],
+      ["aligning_multimodal", "Multimodal alignment", "multimodal"],
+      ["writing_outputs", "Writing outputs", "outputs"],
+    ];
+
+    async function refreshSelected() {
+      if (!selectedId || !document.getElementById("stages")) return;
+      try {
+        debug = await api(`/v1/tasks/${selectedId}/debug`);
+      } catch (_error) {
+        return;
+      }
+      const stagesEl = document.getElementById("stages");
+      if (stagesEl) stagesEl.innerHTML = stagesInner(debug);
+      const statusChip = document.getElementById("task-status");
+      if (statusChip) statusChip.textContent = debug.status || "";
+      const errorLine = document.getElementById("task-error");
+      if (errorLine) {
+        errorLine.textContent = `${debug.url || ""}${debug.error ? " · " + debug.error : ""}`;
+      }
+      if (!rerunPanelBusy()) {
+        const gallery = document.getElementById("gallery");
+        const decisions = debug.decisions || [];
+        if (gallery) {
+          gallery.innerHTML = decisions.map((item) => cardHtml(debug.video_id, item)).join("") || `<div class="empty">No candidate frames yet.</div>`;
+          gallery.querySelectorAll("[data-act]").forEach((button) => {
+            button.onclick = () => decide(button.dataset.file, button.dataset.act);
+          });
+        }
+      }
+    }
+
+    function rerunPanelBusy() {
+      const panel = document.getElementById("rerun-panel");
+      if (!panel) return false;
+      if (panel.contains(document.activeElement)) return true;
+      return Boolean(panel.querySelector(".help:hover, .field:hover"));
+    }
+
     function renderDetail() {
       const task = debug;
-      const d = task.debug || {};
       const visual = task.visual || {};
-      const stages = [
-        ["Download", Boolean(task.video_path)],
-        ["Audio", Boolean(task.audio_path)],
-        ["ASR / transcript", d.transcript],
-        ["Diarization", d.diarization],
-        ["Transcript alignment", d.named],
-        ["Scene detection", d.scenes],
-        ["Candidate frames", d.candidates],
-        ["Deduplicated keyframes", d.keyframes],
-        ["Multimodal alignment", d.multimodal],
-      ];
-      const decisions = task.decisions || [];
       main.innerHTML = `
         <h2>${esc(task.title || task.video_id || "Untitled")}</h2>
         <div class="row">
-          <span class="chip">${esc(task.status)}</span>
+          <span class="chip" id="task-status">${esc(task.status)}</span>
           <span class="chip">${esc(task.asr_label || task.asr_model)}</span>
           <span class="chip">${esc(task.platform)} ${esc(task.video_id)}</span>
           <span class="chip">${task.segment_count || 0} transcript segments</span>
           <span class="chip">${task.candidate_count || 0} candidates</span>
           <span class="chip">${task.keyframe_count || 0} keyframes</span>
         </div>
-        <p class="empty" style="padding:0 0 12px">${esc(task.url || "")}${task.error ? " · " + esc(task.error) : ""}</p>
+        <p class="empty" id="task-error" style="padding:0 0 12px">${esc(task.url || "")}${task.error ? " · " + esc(task.error) : ""}</p>
         <div class="panel">
-          <div class="stages">
-            ${stages.map(([name, ok]) => `<div><span>${name}</span><span class="chip ${ok ? "ok" : ""}">${ok ? "yes" : "—"}</span></div>`).join("")}
-          </div>
+          <div class="stages" id="stages">${stagesInner(task)}</div>
         </div>
-        <div class="panel">
+        <div class="panel" id="rerun-panel">
           <strong>Rerun a stage</strong>
           <div class="fields" style="margin-top:10px">
-            <label class="field">Stage
-              <select id="stage">
+            ${knobField("stage", "Stage", `<select id="stage">
                 <option value="deduplicating_frames">Re-run deduplication</option>
                 <option value="sampling_frames">Re-run candidate generation</option>
                 <option value="detecting_scenes">Re-run scene detection</option>
@@ -250,26 +342,13 @@
                 <option value="transcribing">Re-run ASR</option>
                 <option value="diarizing">Re-run diarization</option>
                 <option value="all">Full rerun</option>
-              </select>
-            </label>
-            <label class="field">Sample interval (s)
-              <input id="sample_interval_sec" type="number" value="${visual.sample_interval_sec ?? 12}" />
-            </label>
-            <label class="field">Scene threshold
-              <input id="scene_threshold" type="number" value="${visual.scene_threshold ?? 27}" />
-            </label>
-            <label class="field">Similarity threshold
-              <input id="similarity_threshold" type="number" step="0.01" value="${visual.similarity_threshold ?? 0.92}" />
-            </label>
-            <label class="field">Min scene (s)
-              <input id="min_scene_duration_sec" type="number" step="0.1" value="${visual.min_scene_duration_sec ?? 0.8}" />
-            </label>
-            <label class="field">Context before (s)
-              <input id="context_before_sec" type="number" value="${visual.context_before_sec ?? 10}" />
-            </label>
-            <label class="field">Context after (s)
-              <input id="context_after_sec" type="number" value="${visual.context_after_sec ?? 20}" />
-            </label>
+              </select>`)}
+            ${knobField("sample_interval_sec", "Sample interval (s)", `<input id="sample_interval_sec" type="number" value="${esc(visual.sample_interval_sec ?? 12)}" />`)}
+            ${knobField("scene_threshold", "Scene threshold", `<input id="scene_threshold" type="number" value="${esc(visual.scene_threshold ?? 27)}" />`)}
+            ${knobField("similarity_threshold", "Similarity threshold", `<input id="similarity_threshold" type="number" step="0.01" value="${esc(visual.similarity_threshold ?? 0.92)}" />`)}
+            ${knobField("min_scene_duration_sec", "Min scene (s)", `<input id="min_scene_duration_sec" type="number" step="0.1" value="${esc(visual.min_scene_duration_sec ?? 0.8)}" />`)}
+            ${knobField("context_before_sec", "Context before (s)", `<input id="context_before_sec" type="number" value="${esc(visual.context_before_sec ?? 10)}" />`)}
+            ${knobField("context_after_sec", "Context after (s)", `<input id="context_after_sec" type="number" value="${esc(visual.context_after_sec ?? 20)}" />`)}
           </div>
           <div class="actions">
             <button class="btn primary" id="rerun">Queue rerun</button>
@@ -280,10 +359,81 @@
       `;
       document.getElementById("rerun").onclick = rerun;
       const gallery = document.getElementById("gallery");
+      const decisions = task.decisions || [];
       gallery.innerHTML = decisions.map((item) => cardHtml(task.video_id, item)).join("") || `<div class="empty">No candidate frames yet.</div>`;
       gallery.querySelectorAll("[data-act]").forEach((button) => {
         button.onclick = () => decide(button.dataset.file, button.dataset.act);
       });
+    }
+
+    function knobField(key, label, controlHtml) {
+      return `<label class="field">
+        <span class="label-row">${esc(label)}<button type="button" class="help" aria-label="About ${esc(label)}">?<span class="tip">${esc(KNOB_HELP[key] || "")}</span></button></span>
+        ${controlHtml}
+      </label>`;
+    }
+
+    function stagesInner(task) {
+      const d = task.debug || {};
+      const timings = task.stage_timings || {};
+      const artifactOk = {
+        metadata: Boolean(d.metadata),
+        video: Boolean(task.video_path),
+        audio: Boolean(task.audio_path),
+        transcript: Boolean(d.transcript),
+        diarization: Boolean(d.diarization),
+        named: Boolean(d.named),
+        scenes: Boolean(d.scenes),
+        candidates: Boolean(d.candidates),
+        keyframes: Boolean(d.keyframes),
+        multimodal: Boolean(d.multimodal),
+        outputs: task.status === "completed",
+      };
+      const rows = STAGE_ROWS.map(([key, label, flag]) => {
+        const timing = timings[key] || {};
+        const state = stageChip(timing, artifactOk[flag]);
+        return `<div class="stage-row">
+          <span>${esc(label)}</span>
+          <span class="time">${esc(fmtStart(timing.started_at))}</span>
+          <span class="time">${esc(fmtStageDuration(timing))}</span>
+          <span class="chip ${state.cls}">${esc(state.label)}</span>
+        </div>`;
+      }).join("");
+      return `<div class="stage-head"><span>Stage</span><span>Started</span><span>Duration</span><span>Done</span></div>${rows}`;
+    }
+
+    function stageChip(timing, ok) {
+      const status = timing.status || "";
+      if (status === "running") return { label: "running", cls: "" };
+      if (status === "failed") return { label: "failed", cls: "bad" };
+      if (status === "succeeded" || ok) return { label: "yes", cls: "ok" };
+      return { label: "—", cls: "" };
+    }
+
+    function fmtStart(iso) {
+      if (!iso) return "—";
+      const date = new Date(iso);
+      if (Number.isNaN(date.getTime())) return String(iso);
+      const time = date.toLocaleTimeString([], { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+      const now = new Date();
+      if (date.toDateString() === now.toDateString()) return time;
+      const month = String(date.getMonth() + 1).padStart(2, "0");
+      const day = String(date.getDate()).padStart(2, "0");
+      return `${date.getFullYear()}-${month}-${day} ${time}`;
+    }
+
+    function fmtStageDuration(timing) {
+      if (!timing || timing.status !== "succeeded" || timing.duration_sec == null || timing.duration_sec === "") return "—";
+      const seconds = Number(timing.duration_sec);
+      if (!Number.isFinite(seconds) || seconds < 0) return "—";
+      if (seconds < 10) return `${seconds.toFixed(1)}s`;
+      if (seconds < 60) return `${Math.round(seconds)}s`;
+      const total = Math.round(seconds);
+      const hours = Math.floor(total / 3600);
+      const minutes = Math.floor((total % 3600) / 60);
+      const secs = total % 60;
+      if (hours) return `${hours}h ${minutes}m ${secs}s`;
+      return `${minutes}m ${secs}s`;
     }
 
     function cardHtml(videoId, item) {

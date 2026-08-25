@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import logging
-from contextlib import AbstractContextManager, nullcontext
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from pathlib import Path
+from typing import Iterator
 
 from media_pipeline.align import align_transcript
 from media_pipeline.artifacts import ArtifactStore
@@ -23,6 +24,7 @@ from media_pipeline.media import (
 from media_pipeline.models import ASR_MODELS, ASROptions, NamedSegment, Task, TaskStatus, VideoMetadata, asr_label
 from media_pipeline.notes import NoteWriter
 from media_pipeline.speakers import name_speakers
+from media_pipeline.stage_timing import begin_stage, clear_invalidated_timings, finish_stage
 from media_pipeline.store import TaskStore
 from media_pipeline.transcript import clean_transcript, render_transcript
 from media_pipeline.visual.align import render_visual_timeline
@@ -96,15 +98,15 @@ class Pipeline:
         artifacts.save_metadata(metadata)
         if from_stage:
             artifacts.invalidate_from(from_stage)
+            clear_invalidated_timings(task.extra, from_stage)
+        self._persist_finished_timings(task, artifacts)
         self._create_note(task, metadata, artifacts)
 
-        video_path = self._download(task, metadata)
-        audio_path = self._extract_audio(task, metadata, video_path)
+        video_path = self._download(task, metadata, artifacts)
+        audio_path = self._extract_audio(task, metadata, video_path, artifacts)
         transcript = self._transcribe(task, metadata, artifacts, audio_path)
         diarization = self._diarize(task, artifacts, audio_path)
-        aligned = self._align(task, artifacts, transcript, diarization)
-        named = name_speakers(aligned, metadata)
-        artifacts.save_named(named)
+        named = self._align(task, artifacts, transcript, diarization, metadata)
         task.extra["segment_count"] = len(named)
         self.store.update(task)
 
@@ -139,7 +141,8 @@ class Pipeline:
                     task.video_path = str(self.config.paths.videos / f"{cached.video_id}.mp4")
                 self.store.update(task)
                 return cached
-        metadata = fetch_metadata(task.url, task.asr_model, self.config)
+        with self._stage(task, TaskStatus.fetching_metadata):
+            metadata = fetch_metadata(task.url, task.asr_model, self.config)
         task.video_id = metadata.video_id
         task.platform = metadata.platform
         task.title = metadata.title
@@ -155,75 +158,87 @@ class Pipeline:
         self.store.update(task)
         self.notes.update_progress(note_path, task, metadata)
 
-    def _download(self, task: Task, metadata: VideoMetadata) -> Path:
+    def _download(self, task: Task, metadata: VideoMetadata, artifacts: ArtifactStore) -> Path:
         existing = find_media_file(self.config.paths.videos, metadata.video_id)
         if existing:
             task.video_path = str(existing)
-            self._set_status(task, TaskStatus.extracting_audio, metadata)
+            self.store.update(task)
             return existing
-        self._set_status(task, TaskStatus.downloading, metadata)
-        path = download_video(metadata.url, metadata.video_id, self.config.paths.videos, self.config)
-        task.video_path = str(path)
-        self._set_status(task, TaskStatus.extracting_audio, metadata)
-        return path
+        with self._stage(task, TaskStatus.downloading, metadata, artifacts):
+            path = download_video(metadata.url, metadata.video_id, self.config.paths.videos, self.config)
+            task.video_path = str(path)
+            return path
 
-    def _extract_audio(self, task: Task, metadata: VideoMetadata, video_path: Path) -> Path:
+    def _extract_audio(
+        self, task: Task, metadata: VideoMetadata, video_path: Path, artifacts: ArtifactStore
+    ) -> Path:
         audio_path = self.config.paths.audio / f"{metadata.video_id}.wav"
         if audio_path.exists() and audio_path.stat().st_size > 0:
             task.audio_path = str(audio_path)
-            self._set_status(task, TaskStatus.transcribing, metadata)
+            self.store.update(task)
             return audio_path
-        self._set_status(task, TaskStatus.extracting_audio, metadata)
-        path = extract_audio(video_path, audio_path)
-        task.audio_path = str(path)
-        self._set_status(task, TaskStatus.transcribing, metadata)
-        return path
+        with self._stage(task, TaskStatus.extracting_audio, metadata, artifacts):
+            path = extract_audio(video_path, audio_path)
+            task.audio_path = str(path)
+            return path
 
     def _transcribe(self, task: Task, metadata: VideoMetadata, artifacts: ArtifactStore, audio_path: Path):
         existing = artifacts.load_transcript(task.asr_model)
         if existing and existing.segments:
             self._record_languages(task, existing.language)
             return existing
-        self._set_status(task, TaskStatus.transcribing, metadata)
-        provider = require_provider(task.asr_model)
-        context = _asr_context(metadata)
-        provider_name = ASR_MODELS[task.asr_model]["provider"]
-        requested_language = str(task.extra.get("language") or self.config.asr.language or "auto")
-        task.extra["language"] = requested_language
-        with self._model_slot():
-            transcript = provider.transcribe(
-                audio_path,
-                ASROptions(
-                    context=context,
-                    language=resolve_provider_language(provider_name, requested_language),
-                ),
-            )
-        transcript = clean_transcript(transcript)
-        self._record_languages(task, transcript.language)
-        artifacts.save_transcript(task.asr_model, transcript)
-        return transcript
+        with self._stage(task, TaskStatus.transcribing, metadata, artifacts):
+            provider = require_provider(task.asr_model)
+            context = _asr_context(metadata)
+            provider_name = ASR_MODELS[task.asr_model]["provider"]
+            requested_language = str(task.extra.get("language") or self.config.asr.language or "auto")
+            task.extra["language"] = requested_language
+            with self._model_slot():
+                transcript = provider.transcribe(
+                    audio_path,
+                    ASROptions(
+                        context=context,
+                        language=resolve_provider_language(provider_name, requested_language),
+                    ),
+                )
+            transcript = clean_transcript(transcript)
+            self._record_languages(task, transcript.language)
+            artifacts.save_transcript(task.asr_model, transcript)
+            return transcript
 
     def _diarize(self, task: Task, artifacts: ArtifactStore, audio_path: Path):
         existing = artifacts.load_diarization()
         if existing is not None:
             return existing
-        self._set_status(task, TaskStatus.diarizing)
-        try:
-            with self._model_slot():
-                result = self.diarization.diarize(audio_path)
-        except Exception as exc:
-            logger.warning("Diarization failed for task %s: %s", task.id, exc)
-            fallback = NullDiarizationProvider()
-            result = fallback.diarize(audio_path)
-            result.provider = f"fallback:{exc}"
-        artifacts.save_diarization(result)
-        return result
+        with self._stage(task, TaskStatus.diarizing, artifacts=artifacts):
+            try:
+                with self._model_slot():
+                    result = self.diarization.diarize(audio_path)
+            except Exception as exc:
+                logger.warning("Diarization failed for task %s: %s", task.id, exc)
+                fallback = NullDiarizationProvider()
+                result = fallback.diarize(audio_path)
+                result.provider = f"fallback:{exc}"
+            artifacts.save_diarization(result)
+            return result
 
-    def _align(self, task: Task, artifacts: ArtifactStore, transcript, diarization):
-        self._set_status(task, TaskStatus.aligning_transcript)
-        aligned = align_transcript(transcript, diarization.segments)
-        artifacts.save_aligned(aligned)
-        return aligned
+    def _align(
+        self,
+        task: Task,
+        artifacts: ArtifactStore,
+        transcript,
+        diarization,
+        metadata: VideoMetadata,
+    ):
+        existing = artifacts.load_named()
+        if existing is not None:
+            return existing
+        with self._stage(task, TaskStatus.aligning_transcript, metadata, artifacts):
+            aligned = align_transcript(transcript, diarization.segments)
+            artifacts.save_aligned(aligned)
+            named = name_speakers(aligned, metadata)
+            artifacts.save_named(named)
+            return named
 
     def _extract_visual(
         self,
@@ -237,10 +252,26 @@ class Pipeline:
         settings = self.config.visual.merged(task.extra.get("visual"))
         task.extra["visual"] = settings
         self.store.update(task)
+        open_stage: list[str] = []
 
         def progress(status: str, extra: dict) -> None:
-            for key, value in extra.items():
+            payload = dict(extra or {})
+            event = str(payload.pop("_event", "start") or "start")
+            for key, value in payload.items():
                 task.extra[key] = value
+            if event == "skip":
+                self.store.update(task)
+                return
+            if event == "done":
+                self._complete_stage(task, status, artifacts, succeeded=True)
+                if open_stage and open_stage[0] == status:
+                    open_stage.clear()
+                return
+            if open_stage:
+                self._complete_stage(task, open_stage[0], artifacts, succeeded=True)
+                open_stage.clear()
+            begin_stage(task.extra, status)
+            open_stage.append(status)
             self._set_status(task, TaskStatus(status), metadata)
 
         visual_from = from_stage if from_stage in RERUN_STAGES else ""
@@ -253,6 +284,8 @@ class Pipeline:
             from_stage=visual_from,
             progress=progress,
         )
+        if open_stage:
+            self._complete_stage(task, open_stage[0], artifacts, succeeded=True)
         task.extra["candidate_count"] = len(result.get("candidates") or [])
         task.extra["keyframe_count"] = len(result.get("keyframes") or [])
         self.store.update(task)
@@ -266,17 +299,17 @@ class Pipeline:
         named: list[NamedSegment],
         visual_result: dict,
     ) -> None:
-        self._set_status(task, TaskStatus.writing_outputs, metadata)
-        notes_dir = self.config.notes_dir()
-        if notes_dir is not None:
-            attachment_dir = notes_dir / "attachments" / metadata.video_id
-            copy_keyframes_to_vault(visual_result.get("keyframes") or [], artifacts.root, attachment_dir)
-        body = render_transcript(named)
-        timeline = visual_result.get("timeline") or []
-        if timeline or visual_result.get("keyframes"):
-            body = body.rstrip() + "\n\n" + render_visual_timeline(timeline, metadata.video_id)
-        if task.note_path:
-            self.notes.update_progress(Path(task.note_path), task, metadata, named, body=body)
+        with self._stage(task, TaskStatus.writing_outputs, metadata, artifacts):
+            notes_dir = self.config.notes_dir()
+            if notes_dir is not None:
+                attachment_dir = notes_dir / "attachments" / metadata.video_id
+                copy_keyframes_to_vault(visual_result.get("keyframes") or [], artifacts.root, attachment_dir)
+            body = render_transcript(named)
+            timeline = visual_result.get("timeline") or []
+            if timeline or visual_result.get("keyframes"):
+                body = body.rstrip() + "\n\n" + render_visual_timeline(timeline, metadata.video_id)
+            if task.note_path:
+                self.notes.update_progress(Path(task.note_path), task, metadata, named, body=body)
 
     def _set_status(self, task: Task, status: TaskStatus, metadata: VideoMetadata | None = None) -> None:
         task.status = status
@@ -284,7 +317,47 @@ class Pipeline:
         if task.note_path:
             self.notes.update_progress(Path(task.note_path), task, metadata)
 
+    @contextmanager
+    def _stage(
+        self,
+        task: Task,
+        status: TaskStatus,
+        metadata: VideoMetadata | None = None,
+        artifacts: ArtifactStore | None = None,
+    ) -> Iterator[None]:
+        begin_stage(task.extra, status.value)
+        self._set_status(task, status, metadata)
+        try:
+            yield
+        except Exception:
+            self._complete_stage(task, status.value, artifacts, succeeded=False)
+            raise
+        else:
+            self._complete_stage(task, status.value, artifacts, succeeded=True)
+
+    def _complete_stage(
+        self,
+        task: Task,
+        key: str,
+        artifacts: ArtifactStore | None,
+        *,
+        succeeded: bool,
+    ) -> None:
+        entry = finish_stage(task.extra, key, succeeded=succeeded)
+        if succeeded and artifacts is not None and entry:
+            artifacts.save_stage_timing(key, entry)
+        self.store.update(task)
+
+    def _persist_finished_timings(self, task: Task, artifacts: ArtifactStore) -> None:
+        timings = task.extra.get("stage_timings")
+        if not isinstance(timings, dict):
+            return
+        for key, entry in timings.items():
+            if isinstance(entry, dict) and entry.get("status") == "succeeded":
+                artifacts.save_stage_timing(key, entry)
+
     def _fail(self, task: Task, stage: TaskStatus, message: str) -> Task:
+        finish_stage(task.extra, stage.value, succeeded=False)
         task.status = TaskStatus.failed
         task.error_stage = stage.value
         task.error = message

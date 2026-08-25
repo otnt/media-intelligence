@@ -284,6 +284,11 @@ class Task:
             "keyframe_count": int(self.extra.get("keyframe_count") or 0),
             "visual": dict(self.extra.get("visual") or {}),
             "rerun_stage": str(self.extra.get("rerun_stage") or ""),
+            "stage_timings": {
+                key: {inner: value for inner, value in entry.items() if not str(inner).startswith("_")}
+                for key, entry in dict(self.extra.get("stage_timings") or {}).items()
+                if isinstance(entry, dict)
+            },
         }
 
     @classmethod

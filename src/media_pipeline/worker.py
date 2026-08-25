@@ -5,10 +5,12 @@ import threading
 import time
 from collections import deque
 
+from media_pipeline.artifacts import ArtifactStore
 from media_pipeline.config import AppConfig, WorkerConfig
 from media_pipeline.diarization import DiarizationProvider
 from media_pipeline.models import Task, TaskStatus
 from media_pipeline.pipeline import Pipeline
+from media_pipeline.stage_timing import clear_invalidated_timings
 from media_pipeline.store import TaskStore
 
 logger = logging.getLogger(__name__)
@@ -145,6 +147,9 @@ class TaskWorker:
             task.extra["visual"] = merged
         if stage:
             task.extra["rerun_stage"] = stage
+            clear_invalidated_timings(task.extra, stage)
+            if task.video_id:
+                ArtifactStore(self.config.paths.artifacts, task.video_id).clear_invalidated_timings(stage)
         if task.status not in {TaskStatus.failed, TaskStatus.completed}:
             self.store.update(task)
             self.submit(task)
