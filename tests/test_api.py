@@ -95,6 +95,10 @@ def test_models_mark_qwen_as_multilingual(tmp_path: Path):
     config.ensure_directories()
     client = TestClient(create_app(config, store=TaskStore(config.paths.db), worker=DummyWorker()))
     payload = client.get("/v1/models").json()
+    assert payload["default"] == "qwen3-asr-1.7b"
+    health = client.get("/v1/health").json()
+    assert health["default_asr_model"] == "qwen3-asr-1.7b"
+    assert health["default_language"] == "auto"
     by_id = {item["id"]: item for item in payload["models"]}
     assert by_id["qwen3-asr-1.7b"]["code_switching"] is True
     assert by_id["whisper-large-v3-turbo"]["code_switching"] is False

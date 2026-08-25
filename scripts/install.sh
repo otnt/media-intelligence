@@ -16,7 +16,7 @@ fi
 
 uv python pin 3.13
 uv venv --python 3.13
-uv pip install -e ".[whisper,dev]"
+uv pip install -e ".[whisper,qwen,dev]"
 uv run python scripts/generate_icons.py
 uv run media-pipeline init
 
@@ -28,8 +28,8 @@ echo
 echo "1. Start the background service:"
 echo "   uv run media-pipeline serve"
 echo
-echo "2. Optional extras:"
-echo "   uv pip install -e '.[qwen,diarize]'"
+echo "2. Optional speaker diarization:"
+echo "   uv pip install -e '.[diarize]'"
 echo "   For speaker diarization, set diarization.hf_token in ~/.config/media-pipeline/config.yaml"
 echo
 echo "3. Chrome → chrome://extensions → Developer mode → Load unpacked"

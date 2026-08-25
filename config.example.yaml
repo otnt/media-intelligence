@@ -11,7 +11,7 @@ paths:
   notes_folder: Transcripts
 
 asr:
-  default: whisper-large-v3-turbo
+  default: qwen3-asr-1.7b
   # auto = detect language(s). Qwen3-ASR can keep mixed Chinese/English in one transcript.
   # Whisper still detects one language for the whole file.
   language: auto

@@ -81,17 +81,12 @@ uv run media-pipeline doctor
 Transcribe one Bilibili or YouTube URL without the browser:
 
 ```bash
-uv run media-pipeline transcribe 'https://www.bilibili.com/video/BVxxxx' --asr-model whisper-large-v3-turbo
+uv run media-pipeline transcribe 'https://www.bilibili.com/video/BVxxxx'
 ```
 
 The command runs in the foreground, writes the Obsidian note as soon as metadata is available, then fills in the transcript.
-Use `whisper-large-v3` or `qwen3-asr-1.7b` to pick a different ASR model.
-
-For mixed-language videos, use Qwen with automatic language detection:
-
-```bash
-uv run media-pipeline transcribe 'https://www.bilibili.com/video/BVxxxx' --asr-model qwen3-asr-1.7b --language auto
-```
+The default ASR model is `qwen3-asr-1.7b` with `language: auto`, so mixed Chinese/English is kept when the model can hear it.
+Use `--asr-model whisper-large-v3-turbo` or `whisper-large-v3` to pick Whisper instead.
 
 ## Load the Chrome extension
 
@@ -125,7 +120,7 @@ The extension talks only to `127.0.0.1`.
 POST /v1/tasks
 {
   "url": "https://www.bilibili.com/video/BVxxxx",
-  "asr_model": "whisper-large-v3-turbo",
+  "asr_model": "qwen3-asr-1.7b",
   "language": "auto"
 }
 ```
