@@ -304,7 +304,8 @@ def test_dashboard_and_frame_override(tmp_path: Path):
     assert "Extract keyframes" in home.text
     assert "Transcript only" in home.text
     assert "Keyframes on" in home.text
-    assert "提取这个文章的核心思想" in home.text
+    assert "提取核心思想" in home.text
+    assert "不要插入任何图片" in home.text
     visual = client.get("/v1/visual/config").json()
     assert visual["visual"]["vlm_keep_threshold"] == 0.45
     assert "filtering_frames" in visual["stages"]

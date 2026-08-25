@@ -5,10 +5,12 @@ from media_pipeline.models import NamedSegment, Task, TaskStatus, VideoMetadata
 from media_pipeline.notes import NoteDocument, NoteWriter, load_note
 from media_pipeline.summary import (
     DEFAULT_PROMPT,
+    LEGACY_PROMPT,
     SummaryStill,
     build_model_prompt,
     choose_images,
     collect_stills,
+    normalize_prompt,
     summarize_task,
     upsert_summary_section,
 )
@@ -56,14 +58,42 @@ def test_choose_images_keeps_highest_scores_in_time_order():
     assert [item.filename for item in chosen] == ["a.jpg", "b.jpg"]
 
 
-def test_build_prompt_includes_user_text_and_stills():
-    stills = [SummaryStill("keep.jpg", 1.5, "a slide", Path("keep.jpg"), score=0.9)]
-    text = build_model_prompt("请总结", _metadata(), "[00:00:00] Speaker 1: hello", stills, stills)
+def test_build_prompt_is_text_only():
+    text = build_model_prompt("请总结", _metadata(), "[00:00:00] Speaker 1: hello")
     assert "请总结" in text
     assert "How to listen" in text
-    assert "keep.jpg" in text
-    assert "[attached image]" in text
     assert "Speaker 1: hello" in text
+    assert "Transcript:" in text
+    assert "keep.jpg" not in text
+    assert "![[attachments" not in text
+    assert "Plain text only" in text
+
+
+def test_build_prompt_labels_image_post_as_original():
+    metadata = VideoMetadata(
+        url="https://www.xiaohongshu.com/explore/note1",
+        title="币圈大佬",
+        platform="Xiaohongshu",
+        author="产联社",
+        video_id="note1",
+        duration=0.0,
+        published="2026-08-13",
+        description="8月7日凌晨4点30分，叶俊德坠亡。",
+        thumbnail_url="",
+        asr_model="",
+        media_kind="image",
+    )
+    text = build_model_prompt(DEFAULT_PROMPT, metadata, metadata.description)
+    assert "Original post:" in text
+    assert "Transcript:" not in text
+    assert metadata.description in text
+    assert "Do not copy the source sentence by sentence" in text
+
+
+def test_normalize_prompt_replaces_legacy_illustrated_default():
+    assert normalize_prompt("") == DEFAULT_PROMPT
+    assert normalize_prompt(LEGACY_PROMPT) == DEFAULT_PROMPT
+    assert normalize_prompt("自定义摘要") == "自定义摘要"
 
 
 def test_upsert_summary_replaces_existing_block():
@@ -74,7 +104,7 @@ def test_upsert_summary_replaces_existing_block():
     assert "old" not in updated
 
 
-def test_summarize_task_uses_kept_stills_and_transcript(tmp_path: Path):
+def test_summarize_task_uses_transcript_without_images(tmp_path: Path):
     artifacts = ArtifactStore(tmp_path / "artifacts", "BVxxxx")
     artifacts.save_metadata(_metadata())
     frame_dir = artifacts.keyframe_dir
@@ -102,12 +132,45 @@ def test_summarize_task_uses_kept_stills_and_transcript(tmp_path: Path):
     result = summarize_task(artifacts, vision, prompt="", metadata=_metadata())
     assert result["status"] == "completed"
     assert result["prompt"] == DEFAULT_PROMPT
+    assert result["image_count"] == 0
     assert "核心思想" in result["markdown"]
     assert "<think>" not in result["markdown"]
-    assert vision.images == [keep]
+    assert "![[" not in result["markdown"]
+    assert vision.images == []
     assert "Welcome." in vision.prompt
+    assert "Plain text only" in vision.prompt
     stills = collect_stills(artifacts)
     assert [item.filename for item in stills] == ["keep.jpg"]
+
+
+def test_summarize_image_post_uses_caption_not_photos(tmp_path: Path):
+    metadata = VideoMetadata(
+        url="https://www.xiaohongshu.com/explore/note1",
+        title="币圈大佬",
+        platform="Xiaohongshu",
+        author="产联社",
+        video_id="note1",
+        duration=0.0,
+        published="2026-08-13",
+        description="8月7日凌晨4点30分，叶俊德坠亡。管理资产超24亿美元。",
+        thumbnail_url="",
+        asr_model="",
+        media_kind="image",
+    )
+    artifacts = ArtifactStore(tmp_path / "artifacts", "note1")
+    artifacts.save_metadata(metadata)
+    photo_dir = tmp_path / "photos"
+    photo_dir.mkdir()
+    (photo_dir / "01.jpg").write_bytes(b"photo")
+    vision = FakeVision()
+    result = summarize_task(artifacts, vision, prompt=LEGACY_PROMPT, metadata=metadata)
+    assert result["status"] == "completed"
+    assert result["prompt"] == DEFAULT_PROMPT
+    assert result["image_count"] == 0
+    assert vision.images == []
+    assert "Original post:" in vision.prompt
+    assert metadata.description in vision.prompt
+    assert "![[" not in result["markdown"]
 
 
 def test_note_writer_inserts_summary_above_transcript(tmp_path: Path):

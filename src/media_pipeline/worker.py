@@ -170,7 +170,7 @@ class TaskWorker:
     def summarize(self, task: Task, prompt: str = "") -> dict:
         from datetime import datetime, timezone
 
-        from media_pipeline.summary import DEFAULT_PROMPT, idle_summary
+        from media_pipeline.summary import idle_summary, normalize_prompt
 
         if not task.video_id:
             raise ValueError("Task has no video id yet")
@@ -182,7 +182,7 @@ class TaskWorker:
             self._summarizing.add(task.id)
         payload = {
             "status": "running",
-            "prompt": (prompt or "").strip() or existing.get("prompt") or DEFAULT_PROMPT,
+            "prompt": normalize_prompt(prompt or existing.get("prompt")),
             "markdown": str(existing.get("markdown") or ""),
             "model": str(existing.get("model") or ""),
             "error": "",
@@ -337,7 +337,6 @@ class TaskWorker:
                 self._summarizing.discard(task_id)
             return
         artifacts = ArtifactStore(self.config.paths.artifacts, task.video_id)
-        extra_dir = Path(task.video_path) if task.video_path else None
         try:
             provider = self._ensure_vision()
             metadata = artifacts.load_metadata()
@@ -347,7 +346,6 @@ class TaskWorker:
                     provider,
                     prompt=prompt,
                     metadata=metadata,
-                    extra_image_dir=extra_dir if extra_dir and extra_dir.is_dir() else None,
                 )
             artifacts.save_summary(result)
             if task.note_path:

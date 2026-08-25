@@ -191,7 +191,8 @@
     let selectedId = new URLSearchParams(location.search).get("task");
     let debug = null;
     let summaryPromptDirty = false;
-    const DEFAULT_SUMMARY_PROMPT = "提取这个文章的核心思想，让我无需细读这个视频。生成一份图文输出（可以截屏）让我1分钟获得99%的信息。";
+    const LEGACY_SUMMARY_PROMPT = "提取这个文章的核心思想，让我无需细读这个视频。生成一份图文输出（可以截屏）让我1分钟获得99%的信息。";
+    const DEFAULT_SUMMARY_PROMPT = "提取核心思想，写成一份一分钟能读完的纯文字简报。可用少量 emoji 分点，不要复述原文，不要插入任何图片、截图或附件链接。";
 
     init();
 
@@ -400,7 +401,7 @@
         </div>
         <div class="panel" id="summary-panel">
           <strong>Generate summary</strong>
-          <p class="empty" style="padding:8px 0 10px">Qwen3.8 reads the transcript and kept stills, then writes a one-minute illustrated briefing.</p>
+          <p class="empty" style="padding:8px 0 10px">Qwen3.8 reads the transcript or original post, then writes a one-minute text briefing with light emoji. No images.</p>
           <div class="actions">
             <button class="btn primary" id="summarize">Generate summary</button>
             <span class="worker-msg" id="summary-status"></span>
@@ -586,7 +587,8 @@
       const promptEl = document.getElementById("summary-prompt");
       const statusEl = document.getElementById("summary-status");
       const button = document.getElementById("summarize");
-      const prompt = (promptEl && promptEl.value.trim()) || DEFAULT_SUMMARY_PROMPT;
+      const raw = (promptEl && promptEl.value.trim()) || DEFAULT_SUMMARY_PROMPT;
+      const prompt = raw === LEGACY_SUMMARY_PROMPT ? DEFAULT_SUMMARY_PROMPT : raw;
       if (button) button.disabled = true;
       if (statusEl) statusEl.textContent = "Generating…";
       try {
@@ -627,8 +629,9 @@
         }
       }
       const focused = document.activeElement === promptEl;
-      if (!keepPrompt && !summaryPromptDirty && !focused && summary.prompt) {
-        promptEl.value = summary.prompt;
+      const storedPrompt = summary.prompt === LEGACY_SUMMARY_PROMPT ? DEFAULT_SUMMARY_PROMPT : summary.prompt;
+      if (!keepPrompt && !summaryPromptDirty && !focused && storedPrompt) {
+        promptEl.value = storedPrompt;
       }
     }
 

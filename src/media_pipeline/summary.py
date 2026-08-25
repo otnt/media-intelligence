@@ -14,6 +14,10 @@ from media_pipeline.visual.vlm import VisionProvider
 logger = logging.getLogger(__name__)
 
 DEFAULT_PROMPT = (
+    "提取核心思想，写成一份一分钟能读完的纯文字简报。"
+    "可用少量 emoji 分点，不要复述原文，不要插入任何图片、截图或附件链接。"
+)
+LEGACY_PROMPT = (
     "提取这个文章的核心思想，让我无需细读这个视频。"
     "生成一份图文输出（可以截屏）让我1分钟获得99%的信息。"
 )
@@ -22,6 +26,9 @@ MAX_TRANSCRIPT_CHARS = 24000
 SUMMARY_MAX_TOKENS = 2048
 _THINK_BLOCK = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 _SUMMARY_BLOCK = re.compile(r"(?ms)^## Summary\n.*?(?=^## |\Z)")
+_WIKILINK_IMAGE = re.compile(r"!\[\[[^\]]+\]\]")
+_MD_IMAGE = re.compile(r"!\[[^\]]*\]\([^)]+\)")
+_HTML_IMAGE = re.compile(r"<img\b[^>]*>", re.IGNORECASE)
 
 
 @dataclass
@@ -33,10 +40,17 @@ class SummaryStill:
     score: float = 0.0
 
 
+def normalize_prompt(prompt: str | None) -> str:
+    text = (prompt or "").strip()
+    if not text or text == LEGACY_PROMPT:
+        return DEFAULT_PROMPT
+    return text
+
+
 def idle_summary(prompt: str = DEFAULT_PROMPT) -> dict:
     return {
         "status": "idle",
-        "prompt": prompt or DEFAULT_PROMPT,
+        "prompt": normalize_prompt(prompt),
         "markdown": "",
         "model": "",
         "error": "",
@@ -123,37 +137,29 @@ def choose_images(stills: list[SummaryStill], limit: int = MAX_SUMMARY_IMAGES) -
 def build_model_prompt(
     user_prompt: str,
     metadata: VideoMetadata | None,
-    transcript: str,
-    stills: list[SummaryStill],
-    attached: list[SummaryStill],
+    source_text: str,
 ) -> str:
     title = (metadata.title if metadata else "") or (metadata.video_id if metadata else "")
     author = metadata.author if metadata else ""
     url = metadata.url if metadata else ""
-    video_id = metadata.video_id if metadata else ""
+    source_label = "Original post" if metadata and metadata.media_kind == "image" else "Transcript"
     lines = [
         (user_prompt or DEFAULT_PROMPT).strip(),
         "",
-        "Use the transcript and attached stills. Do not invent facts they do not support.",
-        "Write a compact illustrated briefing. Prefer Chinese if the source is Chinese.",
-        "When you show a still, emit an Obsidian wikilink on its own line:",
-        f"![[attachments/{video_id or 'VIDEO_ID'}/FILENAME.jpg]]",
-        "FILENAME must match one of the stills listed below.",
+        "Use only the source text below. Do not invent facts it does not support.",
+        "Write a compact briefing. Prefer Chinese if the source is Chinese.",
+        "Plain text only. Light emoji is encouraged for scannability.",
+        "Do not copy the source sentence by sentence or reproduce it as a rewritten article.",
+        "Do not include images, screenshots, Obsidian wikilinks, or markdown image syntax.",
+        "Ignore any request to generate illustrated or screenshot output.",
         "",
         f"Title: {title}",
         f"Author: {author}",
         f"URL: {url}",
         "",
-        "Transcript:",
-        transcript.strip() or "(no speech transcript)",
-        "",
-        "Stills in chronological order:",
+        f"{source_label}:",
+        source_text.strip() or "(no source text)",
     ]
-    for index, still in enumerate(stills, start=1):
-        stamp = format_timestamp(still.timestamp) if still.timestamp else str(index)
-        caption = still.caption or ""
-        attached_mark = " [attached image]" if still.filename in {item.filename for item in attached} else ""
-        lines.append(f"[{index}] {stamp} {still.filename}{attached_mark} {caption}".rstrip())
     return "\n".join(lines).strip() + "\n"
 
 
@@ -163,21 +169,18 @@ def summarize_task(
     *,
     prompt: str,
     metadata: VideoMetadata | None = None,
-    extra_image_dir: Path | None = None,
     max_tokens: int = SUMMARY_MAX_TOKENS,
 ) -> dict:
-    user_prompt = (prompt or "").strip() or DEFAULT_PROMPT
-    stills = collect_stills(artifacts, extra_image_dir)
+    user_prompt = normalize_prompt(prompt)
     named = artifacts.load_named() or []
-    transcript = _plain_transcript(named)
-    if metadata and metadata.media_kind == "image" and metadata.description and not transcript.strip():
-        transcript = metadata.description.strip()
-    if not transcript.strip() and not stills:
-        raise ValueError("Nothing to summarize yet. Wait until the transcript or stills are ready.")
-    attached = choose_images(stills)
-    packed = build_model_prompt(user_prompt, metadata, _truncate(transcript), stills, attached)
-    logger.info("Summarizing %s with %s stills (%s attached)", artifacts.video_id, len(stills), len(attached))
-    raw = provider.generate(packed, [item.path for item in attached], max_tokens)
+    source_text = _plain_transcript(named)
+    if metadata and metadata.media_kind == "image" and metadata.description and not source_text.strip():
+        source_text = metadata.description.strip()
+    if not source_text.strip():
+        raise ValueError("Nothing to summarize yet. Wait until the transcript or original post text is ready.")
+    packed = build_model_prompt(user_prompt, metadata, _truncate(source_text))
+    logger.info("Summarizing %s as text-only", artifacts.video_id)
+    raw = provider.generate(packed, [], max_tokens)
     markdown = _clean_output(raw)
     if not markdown:
         raise RuntimeError("Qwen3.8 returned an empty summary")
@@ -187,7 +190,7 @@ def summarize_task(
         "markdown": markdown,
         "model": provider.model_id,
         "error": "",
-        "image_count": len(attached),
+        "image_count": 0,
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -211,7 +214,11 @@ def _truncate(text: str, limit: int = MAX_TRANSCRIPT_CHARS) -> str:
 def _clean_output(text: str) -> str:
     cleaned = _THINK_BLOCK.sub("", text or "").strip()
     cleaned = cleaned.replace("```markdown", "").replace("```", "").strip()
-    return cleaned
+    cleaned = _WIKILINK_IMAGE.sub("", cleaned)
+    cleaned = _MD_IMAGE.sub("", cleaned)
+    cleaned = _HTML_IMAGE.sub("", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
 
 
 def _still_path(artifacts: ArtifactStore, verdict: FrameVerdict, frame: Keyframe | None) -> Path | None:

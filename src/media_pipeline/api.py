@@ -19,7 +19,7 @@ from media_pipeline.notes import load_note
 from media_pipeline.pipeline import RERUN_STAGES
 from media_pipeline.stage_timing import merge_stage_timings
 from media_pipeline.store import TaskStore
-from media_pipeline.summary import DEFAULT_PROMPT, idle_summary
+from media_pipeline.summary import DEFAULT_PROMPT, idle_summary, normalize_prompt
 from media_pipeline.worker import TaskWorker
 
 DASHBOARD_FILE = Path(__file__).resolve().parent / "dashboard" / "static" / "index.html"
@@ -221,7 +221,7 @@ def create_app(config: AppConfig, store: TaskStore | None = None, worker: TaskWo
             raise HTTPException(status_code=404, detail="Task not found")
         if not task.video_id:
             raise HTTPException(status_code=400, detail="Task has no video id yet")
-        prompt = (payload.prompt if payload else None) or DEFAULT_PROMPT
+        prompt = normalize_prompt(payload.prompt if payload else None)
         starter = getattr(worker, "summarize", None)
         if not callable(starter):
             raise HTTPException(status_code=501, detail="Worker cannot summarize")
@@ -326,6 +326,7 @@ def _public_summary(task: Task, artifacts: ArtifactStore, worker: object) -> dic
             "error": payload.get("error") or "Summary was interrupted",
         }
     payload.setdefault("prompt", DEFAULT_PROMPT)
+    payload["prompt"] = normalize_prompt(str(payload.get("prompt") or ""))
     payload.setdefault("markdown", "")
     payload.setdefault("error", "")
     payload.setdefault("model", "")
