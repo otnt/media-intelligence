@@ -49,8 +49,6 @@ QWEN3_MODEL_REPOS = {
     "qwen3-asr-1.7b": "Qwen/Qwen3-ASR-1.7B",
 }
 
-QWEN3_ALIGNER_REPO = "Qwen/Qwen3-ForcedAligner-0.6B"
-
 
 def asr_label(model_id: str) -> str:
     info = ASR_MODELS.get(model_id)
@@ -73,6 +71,8 @@ class WordSpan:
 
 @dataclass
 class TranscriptSegment:
+    """Coarse source-timeline speech span. Word-level times are optional and unused."""
+
     start: float
     end: float
     text: str

@@ -1,30 +1,52 @@
-from media_pipeline.asr.qwen3 import _stamps_to_words
-from media_pipeline.models import WordSpan
+from types import SimpleNamespace
+from pathlib import Path
+
+from media_pipeline.asr.qwen3 import Qwen3ASRProvider
+from media_pipeline.models import ASROptions
 
 
-def test_stamps_to_words_reads_mlx_segment_dicts():
-    words = _stamps_to_words(
-        [
-            {"text": "姜", "start": 0.16, "end": 0.32},
-            {"text": "Dora", "start": 0.32, "end": 0.64},
-        ]
+def test_qwen_transcribes_vad_chunks_without_forced_aligner(tmp_path: Path, monkeypatch):
+    path = tmp_path / "talk.wav"
+    _write_tone_wav(path, silence_sec=0.8, tone_sec=1.2)
+
+    captured: list[dict] = []
+
+    class FakeSession:
+        def transcribe(self, audio, **kwargs):
+            captured.append(kwargs)
+            samples, sample_rate = audio
+            assert kwargs.get("return_timestamps") is False
+            assert sample_rate == 16000
+            assert len(samples) < 16000 * 8
+            return SimpleNamespace(text="hello there", language="English")
+
+    provider = Qwen3ASRProvider()
+    provider._model = FakeSession()
+    transcript = provider.transcribe(path, ASROptions(language=None))
+
+    assert captured
+    assert all(item.get("return_timestamps") is False for item in captured)
+    assert transcript.segments
+    assert transcript.segments[0].text == "hello there"
+    assert transcript.segments[0].words is None
+    assert transcript.segments[0].start < transcript.segments[0].end
+    assert transcript.language == "English"
+
+
+def _write_tone_wav(path: Path, silence_sec: float, tone_sec: float, sample_rate: int = 16000) -> None:
+    import array
+    import math
+    import wave
+
+    samples: list[float] = [0.0] * int(silence_sec * sample_rate)
+    samples.extend(
+        0.35 * math.sin(2 * math.pi * 220.0 * index / sample_rate)
+        for index in range(int(tone_sec * sample_rate))
     )
-    assert words == [
-        WordSpan(start=0.16, end=0.32, text="姜"),
-        WordSpan(start=0.32, end=0.64, text="Dora"),
-    ]
-
-
-def test_stamps_to_words_reads_qwen_aligner_items():
-    class Item:
-        def __init__(self, text, start_time, end_time):
-            self.text = text
-            self.start_time = start_time
-            self.end_time = end_time
-
-    class Result:
-        def __init__(self, items):
-            self.items = items
-
-    words = _stamps_to_words(Result([Item("hello", 1.0, 1.4)]))
-    assert words == [WordSpan(start=1.0, end=1.4, text="hello")]
+    samples.extend([0.0] * int(silence_sec * sample_rate))
+    pcm = array.array("h", [int(sample * 32767) for sample in samples])
+    with wave.open(str(path), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(sample_rate)
+        handle.writeframes(pcm.tobytes())

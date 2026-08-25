@@ -60,14 +60,9 @@ def probe_model(model_id: str) -> tuple[bool, str]:
 
             return True, ""
         if info["provider"] == "qwen3":
-            try:
-                import mlx_qwen3_asr  # noqa: F401
+            import mlx_qwen3_asr  # noqa: F401
 
-                return True, "MLX"
-            except ImportError:
-                import qwen_asr  # noqa: F401
-
-                return True, "PyTorch fallback (high memory on Mac)"
+            return True, "MLX"
     except ImportError as exc:
         extra = ".[whisper]" if info["provider"] == "mlx_whisper" else ".[qwen]"
         return False, f"not installed ({exc.name}). uv pip install -e '{extra}'"

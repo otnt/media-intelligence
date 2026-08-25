@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from media_pipeline.asr.base import ASRNotAvailableError, ASRProvider
-from media_pipeline.models import ASROptions, MLX_WHISPER_REPOS, Transcript, TranscriptSegment, WordSpan
+from media_pipeline.models import ASROptions, MLX_WHISPER_REPOS, Transcript, TranscriptSegment
 
 
 class MLXWhisperProvider(ASRProvider):
@@ -41,30 +41,18 @@ class MLXWhisperProvider(ASRProvider):
         result = mlx_whisper.transcribe(
             str(audio_path),
             path_or_hf_repo=self._repo,
-            word_timestamps=True,
+            word_timestamps=False,
             condition_on_previous_text=False,
             language=options.language,
             verbose=None,
         )
         segments: list[TranscriptSegment] = []
         for raw in result.get("segments") or []:
-            words = None
-            raw_words = raw.get("words") or []
-            if raw_words:
-                words = [
-                    WordSpan(
-                        start=float(word.get("start") or 0.0),
-                        end=float(word.get("end") or 0.0),
-                        text=str(word.get("word") or word.get("text") or ""),
-                    )
-                    for word in raw_words
-                ]
             segments.append(
                 TranscriptSegment(
                     start=float(raw.get("start") or 0.0),
                     end=float(raw.get("end") or 0.0),
                     text=str(raw.get("text") or "").strip(),
-                    words=words,
                 )
             )
         if not segments:

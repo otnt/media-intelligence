@@ -27,7 +27,8 @@ Language handling:
 - Default is `language: auto`.
 - Whisper auto-detects **one** language for the whole file, then transcribes in that language. Mixed Chinese/English speech often gets mangled.
 - Qwen3-ASR-1.7B auto-detects per utterance and can keep mixed-language / code-switched speech. Forcing `Chinese` or `English` turns that off.
-- Qwen runs on MLX, the same Apple Silicon stack as Whisper, instead of PyTorch/MPS.
+- Qwen runs on MLX, the same Apple Silicon stack as Whisper.
+- Qwen timestamps are coarse segment start/end times from VAD speech windows, not word-level forced alignment.
 - Install the Qwen extra before choosing that model: `uv pip install -e '.[qwen]'`.
 
 ## Requirements
