@@ -3,11 +3,16 @@ import wave
 from pathlib import Path
 
 from media_pipeline.vad import (
+    AsrChunk,
     SpeechRegion,
+    apply_hangover,
+    close_small_gaps,
+    fill_short_holes,
     merge_regions,
     pack_asr_chunks,
     pack_regions,
     regions_from_mask,
+    speech_mask,
     split_long_regions,
     detect_speech_regions,
     read_wav_slice,
@@ -60,6 +65,53 @@ def test_chunk_timestamps_include_padding_and_stay_absolute():
     assert len(chunks) == 1
     assert math.isclose(chunks[0].start, 9.75)
     assert math.isclose(chunks[0].end, 28.25)
+
+
+def test_speech_mask_keeps_moderate_speech_on_speech_heavy_audio():
+    energies = [0.006] * 10 + [0.03] * 90
+    mask = speech_mask(energies)
+    assert sum(mask) >= 80
+
+
+def test_short_internal_holes_are_filled():
+    mask = [True] * 10 + [False] * 10 + [True] * 10
+    filled = fill_short_holes(mask, max_hole_frames=15)
+    assert all(filled[10:20])
+    leftover = fill_short_holes(mask, max_hole_frames=4)
+    assert not any(leftover[10:20])
+
+
+def test_hangover_extends_speech_forward():
+    held = apply_hangover([True, False, False, False], hangover_frames=2)
+    assert held == [True, True, True, False]
+
+
+def test_close_small_gaps_covers_boundary_holes():
+    closed = close_small_gaps(
+        [AsrChunk(0.0, 10.0), AsrChunk(10.3, 20.0), AsrChunk(22.0, 30.0)],
+        max_gap_sec=0.5,
+    )
+    assert math.isclose(closed[0].end, 10.3)
+    assert math.isclose(closed[1].start, 10.3)
+    assert math.isclose(closed[1].end, 20.0)
+    assert math.isclose(closed[2].start, 22.0)
+
+
+def test_split_prefers_quiet_point_near_preferred_max():
+    frame_sec = 0.02
+    energies = [0.05] * int(100 / frame_sec)
+    dip_at = int(27.2 / frame_sec)
+    for index in range(dip_at, dip_at + 12):
+        energies[index] = 0.001
+    split = split_long_regions(
+        [SpeechRegion(0.0, 100.0)],
+        preferred_max_sec=30.0,
+        hard_max_sec=45.0,
+        energies=energies,
+        frame_sec=frame_sec,
+    )
+    assert 26.0 < split[0].end < 29.0
+    assert split[-1].end == 100.0
 
 
 def test_vad_finds_tone_and_slice_does_not_need_full_file(tmp_path: Path):

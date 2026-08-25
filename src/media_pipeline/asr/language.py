@@ -117,9 +117,27 @@ def supports_code_switching(model_id: str) -> bool:
 
 
 def format_detected_languages(value: object | None) -> str:
+    parts = _language_parts(value)
+    seen: set[str] = set()
+    unique: list[str] = []
+    for part in parts:
+        key = part.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(part)
+    return ",".join(unique)
+
+
+def _language_parts(value: object | None) -> list[str]:
     if value is None:
-        return ""
+        return []
+    if isinstance(value, str):
+        return [part.strip() for part in value.split(",") if part.strip()]
     if isinstance(value, (list, tuple, set)):
-        parts = [str(item).strip() for item in value if str(item).strip()]
-        return ",".join(parts)
-    return str(value).strip()
+        parts: list[str] = []
+        for item in value:
+            parts.extend(_language_parts(item))
+        return parts
+    text = str(value).strip()
+    return [text] if text else []

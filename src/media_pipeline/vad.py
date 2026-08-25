@@ -14,6 +14,15 @@ PREFERRED_MAX_SEC = 30.0
 HARD_MAX_SEC = 45.0
 MIN_SPEECH_SEC = 0.12
 MIN_REGION_SEC = 0.08
+NOISE_PERCENTILE = 0.05
+PEAK_PERCENTILE = 0.90
+ENERGY_RANGE_WEIGHT = 0.15
+MIN_ENERGY_THRESHOLD = 0.008
+HANGOVER_SEC = 0.16
+HOLE_FILL_SEC = 0.30
+SPLIT_WINDOW_SEC = 4.0
+SPLIT_DIP_SEC = 0.20
+GAP_CLOSE_SEC = 0.50
 
 
 @dataclass(frozen=True)
@@ -57,7 +66,8 @@ def build_asr_chunks(
 ) -> list[AsrChunk]:
     """VAD → merge/split → padded ASR windows with absolute timestamps."""
     audio_duration = duration if duration is not None else wav_duration(audio_path)
-    regions = detect_speech_regions(audio_path)
+    energies, _sample_rate = frame_energies(audio_path)
+    regions = detect_speech_regions(audio_path, energies=energies)
     return pack_asr_chunks(
         regions,
         audio_duration,
@@ -66,15 +76,24 @@ def build_asr_chunks(
         preferred_min_sec=preferred_min_sec,
         preferred_max_sec=preferred_max_sec,
         hard_max_sec=hard_max_sec,
+        energies=energies,
     )
 
 
-def detect_speech_regions(audio_path: Path, frame_ms: int = FRAME_MS) -> list[SpeechRegion]:
-    energies, _sample_rate = frame_energies(audio_path, frame_ms=frame_ms)
+def detect_speech_regions(
+    audio_path: Path,
+    frame_ms: int = FRAME_MS,
+    energies: list[float] | None = None,
+) -> list[SpeechRegion]:
+    if energies is None:
+        energies, _sample_rate = frame_energies(audio_path, frame_ms=frame_ms)
     if not energies:
         return []
     frame_sec = frame_ms / 1000.0
-    mask = speech_mask(energies)
+    mask = fill_short_holes(
+        apply_hangover(speech_mask(energies), hangover_frames=max(1, int(HANGOVER_SEC / frame_sec))),
+        max_hole_frames=max(1, int(HOLE_FILL_SEC / frame_sec)),
+    )
     return regions_from_mask(mask, frame_sec, min_speech_sec=MIN_SPEECH_SEC)
 
 
@@ -87,9 +106,16 @@ def pack_asr_chunks(
     preferred_min_sec: float = PREFERRED_MIN_SEC,
     preferred_max_sec: float = PREFERRED_MAX_SEC,
     hard_max_sec: float = HARD_MAX_SEC,
+    energies: list[float] | None = None,
 ) -> list[AsrChunk]:
     merged = merge_regions(regions, merge_gap_sec)
-    bounded = split_long_regions(merged, preferred_max_sec=preferred_max_sec, hard_max_sec=hard_max_sec)
+    bounded = split_long_regions(
+        merged,
+        preferred_min_sec=preferred_min_sec,
+        preferred_max_sec=preferred_max_sec,
+        hard_max_sec=hard_max_sec,
+        energies=energies,
+    )
     packed = pack_regions(
         bounded,
         preferred_min_sec=preferred_min_sec,
@@ -103,7 +129,7 @@ def pack_asr_chunks(
         if end - start < MIN_REGION_SEC:
             continue
         chunks.append(AsrChunk(start=start, end=end))
-    return chunks
+    return close_small_gaps(chunks, max_gap_sec=GAP_CLOSE_SEC)
 
 
 def merge_regions(regions: list[SpeechRegion], merge_gap_sec: float) -> list[SpeechRegion]:
@@ -125,6 +151,9 @@ def split_long_regions(
     *,
     preferred_max_sec: float,
     hard_max_sec: float,
+    preferred_min_sec: float = PREFERRED_MIN_SEC,
+    energies: list[float] | None = None,
+    frame_sec: float = FRAME_MS / 1000.0,
 ) -> list[SpeechRegion]:
     split: list[SpeechRegion] = []
     for region in regions:
@@ -134,8 +163,20 @@ def split_long_regions(
         cursor = region.start
         while cursor < region.end:
             remaining = region.end - cursor
-            length = remaining if remaining <= hard_max_sec else preferred_max_sec
-            nxt = min(region.end, cursor + length)
+            if remaining <= hard_max_sec:
+                split.append(SpeechRegion(cursor, region.end))
+                break
+            nxt = _cut_at_quietest(
+                cursor,
+                region.end,
+                preferred_min_sec=preferred_min_sec,
+                preferred_max_sec=preferred_max_sec,
+                hard_max_sec=hard_max_sec,
+                energies=energies,
+                frame_sec=frame_sec,
+            )
+            if nxt <= cursor:
+                nxt = min(region.end, cursor + preferred_max_sec)
             split.append(SpeechRegion(cursor, nxt))
             cursor = nxt
     return split
@@ -172,9 +213,59 @@ def speech_mask(energies: list[float]) -> list[bool]:
     if not energies:
         return []
     ranked = sorted(energies)
-    noise = ranked[max(0, int(len(ranked) * 0.2) - 1)]
-    threshold = max(noise * 4.0, 0.012)
+    noise = _percentile(ranked, NOISE_PERCENTILE)
+    peak = _percentile(ranked, PEAK_PERCENTILE)
+    threshold = max(MIN_ENERGY_THRESHOLD, noise + ENERGY_RANGE_WEIGHT * (peak - noise))
     return [energy >= threshold for energy in energies]
+
+
+def apply_hangover(mask: list[bool], hangover_frames: int) -> list[bool]:
+    if hangover_frames <= 0:
+        return list(mask)
+    held: list[bool] = []
+    remaining = 0
+    for spoken in mask:
+        if spoken:
+            remaining = hangover_frames
+            held.append(True)
+            continue
+        if remaining > 0:
+            remaining -= 1
+            held.append(True)
+            continue
+        held.append(False)
+    return held
+
+
+def fill_short_holes(mask: list[bool], max_hole_frames: int) -> list[bool]:
+    if max_hole_frames <= 0:
+        return list(mask)
+    filled = list(mask)
+    index = 0
+    while index < len(filled):
+        if filled[index]:
+            index += 1
+            continue
+        end = index
+        while end < len(filled) and not filled[end]:
+            end += 1
+        if index > 0 and end < len(filled) and (end - index) <= max_hole_frames:
+            filled[index:end] = [True] * (end - index)
+        index = end
+    return filled
+
+
+def close_small_gaps(chunks: list[AsrChunk], max_gap_sec: float = GAP_CLOSE_SEC) -> list[AsrChunk]:
+    if len(chunks) < 2 or max_gap_sec <= 0:
+        return list(chunks)
+    closed = [chunks[0]]
+    for chunk in chunks[1:]:
+        previous = closed[-1]
+        gap = chunk.start - previous.end
+        if 0 < gap <= max_gap_sec:
+            closed[-1] = AsrChunk(previous.start, chunk.start)
+        closed.append(chunk)
+    return closed
 
 
 def regions_from_mask(
@@ -239,6 +330,46 @@ def wav_duration(audio_path: Path) -> float:
     if sample_rate <= 0:
         return 0.0
     return frames / sample_rate
+
+
+def _cut_at_quietest(
+    start: float,
+    end: float,
+    *,
+    preferred_min_sec: float,
+    preferred_max_sec: float,
+    hard_max_sec: float,
+    energies: list[float] | None,
+    frame_sec: float,
+) -> float:
+    fallback = min(end, start + preferred_max_sec)
+    if not energies or frame_sec <= 0:
+        return fallback
+    window_start = start + max(preferred_min_sec, preferred_max_sec - SPLIT_WINDOW_SEC)
+    window_end = min(end, start + hard_max_sec, start + preferred_max_sec + SPLIT_WINDOW_SEC)
+    if window_end <= window_start:
+        return fallback
+    dip_frames = max(1, int(SPLIT_DIP_SEC / frame_sec))
+    first = max(0, int(window_start / frame_sec))
+    last = min(len(energies), int(window_end / frame_sec))
+    if last - first < dip_frames:
+        return fallback
+    best_index = first
+    best_energy: float | None = None
+    for index in range(first, last - dip_frames + 1):
+        mean = sum(energies[index : index + dip_frames]) / dip_frames
+        if best_energy is None or mean < best_energy:
+            best_energy = mean
+            best_index = index
+    cut = (best_index + dip_frames / 2) * frame_sec
+    return min(end, max(start + preferred_min_sec, cut))
+
+
+def _percentile(ranked: list[float], fraction: float) -> float:
+    if not ranked:
+        return 0.0
+    index = min(len(ranked) - 1, max(0, int(len(ranked) * fraction) - 1))
+    return ranked[index]
 
 
 def _pcm_to_mono(raw: bytes, *, width: int, channels: int) -> list[float]:

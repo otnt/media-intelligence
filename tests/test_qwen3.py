@@ -3,6 +3,7 @@ from pathlib import Path
 
 from media_pipeline.asr.qwen3 import Qwen3ASRProvider
 from media_pipeline.models import ASROptions
+from media_pipeline.vad import AsrChunk
 
 
 def test_qwen_transcribes_vad_chunks_without_forced_aligner(tmp_path: Path, monkeypatch):
@@ -31,6 +32,25 @@ def test_qwen_transcribes_vad_chunks_without_forced_aligner(tmp_path: Path, monk
     assert transcript.segments[0].words is None
     assert transcript.segments[0].start < transcript.segments[0].end
     assert transcript.language == "English"
+
+
+def test_qwen_uniques_repeated_chunk_languages(tmp_path: Path, monkeypatch):
+    path = tmp_path / "talk.wav"
+    _write_tone_wav(path, silence_sec=0.2, tone_sec=2.6)
+
+    class FakeSession:
+        def transcribe(self, audio, **kwargs):
+            return SimpleNamespace(text="hello", language="Chinese")
+
+    monkeypatch.setattr(
+        "media_pipeline.asr.qwen3.build_asr_chunks",
+        lambda audio_path: [AsrChunk(0.0, 1.0), AsrChunk(1.2, 2.2)],
+    )
+    provider = Qwen3ASRProvider()
+    provider._model = FakeSession()
+    transcript = provider.transcribe(path, ASROptions(language=None))
+    assert transcript.language == "Chinese"
+    assert len(transcript.segments) == 2
 
 
 def _write_tone_wav(path: Path, silence_sec: float, tone_sec: float, sample_rate: int = 16000) -> None:

@@ -32,3 +32,9 @@ def test_format_detected_languages_joins_lists():
     assert format_detected_languages("Chinese,English") == "Chinese,English"
     assert format_detected_languages(["Chinese", "English"]) == "Chinese,English"
     assert format_detected_languages(None) == ""
+
+
+def test_format_detected_languages_uniques_chunk_repeats():
+    assert format_detected_languages(["Chinese"] * 8) == "Chinese"
+    assert format_detected_languages("Chinese,Chinese,English,Chinese") == "Chinese,English"
+    assert format_detected_languages(["Chinese,English", "Chinese"]) == "Chinese,English"
