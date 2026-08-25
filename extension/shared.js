@@ -19,7 +19,10 @@ function mdpIsSupportedVideoUrl(urlString) {
       return false;
     }
     if (host === "bilibili.com" || host === "m.bilibili.com" || host.endsWith(".bilibili.com")) {
-      return /\/video\/(?:BV|bv|av|AV)/i.test(url.pathname);
+      if (url.searchParams.get("bvid")) return true;
+      if (/\/video\/(?:BV|bv|av|AV)/i.test(url.pathname)) return true;
+      if (/BV[0-9A-Za-z]+/.test(url.href)) return true;
+      return false;
     }
     if (host === "b23.tv") return url.pathname.replace(/\/$/, "").length > 1;
     return false;

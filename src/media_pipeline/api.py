@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from media_pipeline.asr.registry import list_models
 from media_pipeline.config import AppConfig
-from media_pipeline.media import UnsupportedURLError, parse_video_ref
+from media_pipeline.media import UnsupportedURLError, canonicalize_url, parse_video_ref
 from media_pipeline.models import ASR_MODELS, Task, TaskStatus, asr_label
 from media_pipeline.store import TaskStore
 from media_pipeline.worker import TaskWorker
@@ -80,8 +80,9 @@ def create_app(config: AppConfig, store: TaskStore | None = None, worker: TaskWo
     @app.post("/v1/tasks", status_code=202)
     def create_task(payload: CreateTaskRequest) -> dict[str, Any]:
         _validate_model(payload.asr_model)
+        page_url = canonicalize_url(payload.url.strip())
         try:
-            platform, video_id = parse_video_ref(payload.url)
+            platform, video_id = parse_video_ref(page_url)
         except UnsupportedURLError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         if config.notes_dir() is None:
@@ -91,7 +92,7 @@ def create_app(config: AppConfig, store: TaskStore | None = None, worker: TaskWo
             )
         task = Task(
             id=str(uuid.uuid4()),
-            url=payload.url.strip(),
+            url=page_url,
             asr_model=payload.asr_model,
             status=TaskStatus.queued,
             platform=platform,

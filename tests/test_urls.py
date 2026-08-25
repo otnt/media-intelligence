@@ -11,10 +11,22 @@ import pytest
         ("https://youtu.be/dQw4w9wgGcQ", "YouTube", "dQw4w9wgGcQ"),
         ("https://www.bilibili.com/video/BV181KNeuEi2", "Bilibili", "BV181KNeuEi2"),
         ("https://www.bilibili.com/video/BV181KNeuEi2/?spm_id_from=333", "Bilibili", "BV181KNeuEi2"),
+        (
+            "https://www.bilibili.com/list/watchlater/?bvid=BV1fP4y1j76Q&oid=893222135",
+            "Bilibili",
+            "BV1fP4y1j76Q",
+        ),
     ],
 )
 def test_parse_supported_urls(url, platform, video_id):
     assert parse_video_ref(url) == (platform, video_id)
+
+
+def test_canonicalizes_watchlater_to_video_page():
+    from media_pipeline.media import canonicalize_url
+
+    url = "https://www.bilibili.com/list/watchlater/?bvid=BV1fP4y1j76Q&oid=893222135"
+    assert canonicalize_url(url) == "https://www.bilibili.com/video/BV1fP4y1j76Q"
 
 
 def test_parse_rejects_other_sites():

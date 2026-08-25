@@ -48,6 +48,21 @@ def parse_video_ref(url: str) -> tuple[str, str]:
     raise UnsupportedURLError("Only Bilibili and YouTube URLs are supported in V1")
 
 
+def canonicalize_url(url: str) -> str:
+    """Collapse playlist/watchlater wrappers to a single-video URL."""
+    try:
+        platform, video_id = parse_video_ref(url)
+    except UnsupportedURLError:
+        return url
+    if platform == "Bilibili" and _BV_RE.fullmatch(video_id):
+        return f"https://www.bilibili.com/video/{video_id}"
+    if platform == "Bilibili" and video_id.lower().startswith("av") and video_id[2:].isdigit():
+        return f"https://www.bilibili.com/video/{video_id}"
+    if platform == "YouTube" and video_id:
+        return f"https://www.youtube.com/watch?v={video_id}"
+    return url
+
+
 def _youtube_id(parsed) -> str:
     host = (parsed.hostname or "").lower()
     path = parsed.path or ""
@@ -65,11 +80,20 @@ def _youtube_id(parsed) -> str:
 
 
 def _bilibili_id(parsed) -> str:
+    query = parse_qs(parsed.query or "")
+    for key in ("bvid", "bvid[]"):
+        if query.get(key):
+            match = _BV_RE.search(query[key][0])
+            if match:
+                return match.group(0)
     path = parsed.path or ""
     match = _BV_RE.search(path)
     if match:
         return match.group(0)
-    av_match = _AV_RE.search(path)
+    query_match = _BV_RE.search(parsed.query or "")
+    if query_match:
+        return query_match.group(0)
+    av_match = _AV_RE.search(path) or _AV_RE.search(parsed.query or "")
     if av_match:
         return f"av{av_match.group(1)}"
     # Short links such as b23.tv/xxxx are resolved later by yt-dlp.
@@ -78,8 +102,9 @@ def _bilibili_id(parsed) -> str:
 
 
 def fetch_metadata(url: str, asr_model: str, config: AppConfig) -> VideoMetadata:
-    platform, fallback_id = _safe_parse(url)
-    info = _yt_dlp_info(url, config, download=False)
+    page_url = canonicalize_url(url)
+    platform, fallback_id = _safe_parse(page_url)
+    info = _yt_dlp_info(page_url, config, download=False)
     video_id = str(info.get("id") or fallback_id)
     extractor = str(info.get("extractor_key") or info.get("extractor") or "").lower()
     if "bili" in extractor:
@@ -98,7 +123,7 @@ def fetch_metadata(url: str, asr_model: str, config: AppConfig) -> VideoMetadata
         or ""
     )
     return VideoMetadata(
-        url=str(info.get("webpage_url") or url),
+        url=str(info.get("webpage_url") or page_url),
         title=str(info.get("title") or video_id),
         platform=platform or "Unknown",
         author=str(author),
@@ -117,6 +142,7 @@ def download_video(url: str, video_id: str, dest_dir: Path, config: AppConfig) -
     if existing:
         logger.info("Reusing downloaded video %s", existing)
         return existing
+    page_url = canonicalize_url(url)
     opts = _base_ydl_opts(config)
     opts.update(
         {
@@ -128,7 +154,7 @@ def download_video(url: str, video_id: str, dest_dir: Path, config: AppConfig) -
     )
     try:
         with _ydl(opts) as ydl:
-            ydl.download([url])
+            ydl.download([page_url])
     except Exception as exc:
         if config.download.cookies_from_browser:
             logger.warning("Download with browser cookies failed, retrying without cookies: %s", exc)
@@ -136,7 +162,7 @@ def download_video(url: str, video_id: str, dest_dir: Path, config: AppConfig) -
             fallback.pop("cookiesfrombrowser", None)
             try:
                 with _ydl(fallback) as ydl:
-                    ydl.download([url])
+                    ydl.download([page_url])
             except Exception as retry_exc:
                 raise MediaError("downloading", f"yt-dlp download failed: {retry_exc}") from retry_exc
         else:

@@ -134,7 +134,7 @@ def cmd_doctor(config: AppConfig) -> int:
 def cmd_transcribe(config: AppConfig, url: str, asr_model: str | None) -> int:
     import uuid
 
-    from media_pipeline.media import UnsupportedURLError, parse_video_ref
+    from media_pipeline.media import UnsupportedURLError, canonicalize_url, parse_video_ref
     from media_pipeline.models import Task, TaskStatus, asr_label
     from media_pipeline.pipeline import Pipeline
     from media_pipeline.store import TaskStore
@@ -143,6 +143,7 @@ def cmd_transcribe(config: AppConfig, url: str, asr_model: str | None) -> int:
     if model_id not in ASR_MODELS:
         print(f"Unknown ASR model {model_id!r}. Supported: {', '.join(ASR_MODELS)}", file=sys.stderr)
         return 2
+    url = canonicalize_url(url.strip())
     try:
         platform, video_id = parse_video_ref(url)
     except UnsupportedURLError as exc:
