@@ -4,6 +4,7 @@ import logging
 import re
 import shutil
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -273,16 +274,7 @@ def _yt_dlp_info(url: str, config: AppConfig, download: bool) -> dict[str, Any]:
 def _yt_dlp_extract(url: str, config: AppConfig, download: bool) -> dict[str, Any] | None:
     attempts: list[AppConfig] = [config]
     if config.download.cookies_from_browser:
-        attempts.append(
-            AppConfig(
-                server=config.server,
-                paths=config.paths,
-                asr=config.asr,
-                download=type(config.download)(format=config.download.format, cookies_from_browser=""),
-                diarization=config.diarization,
-                source_path=config.source_path,
-            )
-        )
+        attempts.append(replace(config, download=replace(config.download, cookies_from_browser="")))
     errors: list[Exception] = []
     for attempt in attempts:
         opts = _base_ydl_opts(attempt)

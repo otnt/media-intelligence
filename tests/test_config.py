@@ -1,0 +1,63 @@
+from pathlib import Path
+
+from media_pipeline.config import load_config, persist_worker_config
+
+
+def test_load_config_defaults_worker_concurrency(tmp_path: Path):
+    path = tmp_path / "config.yaml"
+    path.write_text("server:\n  host: 127.0.0.1\n", encoding="utf-8")
+    config = load_config(path)
+    assert config.worker.youtube == 10
+    assert config.worker.bilibili == 10
+    assert config.worker.other == 10
+    assert config.worker.model_jobs == 1
+
+
+def test_load_config_reads_worker_section(tmp_path: Path):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "worker:\n  youtube: 4\n  bilibili: 8\n  default: 6\n  model_jobs: 2\n",
+        encoding="utf-8",
+    )
+    config = load_config(path)
+    assert config.worker.youtube == 4
+    assert config.worker.bilibili == 8
+    assert config.worker.other == 6
+    assert config.worker.model_jobs == 2
+
+
+def test_persist_worker_config_keeps_other_comments(tmp_path: Path):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "# keep me\nserver:\n  host: 127.0.0.1\n\npaths:\n  vault: /tmp/vault\n",
+        encoding="utf-8",
+    )
+    config = load_config(path)
+    config.worker.set_limits(youtube=3, bilibili=12, model_jobs=2)
+    persist_worker_config(config)
+    saved = path.read_text(encoding="utf-8")
+    assert "# keep me" in saved
+    assert "vault: /tmp/vault" in saved
+    assert "youtube: 3" in saved
+    assert "bilibili: 12" in saved
+    assert "model_jobs: 2" in saved
+    reloaded = load_config(path)
+    assert reloaded.worker.youtube == 3
+    assert reloaded.worker.bilibili == 12
+    assert reloaded.worker.model_jobs == 2
+
+
+def test_persist_replaces_existing_worker_block(tmp_path: Path):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "server:\n  host: 127.0.0.1\n\nworker:\n  youtube: 10\n  bilibili: 10\n\nvisual:\n  sample_interval_sec: 12\n",
+        encoding="utf-8",
+    )
+    config = load_config(path)
+    config.worker.set_limits(youtube=5)
+    persist_worker_config(config)
+    saved = path.read_text(encoding="utf-8")
+    assert saved.count("worker:") == 1
+    assert "youtube: 5" in saved
+    assert "visual:" in saved
+    assert "sample_interval_sec: 12" in saved

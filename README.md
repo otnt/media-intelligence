@@ -1,15 +1,18 @@
-# Local Video → Obsidian Transcription Pipeline
+# Local Video → Obsidian Extraction Pipeline
 
 One-click capture from Bilibili and YouTube.
-The local service downloads the video, extracts speech audio, transcribes it, labels speakers, and writes an Obsidian note.
+The local service downloads the video, extracts a timestamped speaker-aware transcript, representative keyframes, and writes an Obsidian note plus `multimodal.json`.
 
 ## What V1 does
 
 Open a Bilibili or YouTube video page.
-Click **✨ Save & Transcribe**.
-Choose an ASR model, then click **Start**.
+Click **✨ Extract**.
+Choose an ASR model, then submit.
 The browser can be closed.
-Later, the Obsidian vault contains a note with metadata and a timestamped, speaker-aware transcript.
+Inspect progress and candidate frames at `http://127.0.0.1:8765/`.
+Later, the Obsidian vault contains metadata, transcript, and a visual timeline.
+
+This stage is high-recall extraction, not summarization.
 
 Supported ASR models:
 
@@ -66,6 +69,8 @@ Keep the local service running:
 uv run media-pipeline serve
 ```
 
+The dashboard is `http://127.0.0.1:8765/`.
+
 To start it at login:
 
 ```bash
@@ -86,7 +91,7 @@ Transcribe one Bilibili or YouTube URL without the browser:
 uv run media-pipeline transcribe 'https://www.bilibili.com/video/BVxxxx'
 ```
 
-The command runs in the foreground, writes the Obsidian note as soon as metadata is available, then fills in the transcript.
+The command runs in the foreground, writes the Obsidian note as soon as metadata is available, then fills in the transcript and visual timeline.
 The default ASR model is `qwen3-asr-1.7b` with `language: auto`, so mixed Chinese/English is kept when the model can hear it.
 Use `--asr-model whisper-large-v3-turbo` or `whisper-large-v3` to pick Whisper instead.
 
@@ -112,7 +117,11 @@ Switching ASR models on the same video reuses the same audio file:
 
 ```bash
 uv run media-pipeline retry TASK_ID --asr-model whisper-large-v3
+uv run media-pipeline retry TASK_ID --stage detecting_scenes
 ```
+
+Visual extraction reuses the downloaded video.
+Changing the sampling interval does not download or transcribe again.
 
 ## Local API
 

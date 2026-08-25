@@ -15,6 +15,31 @@ from media_pipeline.pipeline import Pipeline
 from media_pipeline.store import TaskStore
 
 
+class FakeVisual:
+    def run(self, video_path, artifacts, metadata, named, settings, from_stage="", progress=None):
+        from media_pipeline.visual.align import align_keyframes, build_multimodal_document
+        from media_pipeline.visual.models import SceneSpan
+
+        if progress:
+            progress("detecting_scenes", {})
+            progress("sampling_frames", {"scene_count": 1})
+            progress("deduplicating_frames", {"candidate_count": 0})
+            progress("aligning_multimodal", {"keyframe_count": 0})
+        artifacts.save_scenes([SceneSpan(0.0, float(metadata.duration or 0.0))])
+        artifacts.save_candidates([])
+        artifacts.save_keyframes([])
+        timeline = align_keyframes([], named, before_sec=10, after_sec=20)
+        document = build_multimodal_document(metadata, named, [], timeline)
+        artifacts.save_multimodal(document)
+        return {
+            "scenes": [],
+            "candidates": [],
+            "keyframes": [],
+            "timeline": timeline,
+            "document": document,
+        }
+
+
 class FakeASR:
     def __init__(self) -> None:
         self.calls = 0
@@ -85,7 +110,7 @@ def test_pipeline_reuses_download_and_audio(tmp_path: Path, monkeypatch):
     monkeypatch.setattr("media_pipeline.pipeline.extract_audio", fake_extract)
     monkeypatch.setattr("media_pipeline.pipeline.require_provider", lambda model_id: asr)
 
-    pipeline = Pipeline(config, store, diarization=NullDiarizationProvider())
+    pipeline = Pipeline(config, store, diarization=NullDiarizationProvider(), visual=FakeVisual())
     first = store.insert(
         Task(
             id="task-1",
@@ -107,6 +132,7 @@ def test_pipeline_reuses_download_and_audio(tmp_path: Path, monkeypatch):
     assert "Languages: en" in note
     assert "### [00:00:00] Speaker 1" in note
     assert ArtifactStore(config.paths.artifacts, "BVxxxx").asr_path("whisper-large-v3-turbo").exists()
+    assert ArtifactStore(config.paths.artifacts, "BVxxxx").multimodal_path.exists()
 
     second = store.insert(
         Task(
@@ -130,7 +156,7 @@ def test_pipeline_writes_failure_note_when_metadata_fails(tmp_path: Path, monkey
         "media_pipeline.pipeline.fetch_metadata",
         lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("yt-dlp exploded")),
     )
-    pipeline = Pipeline(config, store, diarization=NullDiarizationProvider())
+    pipeline = Pipeline(config, store, diarization=NullDiarizationProvider(), visual=FakeVisual())
     task = store.insert(
         Task(
             id="task-fail",

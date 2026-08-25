@@ -121,6 +121,6 @@ async function submitTask() {
   }
   chrome.storage.local.set({ asrModel: selectedModel });
   statusEl.className = "status ok";
-  statusEl.textContent = `✓ Added to queue\nASR: ${response.asr_label || selectedModel}`;
+  statusEl.textContent = `✓ Queued\nASR: ${response.asr_label || selectedModel}`;
   await loadTasks();
 }

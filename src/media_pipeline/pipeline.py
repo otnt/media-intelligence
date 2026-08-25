@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
 
 from media_pipeline.align import align_transcript
@@ -19,13 +20,29 @@ from media_pipeline.media import (
     find_media_file,
     parse_video_ref,
 )
-from media_pipeline.models import ASR_MODELS, ASROptions, Task, TaskStatus, VideoMetadata, asr_label
+from media_pipeline.models import ASR_MODELS, ASROptions, NamedSegment, Task, TaskStatus, VideoMetadata, asr_label
 from media_pipeline.notes import NoteWriter
 from media_pipeline.speakers import name_speakers
 from media_pipeline.store import TaskStore
-from media_pipeline.transcript import clean_transcript
+from media_pipeline.transcript import clean_transcript, render_transcript
+from media_pipeline.visual.align import render_visual_timeline
+from media_pipeline.visual.extract import VisualExtractor, copy_keyframes_to_vault
 
 logger = logging.getLogger(__name__)
+
+RERUN_STAGES = frozenset(
+    {
+        "transcribing",
+        "diarizing",
+        "aligning_transcript",
+        "detecting_scenes",
+        "sampling_frames",
+        "deduplicating_frames",
+        "aligning_multimodal",
+        "writing_outputs",
+        "all",
+    }
+)
 
 
 class PipelineError(RuntimeError):
@@ -40,6 +57,8 @@ class Pipeline:
         config: AppConfig,
         store: TaskStore,
         diarization: DiarizationProvider | None = None,
+        visual: VisualExtractor | None = None,
+        model_lock: AbstractContextManager[object] | None = None,
     ) -> None:
         self.config = config
         self.store = store
@@ -52,6 +71,8 @@ class Pipeline:
             config.diarization.model,
             config.diarization.hf_token,
         )
+        self.visual = visual if visual is not None else VisualExtractor()
+        self._model_lock = model_lock
 
     def run(self, task: Task) -> Task:
         try:
@@ -69,9 +90,12 @@ class Pipeline:
             return self._fail(task, stage, f"{type(exc).__name__}: {exc}")
 
     def _run(self, task: Task) -> Task:
+        from_stage = str(task.extra.pop("rerun_stage", "") or "")
         metadata = self._fetch_metadata(task)
         artifacts = ArtifactStore(self.config.paths.artifacts, metadata.video_id)
         artifacts.save_metadata(metadata)
+        if from_stage:
+            artifacts.invalidate_from(from_stage)
         self._create_note(task, metadata, artifacts)
 
         video_path = self._download(task, metadata)
@@ -81,13 +105,18 @@ class Pipeline:
         aligned = self._align(task, artifacts, transcript, diarization)
         named = name_speakers(aligned, metadata)
         artifacts.save_named(named)
+        task.extra["segment_count"] = len(named)
+        self.store.update(task)
 
+        visual_result = self._extract_visual(task, metadata, artifacts, video_path, named, from_stage)
+        self._write_outputs(task, metadata, artifacts, named, visual_result)
         task.status = TaskStatus.completed
         task.error = ""
         task.error_stage = ""
+        task.extra.pop("rerun_stage", None)
         self.store.update(task)
         if task.note_path:
-            self.notes.update_progress(Path(task.note_path), task, metadata, named)
+            self.notes.update_progress(Path(task.note_path), task, metadata)
         logger.info("Task %s completed with %s", task.id, asr_label(task.asr_model))
         return task
 
@@ -161,13 +190,14 @@ class Pipeline:
         provider_name = ASR_MODELS[task.asr_model]["provider"]
         requested_language = str(task.extra.get("language") or self.config.asr.language or "auto")
         task.extra["language"] = requested_language
-        transcript = provider.transcribe(
-            audio_path,
-            ASROptions(
-                context=context,
-                language=resolve_provider_language(provider_name, requested_language),
-            ),
-        )
+        with self._model_slot():
+            transcript = provider.transcribe(
+                audio_path,
+                ASROptions(
+                    context=context,
+                    language=resolve_provider_language(provider_name, requested_language),
+                ),
+            )
         transcript = clean_transcript(transcript)
         self._record_languages(task, transcript.language)
         artifacts.save_transcript(task.asr_model, transcript)
@@ -179,7 +209,8 @@ class Pipeline:
             return existing
         self._set_status(task, TaskStatus.diarizing)
         try:
-            result = self.diarization.diarize(audio_path)
+            with self._model_slot():
+                result = self.diarization.diarize(audio_path)
         except Exception as exc:
             logger.warning("Diarization failed for task %s: %s", task.id, exc)
             fallback = NullDiarizationProvider()
@@ -189,10 +220,63 @@ class Pipeline:
         return result
 
     def _align(self, task: Task, artifacts: ArtifactStore, transcript, diarization):
-        self._set_status(task, TaskStatus.aligning)
+        self._set_status(task, TaskStatus.aligning_transcript)
         aligned = align_transcript(transcript, diarization.segments)
         artifacts.save_aligned(aligned)
         return aligned
+
+    def _extract_visual(
+        self,
+        task: Task,
+        metadata: VideoMetadata,
+        artifacts: ArtifactStore,
+        video_path: Path,
+        named: list[NamedSegment],
+        from_stage: str,
+    ) -> dict:
+        settings = self.config.visual.merged(task.extra.get("visual"))
+        task.extra["visual"] = settings
+        self.store.update(task)
+
+        def progress(status: str, extra: dict) -> None:
+            for key, value in extra.items():
+                task.extra[key] = value
+            self._set_status(task, TaskStatus(status), metadata)
+
+        visual_from = from_stage if from_stage in RERUN_STAGES else ""
+        result = self.visual.run(
+            video_path,
+            artifacts,
+            metadata,
+            named,
+            settings,
+            from_stage=visual_from,
+            progress=progress,
+        )
+        task.extra["candidate_count"] = len(result.get("candidates") or [])
+        task.extra["keyframe_count"] = len(result.get("keyframes") or [])
+        self.store.update(task)
+        return result
+
+    def _write_outputs(
+        self,
+        task: Task,
+        metadata: VideoMetadata,
+        artifacts: ArtifactStore,
+        named: list[NamedSegment],
+        visual_result: dict,
+    ) -> None:
+        self._set_status(task, TaskStatus.writing_outputs, metadata)
+        notes_dir = self.config.notes_dir()
+        if notes_dir is not None:
+            attachment_dir = notes_dir / "attachments" / metadata.video_id
+            copy_keyframes_to_vault(visual_result.get("keyframes") or [], artifacts.root, attachment_dir)
+        body = render_transcript(named)
+        timeline = visual_result.get("timeline") or []
+        if timeline or visual_result.get("keyframes"):
+            body = body.rstrip() + "\n\n" + render_visual_timeline(timeline, metadata.video_id)
+        if task.note_path:
+            self.notes.update_progress(Path(task.note_path), task, metadata, named, body=body)
 
     def _set_status(self, task: Task, status: TaskStatus, metadata: VideoMetadata | None = None) -> None:
         task.status = status
@@ -241,6 +325,9 @@ class Pipeline:
             logger.exception("Could not create a failure note for task %s", task.id)
             return
         task.note_path = str(path)
+
+    def _model_slot(self) -> AbstractContextManager[object]:
+        return self._model_lock if self._model_lock is not None else nullcontext()
 
     def _record_languages(self, task: Task, detected: object | None) -> None:
         task.extra.setdefault("language", self.config.asr.language or "auto")

@@ -15,6 +15,12 @@ class TaskStatus(str, Enum):
     transcribing = "transcribing"
     diarizing = "diarizing"
     aligning = "aligning"
+    aligning_transcript = "aligning_transcript"
+    detecting_scenes = "detecting_scenes"
+    sampling_frames = "sampling_frames"
+    deduplicating_frames = "deduplicating_frames"
+    aligning_multimodal = "aligning_multimodal"
+    writing_outputs = "writing_outputs"
     completed = "completed"
     failed = "failed"
 
@@ -273,6 +279,11 @@ class Task:
             "updated_at": self.updated_at,
             "language": str(self.extra.get("language") or "auto"),
             "detected_languages": str(self.extra.get("detected_languages") or ""),
+            "segment_count": int(self.extra.get("segment_count") or 0),
+            "candidate_count": int(self.extra.get("candidate_count") or 0),
+            "keyframe_count": int(self.extra.get("keyframe_count") or 0),
+            "visual": dict(self.extra.get("visual") or {}),
+            "rerun_stage": str(self.extra.get("rerun_stage") or ""),
         }
 
     @classmethod
@@ -306,6 +317,15 @@ def format_timestamp(seconds: float) -> str:
     hours, remainder = divmod(total, 3600)
     minutes, secs = divmod(remainder, 60)
     return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+
+def frame_filename(seconds: float) -> str:
+    """Stable, inspectable JPEG name on the source timeline."""
+    total_ms = max(0, int(round(float(seconds) * 1000)))
+    hours, remainder = divmod(total_ms, 3_600_000)
+    minutes, remainder = divmod(remainder, 60_000)
+    secs, millis = divmod(remainder, 1000)
+    return f"{hours:02d}-{minutes:02d}-{secs:02d}.{millis:03d}.jpg"
 
 
 def expand_path(value: str | Path) -> Path:

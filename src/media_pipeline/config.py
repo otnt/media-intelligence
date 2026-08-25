@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,10 @@ from media_pipeline.models import expand_path
 
 DEFAULT_CONFIG_PATH = Path.home() / ".config" / "media-pipeline" / "config.yaml"
 OBSIDIAN_JSON = Path.home() / "Library" / "Application Support" / "obsidian" / "obsidian.json"
+MAX_CONCURRENCY = 64
+DEFAULT_DOMAIN_CONCURRENCY = 10
+DEFAULT_MODEL_JOBS = 1
+_WORKER_BLOCK_RE = re.compile(r"(?m)^worker:\n(?:(?:[ \t]+.*|[ \t]*)\n)*")
 
 
 @dataclass
@@ -45,10 +50,78 @@ class DownloadConfig:
 
 
 @dataclass
+class VisualConfig:
+    sample_interval_sec: float = 12.0
+    scene_detector: str = "auto"
+    scene_threshold: float = 27.0
+    min_scene_duration_sec: float = 0.8
+    similarity_threshold: float = 0.92
+    visual_change_threshold: float = 0.18
+    ocr_change_threshold: float = 0.45
+    context_before_sec: float = 10.0
+    context_after_sec: float = 20.0
+
+    def as_dict(self) -> dict[str, float | str]:
+        return {
+            "sample_interval_sec": self.sample_interval_sec,
+            "scene_detector": self.scene_detector,
+            "scene_threshold": self.scene_threshold,
+            "min_scene_duration_sec": self.min_scene_duration_sec,
+            "similarity_threshold": self.similarity_threshold,
+            "visual_change_threshold": self.visual_change_threshold,
+            "ocr_change_threshold": self.ocr_change_threshold,
+            "context_before_sec": self.context_before_sec,
+            "context_after_sec": self.context_after_sec,
+        }
+
+    def merged(self, overrides: dict | None) -> dict:
+        payload = self.as_dict()
+        for key, value in (overrides or {}).items():
+            if key in payload and value is not None and value != "":
+                if key == "scene_detector":
+                    payload[key] = str(value)
+                else:
+                    payload[key] = float(value)
+        return payload
+
+
+@dataclass
 class DiarizationConfig:
     provider: str = "pyannote"
     model: str = "pyannote/speaker-diarization-community-1"
     hf_token: str = ""
+
+
+@dataclass
+class WorkerConfig:
+    youtube: int = DEFAULT_DOMAIN_CONCURRENCY
+    bilibili: int = DEFAULT_DOMAIN_CONCURRENCY
+    other: int = DEFAULT_DOMAIN_CONCURRENCY
+    model_jobs: int = DEFAULT_MODEL_JOBS
+
+    def as_dict(self) -> dict[str, int]:
+        return {
+            "youtube": self.youtube,
+            "bilibili": self.bilibili,
+            "other": self.other,
+            "model_jobs": self.model_jobs,
+        }
+
+    def set_limits(
+        self,
+        youtube: int | None = None,
+        bilibili: int | None = None,
+        other: int | None = None,
+        model_jobs: int | None = None,
+    ) -> None:
+        if youtube is not None:
+            self.youtube = clamp_concurrency(youtube, DEFAULT_DOMAIN_CONCURRENCY)
+        if bilibili is not None:
+            self.bilibili = clamp_concurrency(bilibili, DEFAULT_DOMAIN_CONCURRENCY)
+        if other is not None:
+            self.other = clamp_concurrency(other, DEFAULT_DOMAIN_CONCURRENCY)
+        if model_jobs is not None:
+            self.model_jobs = clamp_concurrency(model_jobs, DEFAULT_MODEL_JOBS, minimum=1)
 
 
 @dataclass
@@ -58,6 +131,8 @@ class AppConfig:
     asr: ASRConfig = field(default_factory=ASRConfig)
     download: DownloadConfig = field(default_factory=DownloadConfig)
     diarization: DiarizationConfig = field(default_factory=DiarizationConfig)
+    visual: VisualConfig = field(default_factory=VisualConfig)
+    worker: WorkerConfig = field(default_factory=WorkerConfig)
     source_path: Path | None = None
 
     def ensure_directories(self) -> None:
@@ -111,6 +186,8 @@ def load_config(path: Path | None = None) -> AppConfig:
     asr_raw = raw.get("asr") or {}
     download_raw = raw.get("download") or {}
     diar_raw = raw.get("diarization") or {}
+    visual_raw = raw.get("visual") or {}
+    worker_raw = raw.get("worker") or {}
 
     vault_value = paths_raw.get("vault") or ""
     vault = expand_path(vault_value) if str(vault_value).strip() else detect_obsidian_vault()
@@ -150,9 +227,59 @@ def load_config(path: Path | None = None) -> AppConfig:
             model=str(diar_raw.get("model") or "pyannote/speaker-diarization-community-1"),
             hf_token=hf_token,
         ),
+        visual=VisualConfig(
+            sample_interval_sec=float(visual_raw.get("sample_interval_sec") or 12),
+            scene_detector=str(visual_raw.get("scene_detector") or "auto"),
+            scene_threshold=float(visual_raw.get("scene_threshold") or 27),
+            min_scene_duration_sec=float(visual_raw.get("min_scene_duration_sec") or 0.8),
+            similarity_threshold=float(visual_raw.get("similarity_threshold") or 0.92),
+            visual_change_threshold=float(visual_raw.get("visual_change_threshold") or 0.18),
+            ocr_change_threshold=float(visual_raw.get("ocr_change_threshold") or 0.45),
+            context_before_sec=float(visual_raw.get("context_before_sec") or 10),
+            context_after_sec=float(visual_raw.get("context_after_sec") or 20),
+        ),
+        worker=_worker_from_raw(worker_raw),
         source_path=config_path if config_path.exists() else None,
     )
     return config
+
+
+def clamp_concurrency(value: Any, default: int, minimum: int = 0) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(minimum, min(MAX_CONCURRENCY, parsed))
+
+
+def _worker_from_raw(raw: dict[str, Any]) -> WorkerConfig:
+    other_default = raw.get("other", raw.get("default"))
+    return WorkerConfig(
+        youtube=clamp_concurrency(raw.get("youtube"), DEFAULT_DOMAIN_CONCURRENCY),
+        bilibili=clamp_concurrency(raw.get("bilibili"), DEFAULT_DOMAIN_CONCURRENCY),
+        other=clamp_concurrency(other_default, DEFAULT_DOMAIN_CONCURRENCY),
+        model_jobs=clamp_concurrency(raw.get("model_jobs"), DEFAULT_MODEL_JOBS, minimum=1),
+    )
+
+
+def persist_worker_config(config: AppConfig) -> None:
+    path = config.source_path
+    if path is None or not path.exists():
+        return
+    text = path.read_text(encoding="utf-8")
+    block = _format_worker_yaml(config.worker)
+    updated, count = _WORKER_BLOCK_RE.subn(block, text, count=1)
+    if count == 0:
+        updated = text.rstrip() + "\n\n" + block
+    path.write_text(updated, encoding="utf-8")
+
+
+def _format_worker_yaml(worker: WorkerConfig) -> str:
+    limits = worker.as_dict()
+    lines = ["worker:\n"]
+    for key, value in limits.items():
+        lines.append(f"  {key}: {value}\n")
+    return "".join(lines)
 
 
 def write_default_config(path: Path | None = None) -> Path:

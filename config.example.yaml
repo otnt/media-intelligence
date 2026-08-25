@@ -26,3 +26,22 @@ diarization:
   provider: pyannote
   model: pyannote/speaker-diarization-community-1
   hf_token: ""
+
+worker:
+  # Max tasks running at once per site. Downloads can overlap; ASR is capped separately.
+  youtube: 10
+  bilibili: 10
+  other: 10
+  # Local MLX/pyannote jobs. Keep this low on Apple Silicon.
+  model_jobs: 1
+
+visual:
+  sample_interval_sec: 12
+  scene_detector: auto
+  scene_threshold: 27
+  min_scene_duration_sec: 0.8
+  similarity_threshold: 0.92
+  visual_change_threshold: 0.18
+  ocr_change_threshold: 0.45
+  context_before_sec: 10
+  context_after_sec: 20

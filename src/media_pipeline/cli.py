@@ -40,6 +40,11 @@ def main(argv: list[str] | None = None) -> int:
     retry = sub.add_parser("retry", help="Re-queue a task, reusing downloaded artifacts")
     retry.add_argument("task_id")
     retry.add_argument("--asr-model", default=None)
+    retry.add_argument(
+        "--stage",
+        default=None,
+        help="Rerun from this stage: transcribing, detecting_scenes, sampling_frames, deduplicating_frames, ...",
+    )
     retry.add_argument("--config", type=Path, default=None)
 
     status = sub.add_parser("status", help="Show recent tasks")
@@ -63,7 +68,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "transcribe":
         return cmd_transcribe(config, args.url, args.asr_model, args.language)
     if args.command == "retry":
-        return cmd_retry(config, args.task_id, args.asr_model)
+        return cmd_retry(config, args.task_id, args.asr_model, getattr(args, "stage", None))
     if args.command == "status":
         return cmd_status(config, args.limit)
     parser.error(f"Unknown command {args.command}")
@@ -83,11 +88,15 @@ def cmd_serve(config: AppConfig, host: str | None, port: int | None) -> int:
 
     from media_pipeline.api import create_app
 
+    host = host or config.server.host
+    port = port or config.server.port
+    print(f"API:       http://{host}:{port}/v1/health")
+    print(f"Dashboard: http://{host}:{port}/")
     app = create_app(config)
     uvicorn.run(
         app,
-        host=host or config.server.host,
-        port=port or config.server.port,
+        host=host,
+        port=port,
         log_level="info",
     )
     return 0
@@ -115,6 +124,12 @@ def cmd_doctor(config: AppConfig) -> int:
         checks.append(("pyannote.audio", True, "installed" + ("" if token else " (HF token missing)")))
     except ImportError:
         checks.append(("pyannote.audio", False, "optional; speaker labels fall back to Speaker 1"))
+    try:
+        import PIL  # noqa: F401
+
+        checks.append(("pillow", True, "ok"))
+    except ImportError:
+        checks.append(("pillow", False, "required for keyframe hashing"))
     vault = config.paths.vault
     checks.append(("obsidian vault", bool(vault and vault.exists()), str(vault) if vault else "not configured"))
     notes = config.notes_dir()
@@ -133,6 +148,7 @@ def cmd_doctor(config: AppConfig) -> int:
         print(f"{mark:4}  {name:24} {detail}")
     print(f"config: {config.source_path or '(defaults)'}")
     print(f"API:    http://{config.server.host}:{config.server.port}")
+    print(f"UI:     http://{config.server.host}:{config.server.port}/")
     return 0 if failed == 0 else 1
 
 
@@ -192,7 +208,7 @@ def cmd_transcribe(config: AppConfig, url: str, asr_model: str | None, language:
     return 0 if result.status == TaskStatus.completed else 1
 
 
-def cmd_retry(config: AppConfig, task_id: str, asr_model: str | None) -> int:
+def cmd_retry(config: AppConfig, task_id: str, asr_model: str | None, stage: str | None = None) -> int:
     from media_pipeline.models import TaskStatus
     from media_pipeline.pipeline import Pipeline
     from media_pipeline.store import TaskStore
@@ -208,6 +224,8 @@ def cmd_retry(config: AppConfig, task_id: str, asr_model: str | None) -> int:
         return 1
     if asr_model:
         task.asr_model = asr_model
+    if stage:
+        task.extra["rerun_stage"] = stage
     task.status = TaskStatus.queued
     task.error = ""
     task.error_stage = ""

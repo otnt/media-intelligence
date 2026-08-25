@@ -35,4 +35,5 @@ echo
 echo "3. Chrome → chrome://extensions → Developer mode → Load unpacked"
 echo "   Select: $ROOT/extension"
 echo
-echo "4. Open a Bilibili or YouTube video and click ✨ Save & Transcribe"
+echo "4. Open a Bilibili or YouTube video and click ✨ Extract"
+echo "5. Inspect tasks and keyframes at http://127.0.0.1:8765/"

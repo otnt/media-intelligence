@@ -44,12 +44,15 @@ class NoteWriter:
         task: Task,
         metadata: VideoMetadata | None = None,
         transcript: list[NamedSegment] | None = None,
+        body: str | None = None,
     ) -> None:
         if not path.exists():
             raise FileNotFoundError(path)
         document = NoteDocument.parse(path.read_text(encoding="utf-8"))
         document.apply_task(task, metadata)
-        if transcript is not None:
+        if body is not None:
+            document.transcript_markdown = body
+        elif transcript is not None:
             document.transcript_markdown = render_transcript(transcript)
         path.write_text(document.render(), encoding="utf-8")
 

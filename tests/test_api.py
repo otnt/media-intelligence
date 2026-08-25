@@ -11,6 +11,7 @@ from media_pipeline.store import TaskStore
 class DummyWorker:
     def __init__(self) -> None:
         self.submitted: list[str] = []
+        self.limits = {"youtube": 10, "bilibili": 10, "other": 10, "model_jobs": 1}
 
     def start(self) -> None:
         return None
@@ -21,9 +22,17 @@ class DummyWorker:
     def submit(self, task: Task) -> None:
         self.submitted.append(task.id)
 
-    def retry(self, task: Task) -> Task:
+    def retry(self, task: Task, stage: str | None = None, visual: dict | None = None) -> Task:
         self.submitted.append(task.id)
         return task
+
+    def set_limits(self, **kwargs: int) -> None:
+        for key, value in kwargs.items():
+            if value is not None:
+                self.limits[key] = value
+
+    def snapshot(self) -> dict[str, dict[str, int]]:
+        return {key: {"limit": value, "running": 0} for key, value in self.limits.items()}
 
 
 def test_create_task_accepts_bilibili_url(tmp_path: Path):
@@ -99,6 +108,9 @@ def test_models_mark_qwen_as_multilingual(tmp_path: Path):
     health = client.get("/v1/health").json()
     assert health["default_asr_model"] == "qwen3-asr-1.7b"
     assert health["default_language"] == "auto"
+    assert health["worker"]["youtube"]["limit"] == 10
+    assert health["worker"]["bilibili"]["limit"] == 10
+    assert health["worker"]["model_jobs"]["limit"] == 1
     by_id = {item["id"]: item for item in payload["models"]}
     assert by_id["qwen3-asr-1.7b"]["code_switching"] is True
     assert by_id["whisper-large-v3-turbo"]["code_switching"] is False
@@ -132,4 +144,82 @@ def test_create_task_accepts_explicit_language(tmp_path: Path):
     assert stored is not None
     assert stored.extra["language"] == "auto"
     assert stored.asr_model == "qwen3-asr-1.7b"
+
+
+def test_dashboard_and_frame_override(tmp_path: Path):
+    config = AppConfig(
+        paths=PathsConfig(
+            videos=tmp_path / "videos",
+            audio=tmp_path / "audio",
+            artifacts=tmp_path / "artifacts",
+            logs=tmp_path / "logs",
+            vault=tmp_path / "vault",
+            db=tmp_path / "tasks.sqlite3",
+        )
+    )
+    config.ensure_directories()
+    store = TaskStore(config.paths.db)
+    worker = DummyWorker()
+    client = TestClient(create_app(config, store=store, worker=worker))
+    home = client.get("/")
+    assert home.status_code == 200
+    assert "Extraction dashboard" in home.text
+    assert "Concurrency" in home.text
+    assert "YouTube max" in home.text
+    assert "Bilibili max" in home.text
+    created = client.post(
+        "/v1/tasks",
+        json={"url": "https://www.bilibili.com/video/BV181KNeuEi2", "asr_model": "qwen3-asr-1.7b"},
+    )
+    task_id = created.json()["id"]
+    rerun = client.post(f"/v1/tasks/{task_id}/retry", json={"stage": "deduplicating_frames", "visual": {"sample_interval_sec": 5}})
+    assert rerun.status_code == 200
+    assert worker.submitted[-1] == task_id
+    decision = client.post(
+        "/v1/videos/BV181KNeuEi2/frames/00-00-01.000.jpg/decision",
+        json={"decision": "keep"},
+    )
+    assert decision.status_code == 200
+    assert decision.json()["overrides"]["00-00-01.000.jpg"] == "keep"
+    debug = client.get(f"/v1/tasks/{task_id}/debug")
+    assert debug.status_code == 200
+    assert "debug" in debug.json()
+
+
+def test_update_worker_limits(tmp_path: Path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("# keep this comment\nserver:\n  host: 127.0.0.1\n", encoding="utf-8")
+    config = AppConfig(
+        paths=PathsConfig(
+            videos=tmp_path / "videos",
+            audio=tmp_path / "audio",
+            artifacts=tmp_path / "artifacts",
+            logs=tmp_path / "logs",
+            vault=tmp_path / "vault",
+            db=tmp_path / "tasks.sqlite3",
+        ),
+        source_path=config_path,
+    )
+    config.ensure_directories()
+    worker = DummyWorker()
+    client = TestClient(create_app(config, store=TaskStore(config.paths.db), worker=worker))
+    empty = client.put("/v1/worker", json={})
+    assert empty.status_code == 400
+    response = client.put("/v1/worker", json={"youtube": 3, "bilibili": 7, "model_jobs": 2})
+    assert response.status_code == 200
+    payload = response.json()["worker"]
+    assert payload["youtube"]["limit"] == 3
+    assert payload["bilibili"]["limit"] == 7
+    assert payload["model_jobs"]["limit"] == 2
+    assert worker.limits["youtube"] == 3
+    assert config.worker.youtube == 3
+    saved = config_path.read_text(encoding="utf-8")
+    assert "# keep this comment" in saved
+    assert "youtube: 3" in saved
+    assert "bilibili: 7" in saved
+    status = client.get("/v1/worker").json()
+    assert status["youtube"]["limit"] == 3
+    invalid = client.put("/v1/worker", json={"youtube": -1})
+    assert invalid.status_code == 422
+
 

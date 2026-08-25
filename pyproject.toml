@@ -16,12 +16,14 @@ dependencies = [
   "pydantic>=2.10.0",
   "yt-dlp>=2025.1.0",
   "pyyaml>=6.0.2",
+  "pillow>=11.0.0",
 ]
 
 [project.optional-dependencies]
 whisper = ["mlx-whisper>=0.4.0"]
 qwen = ["mlx-qwen3-asr>=0.3.5"]
 diarize = ["pyannote.audio>=3.3.0"]
+visual = ["scenedetect[opencv]>=0.6.6"]
 dev = ["pytest>=8.3.0", "httpx>=0.27.0"]
 
 [project.scripts]
