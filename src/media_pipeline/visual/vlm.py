@@ -71,7 +71,14 @@ class VisionProvider:
     def judge(self, image_path: Path, prompt: str) -> str:
         raise NotImplementedError
 
-    def generate(self, prompt: str, images: list[Path] | None = None, max_tokens: int | None = None) -> str:
+    def generate(
+        self,
+        prompt: str,
+        images: list[Path] | None = None,
+        max_tokens: int | None = None,
+        enable_thinking: bool = False,
+        reasoning_effort: str | None = None,
+    ) -> str:
         raise NotImplementedError
 
     def unload(self) -> None:
@@ -89,7 +96,14 @@ class NullVisionProvider(VisionProvider):
             ' "reason": "analysis_unavailable", "caption": ""}'
         )
 
-    def generate(self, prompt: str, images: list[Path] | None = None, max_tokens: int | None = None) -> str:
+    def generate(
+        self,
+        prompt: str,
+        images: list[Path] | None = None,
+        max_tokens: int | None = None,
+        enable_thinking: bool = False,
+        reasoning_effort: str | None = None,
+    ) -> str:
         raise RuntimeError("Qwen3.8 is not available. uv pip install -e '.[analysis]'")
 
 
@@ -125,10 +139,26 @@ class MlxVlmProvider(VisionProvider):
     def judge(self, image_path: Path, prompt: str) -> str:
         return str(self._on_thread(self._judge_sync, image_path, prompt))
 
-    def generate(self, prompt: str, images: list[Path] | None = None, max_tokens: int | None = None) -> str:
+    def generate(
+        self,
+        prompt: str,
+        images: list[Path] | None = None,
+        max_tokens: int | None = None,
+        enable_thinking: bool = False,
+        reasoning_effort: str | None = None,
+    ) -> str:
         paths = [Path(item) for item in (images or []) if Path(item).is_file()]
         tokens = int(max_tokens) if max_tokens else self.max_tokens
-        return str(self._on_thread(self._generate_sync, prompt, paths, tokens))
+        return str(
+            self._on_thread(
+                self._generate_sync,
+                prompt,
+                paths,
+                tokens,
+                bool(enable_thinking),
+                reasoning_effort,
+            )
+        )
 
     def _on_thread(self, fn, *args):
         return _mlx_loop().call(fn, *args)
@@ -163,13 +193,35 @@ class MlxVlmProvider(VisionProvider):
     def _judge_sync(self, image_path: Path, prompt: str) -> str:
         return self._generate_sync(prompt, [image_path], self.max_tokens)
 
-    def _generate_sync(self, prompt: str, images: list[Path], max_tokens: int) -> str:
+    def _generate_sync(
+        self,
+        prompt: str,
+        images: list[Path],
+        max_tokens: int,
+        enable_thinking: bool = False,
+        reasoning_effort: str | None = None,
+    ) -> str:
         self._load_sync()
         self.last_used = time.monotonic()
         from mlx_vlm import generate
 
-        formatted = _format_prompt(self._processor, self._config, prompt, num_images=len(images))
-        output = _generate(generate, self._model, self._processor, formatted, images, max_tokens)
+        formatted = _format_prompt(
+            self._processor,
+            self._config,
+            prompt,
+            num_images=len(images),
+            enable_thinking=enable_thinking,
+            reasoning_effort=reasoning_effort,
+        )
+        output = _generate(
+            generate,
+            self._model,
+            self._processor,
+            formatted,
+            images,
+            max_tokens,
+            enable_thinking=enable_thinking,
+        )
         return _as_text(output)
 
 
@@ -236,14 +288,22 @@ def _hub_dirname(model_id: str) -> str:
     return "models--" + model_id.replace("/", "--")
 
 
-def _format_prompt(processor, config, prompt: str, num_images: int = 1) -> str:
+def _format_prompt(
+    processor,
+    config,
+    prompt: str,
+    num_images: int = 1,
+    enable_thinking: bool = False,
+    reasoning_effort: str | None = None,
+) -> str:
     from mlx_vlm.prompt_utils import apply_chat_template
 
     count = max(0, int(num_images))
-    attempts = (
-        {"num_images": count, "enable_thinking": False},
-        {"num_images": count},
-    )
+    thinking = bool(enable_thinking)
+    primary: dict[str, object] = {"num_images": count, "enable_thinking": thinking}
+    if thinking and reasoning_effort:
+        primary["reasoning_effort"] = str(reasoning_effort)
+    attempts = (primary, {"num_images": count, "enable_thinking": thinking}, {"num_images": count})
     for extra in attempts:
         try:
             return apply_chat_template(processor, config, prompt, **extra)
@@ -252,22 +312,35 @@ def _format_prompt(processor, config, prompt: str, num_images: int = 1) -> str:
     return apply_chat_template(processor, config, prompt, num_images=max(count, 1))
 
 
-def _generate(generate, model, processor, prompt: str, images: Path | list[Path], max_tokens: int):
+def _generate(
+    generate,
+    model,
+    processor,
+    prompt: str,
+    images: Path | list[Path],
+    max_tokens: int,
+    enable_thinking: bool = False,
+):
     paths = [images] if isinstance(images, Path) else list(images)
     image_strs = [str(path) for path in paths]
+    sampling = (
+        {"temperature": 1.0, "top_p": 0.95, "top_k": 20, "verbose": False}
+        if enable_thinking
+        else {"temperature": 0.0, "verbose": False}
+    )
     if not image_strs:
         attempts: tuple[dict, ...] = (
-            {"prompt": prompt, "max_tokens": max_tokens, "verbose": False, "temperature": 0.0},
+            {"prompt": prompt, "max_tokens": max_tokens, **sampling},
             {"prompt": prompt, "images": [], "max_tokens": max_tokens, "verbose": False},
         )
     elif len(image_strs) == 1:
         attempts = (
-            {"prompt": prompt, "image": image_strs[0], "max_tokens": max_tokens, "verbose": False, "temperature": 0.0},
+            {"prompt": prompt, "image": image_strs[0], "max_tokens": max_tokens, **sampling},
             {"prompt": prompt, "images": image_strs, "max_tokens": max_tokens, "verbose": False},
         )
     else:
         attempts = (
-            {"prompt": prompt, "images": image_strs, "max_tokens": max_tokens, "verbose": False, "temperature": 0.0},
+            {"prompt": prompt, "images": image_strs, "max_tokens": max_tokens, **sampling},
             {"prompt": prompt, "image": image_strs, "max_tokens": max_tokens, "verbose": False},
         )
     for kwargs in attempts:

@@ -292,7 +292,10 @@ def _merge_runs(existing: list[dict], fresh: list[dict]) -> list[dict]:
     by_key = {str(item.get("key") or ""): item for item in existing if item.get("key")}
     for item in fresh:
         by_key[str(item.get("key") or "")] = item
-    order = {key: index for index, key in enumerate(("qwen", "gemini", "openai"))}
+    order = {
+        key: index
+        for index, key in enumerate(("qwen", "qwen-low", "qwen-medium", "qwen-xhigh", "gemini", "openai"))
+    }
     return sorted(by_key.values(), key=lambda item: order.get(str(item.get("key") or ""), 9))
 
 

@@ -16,6 +16,27 @@ from media_pipeline.config import AppConfig
 logger = logging.getLogger(__name__)
 
 BACKEND_ORDER = ("qwen", "gemini", "openai")
+QWEN_THINKING = (
+    ("qwen-low", "low", "Qwen3.8 27B thinking low"),
+    ("qwen-medium", "medium", "Qwen3.8 27B thinking medium"),
+    ("qwen-xhigh", "xhigh", "Qwen3.8 27B thinking xhigh"),
+)
+ALL_BACKEND_KEYS = ("qwen", *(item[0] for item in QWEN_THINKING), "gemini", "openai")
+THINKING_MAX_TOKENS = 8192
+_KEY_ALIASES = {
+    "qwen3.8": "qwen",
+    "local": "qwen",
+    "qwen-thinking-low": "qwen-low",
+    "qwen_thinking_low": "qwen-low",
+    "qwen_low": "qwen-low",
+    "qwen-thinking-medium": "qwen-medium",
+    "qwen_thinking_medium": "qwen-medium",
+    "qwen_medium": "qwen-medium",
+    "qwen-thinking-xhigh": "qwen-xhigh",
+    "qwen_thinking_xhigh": "qwen-xhigh",
+    "qwen_xhigh": "qwen-xhigh",
+    "qwen-x-high": "qwen-xhigh",
+}
 _IMAGE_TYPES = {
     ".jpg": "image/jpeg",
     ".jpeg": "image/jpeg",
@@ -58,6 +79,8 @@ def catalog_summary_backends(config: AppConfig, vision: object | None = None) ->
             qwen_detail,
         )
     )
+    for key, _effort, label in QWEN_THINKING:
+        rows.append(_catalog_row(key, label, qwen_model, qwen_available, qwen_detail))
     gemini_key = _gemini_key(config)
     gemini_model = config.summary.gemini_model
     rows.append(
@@ -103,6 +126,21 @@ def resolve_summary_backends(
     return chosen
 
 
+def normalize_summary_key(name: str | None) -> str:
+    raw = (name or "").strip().lower()
+    return _KEY_ALIASES.get(raw, raw)
+
+
+def wants_local_qwen(selection: str | None) -> bool:
+    key = normalize_summary_key(selection)
+    return key in {"", "default", "all", "qwen"} or key.startswith("qwen-")
+
+
+def qwen_selection_required(selection: str | None) -> bool:
+    key = normalize_summary_key(selection)
+    return key == "qwen" or key.startswith("qwen-")
+
+
 def _wanted_keys(config: AppConfig, selection: str | None) -> list[str]:
     raw = (selection or "").strip().lower()
     if raw in {"", "default"}:
@@ -115,17 +153,15 @@ def _wanted_keys(config: AppConfig, selection: str | None) -> list[str]:
         names = [raw]
     wanted: list[str] = []
     for name in names:
-        key = "qwen" if name in {"qwen", "qwen3.8", "local"} else name
-        if key in BACKEND_ORDER and key not in wanted:
+        key = normalize_summary_key(name)
+        if key in ALL_BACKEND_KEYS and key not in wanted:
             wanted.append(key)
     return wanted or ["qwen"]
 
 
 def _available_backends(config: AppConfig, vision: object | None) -> list[SummaryBackend]:
     backends: list[SummaryBackend] = []
-    qwen = _qwen_backend(config, vision)
-    if qwen is not None:
-        backends.append(qwen)
+    backends.extend(_qwen_backends(config, vision))
     gemini_key = _gemini_key(config)
     if gemini_key:
         model = config.summary.gemini_model
@@ -167,19 +203,53 @@ def _probe_qwen(config: AppConfig) -> tuple[bool, str]:
 
 
 def _qwen_backend(config: AppConfig, vision: object | None) -> SummaryBackend | None:
+    backends = _qwen_backends(config, vision)
+    return backends[0] if backends else None
+
+
+def _qwen_backends(config: AppConfig, vision: object | None) -> list[SummaryBackend]:
     if vision is None or getattr(vision, "name", "") == "none":
-        return None
+        return []
     generate = getattr(vision, "generate", None)
     if not callable(generate):
-        return None
+        return []
     model_id = str(getattr(vision, "model_id", "") or config.analysis.model)
-    return SummaryBackend(
-        key="qwen",
-        label="Qwen3.8 (local)",
-        model_id=model_id,
-        local=True,
-        generate_fn=generate,
-    )
+    backends = [
+        SummaryBackend(
+            key="qwen",
+            label="Qwen3.8 (local)",
+            model_id=model_id,
+            local=True,
+            generate_fn=_wrap_qwen_generate(generate, None),
+        )
+    ]
+    for key, effort, label in QWEN_THINKING:
+        backends.append(
+            SummaryBackend(
+                key=key,
+                label=label,
+                model_id=model_id,
+                local=True,
+                generate_fn=_wrap_qwen_generate(generate, effort),
+            )
+        )
+    return backends
+
+
+def _wrap_qwen_generate(generate: Callable[..., str], effort: str | None):
+    thinking = effort is not None
+
+    def _run(prompt: str, images: list[Path] | None = None, max_tokens: int | None = None) -> str:
+        tokens = int(max_tokens) if max_tokens else 0
+        if thinking:
+            tokens = max(tokens, THINKING_MAX_TOKENS)
+        kwargs = {"enable_thinking": thinking, "reasoning_effort": effort}
+        try:
+            return generate(prompt, images, tokens or None, **kwargs)
+        except TypeError:
+            return generate(prompt, images, tokens or None)
+
+    return _run
 
 
 def _catalog_row(key: str, label: str, model: str, available: bool, detail: str) -> dict[str, Any]:

@@ -407,6 +407,9 @@ def test_dashboard_and_frame_override(tmp_path: Path):
     assert "Extracted contents" in home.text
     assert "copy-extracted" in home.text
     assert "copy-summary" in home.text
+    assert "qwen-low" in home.text
+    assert "qwen-medium" in home.text
+    assert "qwen-xhigh" in home.text
     assert "fold-frames" in home.text
     assert "Extract keyframes" in home.text
     assert "Transcript only" in home.text
@@ -470,7 +473,14 @@ def test_summary_models_endpoint(tmp_path: Path, monkeypatch):
     payload = client.get("/v1/summary/models").json()
     assert payload["default"] == ["qwen"]
     by_key = {item["key"]: item for item in payload["providers"]}
-    assert set(by_key) == {"qwen", "gemini", "openai"}
+    assert set(by_key) == {
+        "qwen",
+        "qwen-low",
+        "qwen-medium",
+        "qwen-xhigh",
+        "gemini",
+        "openai",
+    }
     assert by_key["gemini"]["available"] is False
     assert by_key["openai"]["available"] is False
     assert "GEMINI_API_KEY" in by_key["gemini"]["detail"]

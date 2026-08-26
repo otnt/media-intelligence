@@ -412,11 +412,14 @@
         </div>
         <div class="panel" id="summary-panel">
           <strong>Summary</strong>
-          <p class="empty" style="padding:8px 0 10px">The pipeline writes a local Qwen3.8 briefing by default. Use the model menu to regenerate with Gemini or OpenAI, or compare every available model on this note.</p>
+          <p class="empty" style="padding:8px 0 10px">The pipeline writes a local Qwen3.8 briefing by default. Use the model menu to regenerate with Qwen thinking, Gemini, or OpenAI, or compare every available model on this note.</p>
           <label class="field">Model
             <select id="summary-model">
               <option value="all">Compare all available</option>
               <option value="qwen" selected>Qwen3.8 (local)</option>
+              <option value="qwen-low">Qwen3.8 27B thinking low</option>
+              <option value="qwen-medium">Qwen3.8 27B thinking medium</option>
+              <option value="qwen-xhigh">Qwen3.8 27B thinking xhigh</option>
               <option value="gemini">Gemini</option>
               <option value="openai">OpenAI</option>
             </select>

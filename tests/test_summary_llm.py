@@ -18,7 +18,11 @@ class FakeVision:
     name = "mlx_vlm"
     model_id = "local-qwen"
 
-    def generate(self, prompt, images=None, max_tokens=None) -> str:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def generate(self, prompt, images=None, max_tokens=None, **kwargs) -> str:
+        self.calls.append({"prompt": prompt, "max_tokens": max_tokens, **kwargs})
         return "本地要点"
 
 
@@ -67,6 +71,8 @@ def test_catalog_probes_qwen_without_loaded_vision(monkeypatch):
     rows = catalog_summary_backends(AppConfig(), None)
     by_key = {item["key"]: item for item in rows}
     assert by_key["qwen"]["available"] is True
+    assert by_key["qwen-low"]["available"] is True
+    assert by_key["qwen-xhigh"]["available"] is True
 
 
 def test_catalog_marks_cloud_unavailable_without_keys(monkeypatch):
@@ -76,6 +82,9 @@ def test_catalog_marks_cloud_unavailable_without_keys(monkeypatch):
     rows = catalog_summary_backends(AppConfig(), FakeVision())
     by_key = {item["key"]: item for item in rows}
     assert by_key["qwen"]["available"] is True
+    assert by_key["qwen-low"]["available"] is True
+    assert by_key["qwen-medium"]["available"] is True
+    assert by_key["qwen-xhigh"]["available"] is True
     assert by_key["gemini"]["available"] is False
     assert by_key["openai"]["available"] is False
 
@@ -92,6 +101,17 @@ def test_resolve_default_expands_all_providers():
     config = AppConfig(summary=SummaryConfig(providers=["all"], gemini_api_key="g", openai_api_key="o"))
     backends = resolve_summary_backends(config, FakeVision(), "")
     assert [item.key for item in backends] == ["qwen", "gemini", "openai"]
+
+
+def test_resolve_qwen_xhigh_enables_thinking():
+    vision = FakeVision()
+    backends = resolve_summary_backends(AppConfig(), vision, "qwen-xhigh")
+    assert [item.key for item in backends] == ["qwen-xhigh"]
+    assert backends[0].label == "Qwen3.8 27B thinking xhigh"
+    backends[0].generate("hello", [], 128)
+    assert vision.calls[-1]["enable_thinking"] is True
+    assert vision.calls[-1]["reasoning_effort"] == "xhigh"
+    assert vision.calls[-1]["max_tokens"] >= 8192
 
 
 def test_render_summary_runs_compares_models():
@@ -194,3 +214,53 @@ def test_redact_secrets_strips_bearer_tokens():
     text = _redact_secrets("failed sk-secret12 leaked", {"Authorization": "Bearer sk-secret12"})
     assert "sk-secret12" not in text
     assert "[redacted]" in text
+
+
+def _stub_chat_template(monkeypatch, fake_apply):
+    import sys
+    from types import ModuleType
+
+    pkg = ModuleType("mlx_vlm")
+    sub = ModuleType("mlx_vlm.prompt_utils")
+    sub.apply_chat_template = fake_apply
+    pkg.prompt_utils = sub
+    monkeypatch.setitem(sys.modules, "mlx_vlm", pkg)
+    monkeypatch.setitem(sys.modules, "mlx_vlm.prompt_utils", sub)
+
+
+def test_format_prompt_passes_reasoning_effort(monkeypatch):
+    seen = {}
+
+    def fake_apply(processor, config, prompt, **kwargs):
+        seen.update(kwargs)
+        return "PROMPT"
+
+    _stub_chat_template(monkeypatch, fake_apply)
+    from media_pipeline.visual.vlm import _format_prompt
+
+    text = _format_prompt(
+        object(),
+        {"model_type": "qwen3_5"},
+        "hi",
+        num_images=0,
+        enable_thinking=True,
+        reasoning_effort="medium",
+    )
+    assert text == "PROMPT"
+    assert seen["enable_thinking"] is True
+    assert seen["reasoning_effort"] == "medium"
+
+
+def test_format_prompt_instruct_disables_thinking(monkeypatch):
+    seen = {}
+
+    def fake_apply(processor, config, prompt, **kwargs):
+        seen.update(kwargs)
+        return "PROMPT"
+
+    _stub_chat_template(monkeypatch, fake_apply)
+    from media_pipeline.visual.vlm import _format_prompt
+
+    _format_prompt(object(), {"model_type": "qwen3_5"}, "hi", num_images=1)
+    assert seen["enable_thinking"] is False
+    assert "reasoning_effort" not in seen

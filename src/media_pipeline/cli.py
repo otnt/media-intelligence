@@ -160,7 +160,7 @@ def cmd_doctor(config: AppConfig) -> int:
     from media_pipeline.summary_llm import catalog_summary_backends
 
     for item in catalog_summary_backends(config):
-        if item["key"] == "qwen":
+        if item["key"] == "qwen" or str(item["key"]).startswith("qwen-"):
             continue
         checks.append((f"summary:{item['key']}", item["available"], item["detail"] or item["model"]))
     try:

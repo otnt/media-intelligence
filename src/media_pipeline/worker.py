@@ -381,13 +381,14 @@ class TaskWorker:
             self._wake.set()
 
     def _vision_for_summary(self, model: str) -> VisionProvider | None:
-        wants_qwen = model in {"", "default", "all", "qwen", "qwen3.8", "local"}
-        if not wants_qwen:
+        from media_pipeline.summary_llm import qwen_selection_required, wants_local_qwen
+
+        if not wants_local_qwen(model):
             return self._vision
         try:
             return self._ensure_vision()
         except Exception:
-            if model in {"qwen", "qwen3.8", "local"}:
+            if qwen_selection_required(model):
                 raise
             logger.warning("Local Qwen3.8 is not available for this summary compare", exc_info=True)
             return self._vision

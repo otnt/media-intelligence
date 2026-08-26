@@ -311,7 +311,17 @@ def _summary_providers(value: Any) -> list[str]:
         names = [str(part).strip().lower() for part in value if str(part).strip()]
     else:
         names = ["qwen"]
-    known = {"qwen", "gemini", "openai", "all", "qwen3.8", "local"}
+    known = {
+        "qwen",
+        "qwen-low",
+        "qwen-medium",
+        "qwen-xhigh",
+        "gemini",
+        "openai",
+        "all",
+        "qwen3.8",
+        "local",
+    }
     cleaned: list[str] = []
     for name in names:
         key = "qwen" if name in {"qwen3.8", "local"} else name
