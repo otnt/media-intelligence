@@ -414,6 +414,8 @@ def test_dashboard_and_frame_override(tmp_path: Path):
     assert "qwen-xhigh" in home.text
     assert "qwen-8bit" in home.text
     assert "qwen-8bit-xhigh" in home.text
+    assert "qwen-3.8-27B 4bit thinking xhigh" in home.text
+    assert "qwen-3.8-27B 8bit thinking none" in home.text
     assert "fold-frames" in home.text
     assert "Extract keyframes" in home.text
     assert "Transcript only" in home.text
@@ -490,8 +492,10 @@ def test_summary_models_endpoint(tmp_path: Path, monkeypatch):
         "gemini",
         "openai",
     }
-    assert by_key["qwen-8bit"]["label"] == "Qwen3.8 8bit (local)"
-    assert by_key["qwen-8bit-xhigh"]["label"] == "Qwen3.8 8bit thinking xhigh"
+    assert by_key["qwen"]["label"] == "qwen-3.8-27B 4bit thinking none"
+    assert by_key["qwen-xhigh"]["label"] == "qwen-3.8-27B 4bit thinking xhigh"
+    assert by_key["qwen-8bit"]["label"] == "qwen-3.8-27B 8bit thinking none"
+    assert by_key["qwen-8bit-xhigh"]["label"] == "qwen-3.8-27B 8bit thinking xhigh"
     assert by_key["gemini"]["available"] is False
     assert by_key["openai"]["available"] is False
     assert "GEMINI_API_KEY" in by_key["gemini"]["detail"]

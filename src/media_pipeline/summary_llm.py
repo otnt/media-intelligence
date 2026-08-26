@@ -16,19 +16,26 @@ from media_pipeline.config import AppConfig, DEFAULT_QWEN_8BIT_MODEL, DEFAULT_SU
 logger = logging.getLogger(__name__)
 
 BACKEND_ORDER = ("qwen", "gemini", "openai")
+
+
+def qwen_summary_label(quant: str, thinking: str) -> str:
+    return f"qwen-3.8-27B {quant} thinking {thinking}"
+
+
+QWEN_INSTRUCT = ("qwen", qwen_summary_label("4bit", "none"))
 QWEN_THINKING = (
-    ("qwen-low", "low", "Qwen3.8 27B thinking low"),
-    ("qwen-medium", "medium", "Qwen3.8 27B thinking medium"),
-    ("qwen-xhigh", "xhigh", "Qwen3.8 27B thinking xhigh"),
+    ("qwen-low", "low", qwen_summary_label("4bit", "low")),
+    ("qwen-medium", "medium", qwen_summary_label("4bit", "medium")),
+    ("qwen-xhigh", "xhigh", qwen_summary_label("4bit", "xhigh")),
 )
-QWEN_8BIT_INSTRUCT = ("qwen-8bit", "Qwen3.8 8bit (local)")
+QWEN_8BIT_INSTRUCT = ("qwen-8bit", qwen_summary_label("8bit", "none"))
 QWEN_8BIT_THINKING = (
-    ("qwen-8bit-low", "low", "Qwen3.8 8bit thinking low"),
-    ("qwen-8bit-medium", "medium", "Qwen3.8 8bit thinking medium"),
-    ("qwen-8bit-xhigh", "xhigh", "Qwen3.8 8bit thinking xhigh"),
+    ("qwen-8bit-low", "low", qwen_summary_label("8bit", "low")),
+    ("qwen-8bit-medium", "medium", qwen_summary_label("8bit", "medium")),
+    ("qwen-8bit-xhigh", "xhigh", qwen_summary_label("8bit", "xhigh")),
 )
 ALL_BACKEND_KEYS = (
-    "qwen",
+    QWEN_INSTRUCT[0],
     *(item[0] for item in QWEN_THINKING),
     QWEN_8BIT_INSTRUCT[0],
     *(item[0] for item in QWEN_8BIT_THINKING),
@@ -91,8 +98,8 @@ def catalog_summary_backends(config: AppConfig, vision: object | None = None) ->
         qwen_available, qwen_detail = _probe_qwen(config)
     rows.append(
         _catalog_row(
-            "qwen",
-            "Qwen3.8 (local, free)",
+            QWEN_INSTRUCT[0],
+            QWEN_INSTRUCT[1],
             qwen_model,
             qwen_available,
             qwen_detail,
@@ -271,7 +278,7 @@ def _qwen_backend(config: AppConfig, vision: object | None) -> SummaryBackend | 
 def _qwen_backends(config: AppConfig, vision: object | None) -> list[SummaryBackend]:
     return _family_backends(
         vision,
-        instruct=("qwen", "Qwen3.8 (local)"),
+        instruct=QWEN_INSTRUCT,
         thinking=QWEN_THINKING,
         model_id=str(getattr(vision, "model_id", "") or config.analysis.model),
     )

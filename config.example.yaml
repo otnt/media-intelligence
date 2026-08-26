@@ -46,7 +46,7 @@ analysis:
   max_tokens: 256
 
 summary:
-  # Pipeline default is local Qwen3.8 4bit thinking xhigh. Use qwen for the faster instruct path.
+  # Pipeline default is qwen-3.8-27B 4bit thinking xhigh. Use qwen for thinking none.
   # Add gemini/openai to auto-compare every job. Dashboard can still pick 8bit Qwen or other models on one note.
   providers: [qwen-xhigh]
   qwen_8bit_model: mlx-community/Qwen3.8-27B-8bit

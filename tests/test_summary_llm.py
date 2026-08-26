@@ -129,7 +129,7 @@ def test_resolve_qwen_8bit_xhigh_uses_8bit_vision():
     eight.model_id = "mlx-community/Qwen3.8-27B-8bit"
     backends = resolve_summary_backends(AppConfig(), four, "qwen-8bit-xhigh", vision_8bit=eight)
     assert [item.key for item in backends] == ["qwen-8bit-xhigh"]
-    assert backends[0].label == "Qwen3.8 8bit thinking xhigh"
+    assert backends[0].label == "qwen-3.8-27B 8bit thinking xhigh"
     backends[0].generate("hello", [], 128)
     assert four.calls == []
     assert eight.calls[-1]["enable_thinking"] is True
@@ -157,7 +157,7 @@ def test_resolve_qwen_xhigh_enables_thinking():
     vision = FakeVision()
     backends = resolve_summary_backends(AppConfig(), vision, "qwen-xhigh")
     assert [item.key for item in backends] == ["qwen-xhigh"]
-    assert backends[0].label == "Qwen3.8 27B thinking xhigh"
+    assert backends[0].label == "qwen-3.8-27B 4bit thinking xhigh"
     backends[0].generate("hello", [], 128)
     assert vision.calls[-1]["enable_thinking"] is True
     assert vision.calls[-1]["reasoning_effort"] == "xhigh"
