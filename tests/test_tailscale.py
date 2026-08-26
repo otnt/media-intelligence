@@ -92,3 +92,33 @@ def test_publish_starts_serve_without_funnel(monkeypatch):
     assert result.ok is True
     assert result.url == "https://mac.tail08155b.ts.net/"
     assert result.ipv4 == "100.64.1.2"
+
+
+def test_publish_surfaces_serve_not_enabled(monkeypatch):
+    from media_pipeline.tailscale import TailscaleBackend
+
+    monkeypatch.setattr("media_pipeline.tailscale.find_cli", lambda: "/usr/bin/tailscale")
+    monkeypatch.setattr(
+        "media_pipeline.tailscale.ensure_backend",
+        lambda cli, **kwargs: TailscaleBackend(
+            state="Running",
+            dns_name="mac.tail08155b.ts.net",
+            ipv4="100.64.1.2",
+        ),
+    )
+    calls: list[list[str]] = []
+
+    def fake_run(cli, args, timeout=30):
+        calls.append(args)
+        return SimpleNamespace(
+            returncode=1,
+            stdout="Serve is not enabled on your tailnet.\nTo enable, visit:\nhttps://login.tailscale.com/f/serve?node=example\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr("media_pipeline.tailscale._run", fake_run)
+    result = publish_local_http(8765, attempts=1, delay=0)
+    assert result.ok is False
+    assert "Serve is not enabled" in result.detail
+    assert len(calls) == 1
+    assert calls[0][-1] == "8765"

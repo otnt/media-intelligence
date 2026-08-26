@@ -70,12 +70,13 @@ def local_http_target(port: int) -> str:
 
 def serve_background_argsets(port: int) -> list[list[str]]:
     """Candidate argv lists for `tailscale serve`. None of these enable Funnel."""
+    port_s = str(int(port))
     target = local_http_target(port)
     return [
+        ["serve", "--bg", "--yes", port_s],
+        ["serve", "--bg", port_s],
         ["serve", "--bg", "--yes", target],
         ["serve", "--bg", target],
-        ["serve", "--bg", "--yes", str(int(port))],
-        ["serve", "--bg", str(int(port))],
     ]
 
 
@@ -89,13 +90,27 @@ def login_detail(cli: str, state: str) -> str:
 
 
 def _run(cli: str, args: list[str], timeout: float = 30) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [cli, *args],
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        check=False,
-    )
+    try:
+        return subprocess.run(
+            [cli, *args],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout or ""
+        stderr = exc.stderr or ""
+        if isinstance(stdout, bytes):
+            stdout = stdout.decode("utf-8", errors="replace")
+        if isinstance(stderr, bytes):
+            stderr = stderr.decode("utf-8", errors="replace")
+        return subprocess.CompletedProcess(
+            args=[cli, *args],
+            returncode=1,
+            stdout=stdout,
+            stderr=stderr or f"timed out after {timeout:.0f}s",
+        )
 
 
 def load_backend(cli: str) -> TailscaleBackend:
@@ -212,6 +227,8 @@ def _fatal_serve_error(text: str) -> bool:
             "access denied",
             "failed to connect",
             "no current user",
+            "serve is not enabled",
+            "to enable, visit",
         )
     )
 
@@ -219,7 +236,7 @@ def _fatal_serve_error(text: str) -> bool:
 def _run_serve(cli: str, port: int) -> subprocess.CompletedProcess[str]:
     last = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="tailscale serve failed")
     for argv in serve_background_argsets(port):
-        last = _run(cli, argv, timeout=20)
+        last = _run(cli, argv, timeout=8)
         if last.returncode == 0:
             return last
         output = _combined_output(last)
