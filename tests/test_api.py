@@ -210,6 +210,37 @@ def test_create_task_requires_ingest_token_for_remote_clients(tmp_path: Path):
     assert allowed.status_code == 202
 
 
+def test_create_task_requires_ingest_token_for_tailscale_clients():
+    from fastapi import HTTPException
+    from starlette.requests import Request
+
+    from media_pipeline.api import _authorize_ingest
+    from media_pipeline.config import ServerConfig
+
+    config = AppConfig(server=ServerConfig(ingest_token="secret-token"))
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/v1/tasks",
+        "raw_path": b"/v1/tasks",
+        "query_string": b"",
+        "headers": [],
+        "client": ("100.64.12.34", 12345),
+        "server": ("127.0.0.1", 8765),
+    }
+    request = Request(scope)
+    try:
+        _authorize_ingest(config, request, None, None)
+    except HTTPException as exc:
+        assert exc.status_code == 401
+    else:
+        raise AssertionError("Tailscale clients must not bypass ingest token")
+    _authorize_ingest(config, request, "secret-token", None)
+
+
 def test_create_task_accepts_rednote_url(tmp_path: Path):
     config = AppConfig(
         paths=PathsConfig(

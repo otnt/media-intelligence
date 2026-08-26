@@ -23,6 +23,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Bind 0.0.0.0 so a phone on the same Wi-Fi can queue tasks from a Shortcut",
     )
+    serve.add_argument(
+        "--tailscale",
+        action="store_true",
+        help="Publish the dashboard on the Tailscale tailnet via Serve (HTTPS MagicDNS). Never enables Funnel.",
+    )
     serve.add_argument("--config", type=Path, default=None)
 
     doctor = sub.add_parser("doctor", help="Check local dependencies and configuration")
@@ -72,7 +77,13 @@ def main(argv: list[str] | None = None) -> int:
 
     config = load_config(getattr(args, "config", None))
     if args.command == "serve":
-        return cmd_serve(config, host=args.host, port=args.port, lan=args.lan)
+        return cmd_serve(
+            config,
+            host=args.host,
+            port=args.port,
+            lan=args.lan,
+            tailscale=args.tailscale,
+        )
     if args.command == "doctor":
         return cmd_doctor(config)
     if args.command == "transcribe":
@@ -85,7 +96,13 @@ def main(argv: list[str] | None = None) -> int:
     return 2
 
 
-def cmd_serve(config: AppConfig, host: str | None, port: int | None, lan: bool = False) -> int:
+def cmd_serve(
+    config: AppConfig,
+    host: str | None,
+    port: int | None,
+    lan: bool = False,
+    tailscale: bool = False,
+) -> int:
     _configure_logging(config)
     config.ensure_directories()
     if config.notes_dir() is None:
@@ -107,6 +124,17 @@ def cmd_serve(config: AppConfig, host: str | None, port: int | None, lan: bool =
         print(f"Phone:     http://{lan_ip}:{port}/v1/inbox?url=")
         if not config.server.ingest_token:
             print("Ingest:    set server.ingest_token before exposing the API on your LAN")
+    if tailscale:
+        from media_pipeline.tailscale import publish_local_http
+
+        published = publish_local_http(port)
+        if not published.ok:
+            print(published.detail, file=sys.stderr)
+            return 1
+        print(f"Tailscale: {published.url}")
+        print(f"Phone:     {published.url}")
+        if not config.server.ingest_token:
+            print("Ingest:    set server.ingest_token before exposing the API on Tailscale")
     app = create_app(config)
     http_impl = "h11"
     try:
@@ -173,6 +201,9 @@ def cmd_doctor(config: AppConfig) -> int:
     checks.append(("obsidian vault", bool(vault and vault.exists()), str(vault) if vault else "not configured"))
     notes = config.notes_dir()
     checks.append(("notes dir", notes is not None, str(notes) if notes else "unavailable"))
+    from media_pipeline.tailscale import doctor_checks
+
+    checks.extend(doctor_checks())
 
     failed = 0
     for name, ok, detail in checks:
@@ -180,6 +211,7 @@ def cmd_doctor(config: AppConfig) -> int:
             name.startswith("asr:qwen")
             or name.startswith("analysis:")
             or name.startswith("summary:")
+            or name.startswith("tailscale")
             or name == "pyannote.audio"
         )
         if ok:

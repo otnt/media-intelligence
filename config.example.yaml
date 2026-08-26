@@ -1,7 +1,8 @@
 server:
   host: 127.0.0.1
   port: 8765
-  # Required for phone ingest when the API is not on localhost. Send as X-Ingest-Token.
+  # Required for phone ingest when the API is not on localhost (LAN or Tailscale).
+  # Send as X-Ingest-Token. Tailscale Serve is tailnet-only; never enable Funnel.
   ingest_token: ""
 
 paths:
