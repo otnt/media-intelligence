@@ -18,6 +18,11 @@ def main(argv: list[str] | None = None) -> int:
     serve = sub.add_parser("serve", help="Run the local HTTP API and background worker")
     serve.add_argument("--host", default=None)
     serve.add_argument("--port", type=int, default=None)
+    serve.add_argument(
+        "--lan",
+        action="store_true",
+        help="Bind 0.0.0.0 so a phone on the same Wi-Fi can queue tasks from a Shortcut",
+    )
     serve.add_argument("--config", type=Path, default=None)
 
     doctor = sub.add_parser("doctor", help="Check local dependencies and configuration")
@@ -67,7 +72,7 @@ def main(argv: list[str] | None = None) -> int:
 
     config = load_config(getattr(args, "config", None))
     if args.command == "serve":
-        return cmd_serve(config, host=args.host, port=args.port)
+        return cmd_serve(config, host=args.host, port=args.port, lan=args.lan)
     if args.command == "doctor":
         return cmd_doctor(config)
     if args.command == "transcribe":
@@ -80,7 +85,7 @@ def main(argv: list[str] | None = None) -> int:
     return 2
 
 
-def cmd_serve(config: AppConfig, host: str | None, port: int | None) -> int:
+def cmd_serve(config: AppConfig, host: str | None, port: int | None, lan: bool = False) -> int:
     _configure_logging(config)
     config.ensure_directories()
     if config.notes_dir() is None:
@@ -93,16 +98,29 @@ def cmd_serve(config: AppConfig, host: str | None, port: int | None) -> int:
 
     from media_pipeline.api import create_app
 
-    host = host or config.server.host
+    host = host or ("0.0.0.0" if lan else config.server.host)
     port = port or config.server.port
     print(f"API:       http://{host}:{port}/v1/health")
     print(f"Dashboard: http://{host}:{port}/")
+    lan_ip = _lan_ipv4() if host in {"0.0.0.0", "::"} else None
+    if lan_ip:
+        print(f"Phone:     http://{lan_ip}:{port}/v1/inbox?url=")
+        if not config.server.ingest_token:
+            print("Ingest:    set server.ingest_token before exposing the API on your LAN")
     app = create_app(config)
+    http_impl = "h11"
+    try:
+        import httptools  # noqa: F401
+
+        http_impl = "httptools"
+    except ImportError:
+        pass
     uvicorn.run(
         app,
         host=host,
         port=port,
         log_level="info",
+        http=http_impl,
     )
     return 0
 
@@ -176,7 +194,7 @@ def cmd_transcribe(
 ) -> int:
     import uuid
 
-    from media_pipeline.media import UnsupportedURLError, canonicalize_url, parse_video_ref
+    from media_pipeline.media import UnsupportedURLError, extract_supported_url, parse_video_ref
     from media_pipeline.models import Task, TaskStatus, asr_label
     from media_pipeline.pipeline import Pipeline
     from media_pipeline.store import TaskStore
@@ -185,8 +203,8 @@ def cmd_transcribe(
     if model_id not in ASR_MODELS:
         print(f"Unknown ASR model {model_id!r}. Supported: {', '.join(ASR_MODELS)}", file=sys.stderr)
         return 2
-    url = canonicalize_url(url.strip())
     try:
+        url = extract_supported_url(url)
         platform, video_id = parse_video_ref(url)
     except UnsupportedURLError as exc:
         print(str(exc), file=sys.stderr)
@@ -288,6 +306,22 @@ def cmd_status(config: AppConfig, limit: int) -> int:
         extra = f" error={task.error}" if task.error else ""
         print(f"{task.status.value:18} {task.asr_model:24} {title}{extra}")
     return 0
+
+
+def _lan_ipv4() -> str | None:
+    import socket
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.connect(("8.8.8.8", 80))
+        ip = sock.getsockname()[0]
+    except OSError:
+        return None
+    finally:
+        sock.close()
+    if not ip or ip.startswith("127."):
+        return None
+    return ip
 
 
 def _configure_logging(config: AppConfig) -> None:

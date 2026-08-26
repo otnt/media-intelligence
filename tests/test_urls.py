@@ -42,7 +42,20 @@ def test_canonicalizes_watchlater_to_video_page():
     assert canonicalize_url(url) == "https://www.bilibili.com/video/BV1fP4y1j76Q"
 
 
-def test_parse_rejects_other_sites():
+def test_extract_supported_url_from_share_text():
+    from media_pipeline.media import extract_supported_url
+
+    blob = "华裔币圈大佬叶俊德全裸坠亡\nhttp://xhslink.com/o/2x5jqGA2hr6\n复制这条信息后打开小红书"
+    assert extract_supported_url(blob) == "http://xhslink.com/o/2x5jqGA2hr6"
+
+
+def test_extract_supported_url_strips_trailing_punctuation():
+    from media_pipeline.media import extract_supported_url
+
+    blob = "看这个：https://www.xiaohongshu.com/explore/64aaaaaaaaaaaaaaaaaaaaaa。"
+    assert extract_supported_url(blob).startswith(
+        "https://www.xiaohongshu.com/explore/64aaaaaaaaaaaaaaaaaaaaaa"
+    )
     with pytest.raises(UnsupportedURLError):
         parse_video_ref("https://twitter.com/x/status/1")
 

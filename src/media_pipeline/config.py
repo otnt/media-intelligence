@@ -24,6 +24,7 @@ _WORKER_BLOCK_RE = re.compile(r"(?m)^worker:\n(?:(?:[ \t]+.*|[ \t]*)\n)*")
 class ServerConfig:
     host: str = "127.0.0.1"
     port: int = 8765
+    ingest_token: str = ""
 
 
 @dataclass
@@ -213,6 +214,11 @@ def load_config(path: Path | None = None) -> AppConfig:
         server=ServerConfig(
             host=str(server_raw.get("host") or "127.0.0.1"),
             port=int(server_raw.get("port") or 8765),
+            ingest_token=str(
+                server_raw.get("ingest_token")
+                or os.environ.get("MEDIA_PIPELINE_INGEST_TOKEN")
+                or ""
+            ).strip(),
         ),
         paths=PathsConfig(
             videos=_as_path(paths_raw.get("videos"), Path.home() / "AIContent" / "videos"),

@@ -17,6 +17,8 @@ logger = logging.getLogger(__name__)
 _BV_RE = re.compile(r"BV[0-9A-Za-z]+")
 _AV_RE = re.compile(r"(?:av|AV)(\d+)")
 _YT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
+_URL_RE = re.compile(r"https?://[^\s<>\"'`]+", re.IGNORECASE)
+_TRAILING_URL_JUNK = ")]}>\"'，。、；：！？,.;:!?"
 
 
 class UnsupportedURLError(ValueError):
@@ -54,6 +56,43 @@ def parse_video_ref(url: str) -> tuple[str, str]:
         except ValueError as exc:
             raise UnsupportedURLError(f"Could not parse a Xiaohongshu note id from {url}") from exc
     raise UnsupportedURLError("Only Bilibili, YouTube, and Xiaohongshu (RedNote) URLs are supported")
+
+
+def extract_supported_url(text: str) -> str:
+    """Pick the first supported video/note URL out of a share blob or clipboard paste."""
+    raw = (text or "").strip()
+    if not raw:
+        raise UnsupportedURLError("URL is empty")
+    try:
+        parse_video_ref(raw)
+        return canonicalize_url(raw)
+    except UnsupportedURLError:
+        pass
+    found: list[str] = []
+    seen: set[str] = set()
+    for match in _URL_RE.finditer(raw):
+        candidate = match.group(0).rstrip(_TRAILING_URL_JUNK)
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        try:
+            parse_video_ref(candidate)
+        except UnsupportedURLError:
+            continue
+        found.append(candidate)
+    if not found:
+        raise UnsupportedURLError("No Bilibili, YouTube, or Xiaohongshu URL found in that text")
+    chosen = min(found, key=_share_url_rank)
+    return canonicalize_url(chosen)
+
+
+def _share_url_rank(url: str) -> int:
+    host = (urlparse(url).hostname or "").lower()
+    if "xhslink.com" in host:
+        return 0
+    if "xiaohongshu.com" in host or "rednote.com" in host:
+        return 1
+    return 2
 
 
 def canonicalize_url(url: str) -> str:

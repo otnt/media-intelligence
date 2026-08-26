@@ -108,6 +108,108 @@ def test_create_task_accepts_xiaohongshu_url(tmp_path: Path):
     assert stored.video_id == "2x5jqGA2hr6"
 
 
+def test_create_task_extracts_url_from_share_text_and_defaults_asr(tmp_path: Path):
+    config = AppConfig(
+        paths=PathsConfig(
+            videos=tmp_path / "videos",
+            audio=tmp_path / "audio",
+            artifacts=tmp_path / "artifacts",
+            logs=tmp_path / "logs",
+            vault=tmp_path / "vault",
+            db=tmp_path / "tasks.sqlite3",
+        )
+    )
+    config.ensure_directories()
+    store = TaskStore(config.paths.db)
+    client = TestClient(create_app(config, store=store, worker=DummyWorker()))
+    response = client.post(
+        "/v1/tasks",
+        json={"url": "标题\nhttp://xhslink.com/o/2x5jqGA2hr6\n复制后打开"},
+    )
+    assert response.status_code == 202
+    payload = response.json()
+    assert payload["asr_model"] == "qwen3-asr-1.7b"
+    assert payload["url"] == "http://xhslink.com/o/2x5jqGA2hr6"
+    stored = store.get(payload["id"])
+    assert stored is not None
+    assert stored.video_id == "2x5jqGA2hr6"
+
+
+def test_create_task_accepts_form_post(tmp_path: Path):
+    config = AppConfig(
+        paths=PathsConfig(
+            videos=tmp_path / "videos",
+            audio=tmp_path / "audio",
+            artifacts=tmp_path / "artifacts",
+            logs=tmp_path / "logs",
+            vault=tmp_path / "vault",
+            db=tmp_path / "tasks.sqlite3",
+        )
+    )
+    config.ensure_directories()
+    store = TaskStore(config.paths.db)
+    client = TestClient(create_app(config, store=store, worker=DummyWorker()))
+    response = client.post(
+        "/v1/tasks",
+        data={"url": "http://xhslink.com/o/2x5jqGA2hr6"},
+    )
+    assert response.status_code == 202
+    assert response.json()["url"] == "http://xhslink.com/o/2x5jqGA2hr6"
+
+
+def test_inbox_get_queues_share_text(tmp_path: Path):
+    config = AppConfig(
+        paths=PathsConfig(
+            videos=tmp_path / "videos",
+            audio=tmp_path / "audio",
+            artifacts=tmp_path / "artifacts",
+            logs=tmp_path / "logs",
+            vault=tmp_path / "vault",
+            db=tmp_path / "tasks.sqlite3",
+        )
+    )
+    config.ensure_directories()
+    store = TaskStore(config.paths.db)
+    client = TestClient(create_app(config, store=store, worker=DummyWorker()))
+    response = client.get(
+        "/v1/inbox",
+        params={"url": "标题 http://xhslink.com/o/2x5jqGA2hr6"},
+    )
+    assert response.status_code == 202
+    payload = response.json()
+    assert payload["message"] == "Added to queue"
+    assert payload["url"] == "http://xhslink.com/o/2x5jqGA2hr6"
+    stored = store.get(payload["id"])
+    assert stored is not None
+    assert stored.video_id == "2x5jqGA2hr6"
+
+
+def test_create_task_requires_ingest_token_for_remote_clients(tmp_path: Path):
+    from media_pipeline.config import ServerConfig
+
+    config = AppConfig(
+        server=ServerConfig(ingest_token="secret-token"),
+        paths=PathsConfig(
+            videos=tmp_path / "videos",
+            audio=tmp_path / "audio",
+            artifacts=tmp_path / "artifacts",
+            logs=tmp_path / "logs",
+            vault=tmp_path / "vault",
+            db=tmp_path / "tasks.sqlite3",
+        ),
+    )
+    config.ensure_directories()
+    client = TestClient(create_app(config, store=TaskStore(config.paths.db), worker=DummyWorker()))
+    denied = client.post("/v1/tasks", json={"url": "http://xhslink.com/o/2x5jqGA2hr6"})
+    assert denied.status_code == 401
+    allowed = client.post(
+        "/v1/tasks",
+        json={"url": "http://xhslink.com/o/2x5jqGA2hr6"},
+        headers={"X-Ingest-Token": "secret-token"},
+    )
+    assert allowed.status_code == 202
+
+
 def test_create_task_accepts_rednote_url(tmp_path: Path):
     config = AppConfig(
         paths=PathsConfig(

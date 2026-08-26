@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 from media_pipeline.artifacts import ArtifactStore
 from media_pipeline.asr.registry import list_models
 from media_pipeline.config import AppConfig, persist_worker_config
-from media_pipeline.media import UnsupportedURLError, canonicalize_url, parse_video_ref
+from media_pipeline.media import UnsupportedURLError, extract_supported_url, parse_video_ref
 from media_pipeline.models import ASR_MODELS, Task, TaskStatus, asr_label
 from media_pipeline.notes import load_note
 from media_pipeline.pipeline import RERUN_STAGES
@@ -28,7 +28,7 @@ ALLOWED_FRAME_DIRS = {"candidate_frames", "keyframes"}
 
 class CreateTaskRequest(BaseModel):
     url: str
-    asr_model: str = Field(min_length=1)
+    asr_model: str | None = None
     language: str | None = None
     extract_keyframes: bool = False
 
@@ -133,42 +133,46 @@ def create_app(config: AppConfig, store: TaskStore | None = None, worker: TaskWo
     def visual_config() -> dict[str, Any]:
         return {"visual": config.visual.as_dict(), "stages": sorted(RERUN_STAGES)}
 
-    @app.post("/v1/tasks", status_code=202)
-    def create_task(payload: CreateTaskRequest) -> dict[str, Any]:
-        _validate_model(payload.asr_model)
-        page_url = canonicalize_url(payload.url.strip())
-        try:
-            platform, video_id = parse_video_ref(page_url)
-        except UnsupportedURLError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        if config.notes_dir() is None:
-            raise HTTPException(
-                status_code=500,
-                detail="Obsidian vault is not configured. Set paths.vault in ~/.config/media-pipeline/config.yaml",
-            )
-        task = Task(
-            id=str(uuid.uuid4()),
-            url=page_url,
-            asr_model=payload.asr_model,
-            status=TaskStatus.queued,
-            platform=platform,
-            video_id=video_id,
-            extra={
-                "language": payload.language or config.asr.language or "auto",
-                "extract_keyframes": bool(payload.extract_keyframes),
-            },
+    @app.get("/v1/inbox", status_code=202)
+    def inbox(
+        request: Request,
+        url: str,
+        asr_model: str | None = None,
+        language: str | None = None,
+        extract_keyframes: bool = False,
+        token: str | None = None,
+        x_ingest_token: str | None = Header(default=None),
+        authorization: str | None = Header(default=None),
+    ) -> dict[str, Any]:
+        """Queue a share URL. GET+query is what iOS Shortcuts can send without breaking HTTP."""
+        _authorize_ingest(config, request, x_ingest_token or token, authorization)
+        return _enqueue_share(
+            config,
+            store,
+            worker,
+            url,
+            asr_model=asr_model,
+            language=language,
+            extract_keyframes=extract_keyframes,
         )
-        store.insert(task)
-        worker.submit(task)
-        return {
-            "id": task.id,
-            "status": task.status.value,
-            "asr_model": task.asr_model,
-            "asr_label": asr_label(task.asr_model),
-            "language": task.extra["language"],
-            "extract_keyframes": bool(task.extra.get("extract_keyframes")),
-            "message": "Added to queue",
-        }
+
+    @app.post("/v1/tasks", status_code=202)
+    async def create_task(
+        request: Request,
+        x_ingest_token: str | None = Header(default=None),
+        authorization: str | None = Header(default=None),
+    ) -> dict[str, Any]:
+        _authorize_ingest(config, request, x_ingest_token, authorization)
+        payload = await _read_create_task(request)
+        return _enqueue_share(
+            config,
+            store,
+            worker,
+            payload.url,
+            asr_model=payload.asr_model,
+            language=payload.language,
+            extract_keyframes=payload.extract_keyframes,
+        )
 
     @app.get("/v1/tasks")
     def list_tasks() -> dict[str, Any]:
@@ -375,6 +379,98 @@ def _attachment_path(config: AppConfig, video_id: str, filename: str) -> Path | 
         if path.is_file() and path.stat().st_size > 0:
             return path
     return None
+
+
+def _optional_form_str(value: object) -> str | None:
+    text = str(value or "").strip()
+    return text or None
+
+
+async def _read_create_task(request: Request) -> CreateTaskRequest:
+    content_type = (request.headers.get("content-type") or "").lower()
+    if "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type:
+        form = await request.form()
+        return CreateTaskRequest(
+            url=str(form.get("url") or ""),
+            asr_model=_optional_form_str(form.get("asr_model")),
+            language=_optional_form_str(form.get("language")),
+            extract_keyframes=str(form.get("extract_keyframes") or "").strip().lower()
+            in {"1", "true", "yes", "on"},
+        )
+    try:
+        data = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Expected JSON or form fields") from exc
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail="JSON object required")
+    return CreateTaskRequest.model_validate(data)
+
+
+def _enqueue_share(
+    config: AppConfig,
+    store: TaskStore,
+    worker: TaskWorker,
+    raw_url: str,
+    *,
+    asr_model: str | None,
+    language: str | None,
+    extract_keyframes: bool,
+) -> dict[str, Any]:
+    model_id = (asr_model or "").strip() or config.asr.default
+    _validate_model(model_id)
+    try:
+        page_url = extract_supported_url(raw_url)
+        platform, video_id = parse_video_ref(page_url)
+    except UnsupportedURLError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if config.notes_dir() is None:
+        raise HTTPException(
+            status_code=500,
+            detail="Obsidian vault is not configured. Set paths.vault in ~/.config/media-pipeline/config.yaml",
+        )
+    task = Task(
+        id=str(uuid.uuid4()),
+        url=page_url,
+        asr_model=model_id,
+        status=TaskStatus.queued,
+        platform=platform,
+        video_id=video_id,
+        extra={
+            "language": language or config.asr.language or "auto",
+            "extract_keyframes": bool(extract_keyframes),
+        },
+    )
+    store.insert(task)
+    worker.submit(task)
+    return {
+        "id": task.id,
+        "status": task.status.value,
+        "asr_model": task.asr_model,
+        "asr_label": asr_label(task.asr_model),
+        "language": task.extra["language"],
+        "extract_keyframes": bool(task.extra.get("extract_keyframes")),
+        "url": page_url,
+        "message": "Added to queue",
+    }
+
+
+def _authorize_ingest(
+    config: AppConfig,
+    request: Request,
+    x_ingest_token: str | None,
+    authorization: str | None,
+) -> None:
+    expected = (config.server.ingest_token or "").strip()
+    if not expected:
+        return
+    host = (request.client.host if request.client else "") or ""
+    if host in {"127.0.0.1", "::1", "localhost"}:
+        return
+    provided = (x_ingest_token or "").strip()
+    if authorization and authorization.lower().startswith("bearer "):
+        provided = authorization[7:].strip()
+    if provided != expected:
+        raise HTTPException(status_code=401, detail="Missing or invalid ingest token")
 
 
 def _validate_model(model_id: str) -> None:
