@@ -212,7 +212,6 @@ class ArtifactStore:
             "filtering_frames",
             "aligning_multimodal",
             "writing_outputs",
-            "summarizing",
             "all",
         }:
             self.summary_path.unlink(missing_ok=True)

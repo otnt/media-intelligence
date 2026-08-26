@@ -127,6 +127,45 @@
     .summary-md:empty, .note-md:empty { display: none; }
     .summary-md h2, .summary-md h3, .note-md h2, .note-md h3 { margin: 14px 0 8px; }
     .summary-md img, .note-md img { display: block; max-width: min(100%, 720px); border-radius: 8px; margin: 10px 0; background: #0b0d12; }
+    .summary-run {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px 12px 12px;
+      margin-top: 12px;
+      background: #121722;
+    }
+    .summary-run:first-child { margin-top: 0; }
+    .summary-run-head {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+      margin-bottom: 8px;
+    }
+    .summary-run.failed .summary-run-head { color: var(--drop); }
+    .summary-run-error { color: var(--drop); margin: 0; }
+    .summary-run-body h2, .summary-run-body h3 { margin: 10px 0 8px; }
+    .summary-thinking {
+      margin: 0 0 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #0b0d12;
+    }
+    .summary-thinking > summary {
+      cursor: pointer;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+      padding: 8px 10px;
+      list-style: none;
+    }
+    .summary-thinking > summary::-webkit-details-marker { display: none; }
+    .summary-thinking > summary::before { content: "▸ "; color: var(--muted); }
+    .summary-thinking[open] > summary::before { content: "▾ "; }
+    .summary-thinking-body {
+      padding: 0 10px 10px;
+      color: var(--muted);
+      font-size: 13px;
+    }
     details.fold {
       background: var(--panel);
       border: 1px solid var(--line);
@@ -672,18 +711,38 @@
       if (!output || !statusEl || !button || !promptEl) return;
       const status = summary.status || "idle";
       const running = status === "running";
+      const runs = Array.isArray(summary.runs)
+        ? summary.runs.filter((item) => item && typeof item === "object")
+        : [];
       const markdown = summary.markdown || "";
       button.disabled = running;
       if (status === "running") statusEl.textContent = "Generating…";
       else if (status === "failed") statusEl.textContent = summary.error || "Summary failed";
+      else if (status === "completed" && runs.length > 1) statusEl.textContent = `Done · ${runs.length} summaries`;
       else if (status === "completed") statusEl.textContent = summary.model ? `Done · ${summary.model}` : "Done";
       else statusEl.textContent = "";
-      output.innerHTML = renderSummaryMarkdown(markdown);
-      summaryMarkdown = markdown;
+      if (runs.length) {
+        const openThinking = {};
+        output.querySelectorAll("details.summary-thinking").forEach((el) => {
+          if (el.open && el.dataset.thinkKey) openThinking[el.dataset.thinkKey] = true;
+        });
+        output.innerHTML = [...runs].reverse().map((item, index) => renderSummaryRun(item, index)).join("");
+        output.querySelectorAll("details.summary-thinking").forEach((el) => {
+          if (openThinking[el.dataset.thinkKey]) el.open = true;
+          const summaryEl = el.querySelector(":scope > summary");
+          if (!summaryEl) return;
+          summaryEl.addEventListener("click", (event) => event.stopPropagation());
+          summaryEl.addEventListener("pointerdown", (event) => event.stopPropagation());
+        });
+        summaryMarkdown = markdown || copyMarkdownFromRuns(runs);
+      } else {
+        output.innerHTML = renderSummaryMarkdown(markdown);
+        summaryMarkdown = markdown;
+      }
       const copyBtn = document.getElementById("copy-summary");
-      if (copyBtn) copyBtn.disabled = !markdown.trim();
+      if (copyBtn) copyBtn.disabled = !String(summaryMarkdown || "").trim();
       if (fold) {
-        const show = Boolean(markdown);
+        const show = Boolean(runs.length || markdown);
         fold.hidden = !show;
         if (show && !fold.dataset.seen) {
           fold.open = true;
@@ -695,6 +754,52 @@
       if (!keepPrompt && !summaryPromptDirty && !focused && storedPrompt) {
         promptEl.value = storedPrompt;
       }
+    }
+
+    function renderSummaryRun(item, index = 0) {
+      const label = item.label || item.model || item.key || "Model";
+      const duration = formatRunDuration(item.duration_sec);
+      const head = duration ? `${label} · ${duration}` : label;
+      const thinking = String(item.thinking || "").trim();
+      const markdown = String(item.markdown || "").trim();
+      const failed = item.status === "failed" || (!markdown && !thinking);
+      const thinkKey = String(item.created_at || `${item.key || "run"}-${index}`);
+      const thinkingHtml = thinking
+        ? `<details class="summary-thinking" data-think-key="${esc(thinkKey)}"><summary>Thinking</summary><div class="summary-thinking-body">${renderSummaryMarkdown(thinking)}</div></details>`
+        : "";
+      const body = markdown
+        ? `${thinkingHtml}<div class="summary-run-body">${renderSummaryMarkdown(item.markdown)}</div>`
+        : thinkingHtml || `<p class="summary-run-error">失败：${esc(item.error || "empty")}</p>`;
+      return `<article class="summary-run${failed ? " failed" : ""}"><header class="summary-run-head">${esc(head)}</header>${body}</article>`;
+    }
+
+    function copyMarkdownFromRuns(runs) {
+      return [...runs].reverse().map((item) => {
+        const label = item.label || item.model || item.key || "Model";
+        const duration = formatRunDuration(item.duration_sec);
+        const head = duration ? `${label} · ${duration}` : label;
+        const thinking = String(item.thinking || "").trim();
+        const briefing = String(item.markdown || "").trim() || (thinking ? "" : `（失败：${item.error || "empty"}）`);
+        const thinkBlock = thinking
+          ? `<details>\n<summary>Thinking</summary>\n\n${thinking}\n\n</details>\n\n`
+          : "";
+        return `### ${head}\n\n${thinkBlock}${briefing}\n`;
+      }).join("\n");
+    }
+
+    function formatRunDuration(seconds) {
+      if (seconds == null || seconds === "") return "";
+      const value = Number(seconds);
+      if (!Number.isFinite(value)) return "";
+      const safe = Math.max(0, value);
+      if (safe < 10) return `${safe.toFixed(1)}s`;
+      if (safe < 60) return `${Math.round(safe)}s`;
+      const total = Math.round(safe);
+      const hours = Math.floor(total / 3600);
+      const minutes = Math.floor((total % 3600) / 60);
+      const secs = total % 60;
+      if (hours) return `${hours}h ${minutes}m ${secs}s`;
+      return `${minutes}m ${secs}s`;
     }
 
     function paintExtracted(markdown, videoId) {

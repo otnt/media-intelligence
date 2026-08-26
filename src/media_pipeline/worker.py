@@ -170,7 +170,7 @@ class TaskWorker:
     def summarize(self, task: Task, prompt: str = "", model: str = "") -> dict:
         from datetime import datetime, timezone
 
-        from media_pipeline.summary import idle_summary, normalize_prompt
+        from media_pipeline.summary import coerce_summary_runs, idle_summary, normalize_prompt
 
         if not task.video_id:
             raise ValueError("Task has no video id yet")
@@ -188,7 +188,7 @@ class TaskWorker:
             "error": "",
             "image_count": 0,
             "updated_at": datetime.now(timezone.utc).isoformat(),
-            "runs": list(existing.get("runs") or []),
+            "runs": coerce_summary_runs(existing),
         }
         artifacts.save_summary(payload)
         thread = threading.Thread(
@@ -330,7 +330,7 @@ class TaskWorker:
         from pathlib import Path
 
         from media_pipeline.notes import NoteWriter
-        from media_pipeline.summary import run_summary_backends
+        from media_pipeline.summary import coerce_summary_runs, run_summary_backends
         from media_pipeline.summary_llm import resolve_summary_backends
 
         task = self.store.get(task_id)
@@ -347,19 +347,17 @@ class TaskWorker:
                 raise ValueError(_missing_summary_model(model))
             metadata = artifacts.load_metadata()
             existing = artifacts.load_summary() or {}
-            replace = model in {"", "default", "all"} or not (existing.get("runs") or [])
             result = run_summary_backends(
                 artifacts,
                 backends,
                 prompt=prompt,
                 metadata=metadata,
                 extra_image_dir=extra_dir if extra_dir and extra_dir.is_dir() else None,
-                existing_runs=list(existing.get("runs") or []),
-                replace=replace,
+                existing_runs=coerce_summary_runs(existing),
                 model_lock=self._model_slots,
             )
             artifacts.save_summary(result)
-            if task.note_path:
+            if task.note_path and result.get("status") == "completed":
                 try:
                     NoteWriter(Path(task.note_path).parent).update_summary(Path(task.note_path), result["markdown"])
                 except Exception:

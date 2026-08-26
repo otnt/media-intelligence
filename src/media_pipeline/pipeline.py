@@ -122,7 +122,7 @@ class Pipeline:
         self.store.update(task)
         if metadata.media_kind == "image":
             self._write_image_post(task, metadata, artifacts, video_path)
-            self._summarize(task, metadata, artifacts)
+            self._summarize(task, metadata, artifacts, force=from_stage == "summarizing")
             task.status = TaskStatus.completed
             task.error = ""
             task.error_stage = ""
@@ -149,7 +149,7 @@ class Pipeline:
             task.extra["selected_count"] = 0
             self.store.update(task)
         self._write_outputs(task, metadata, artifacts, named, visual_result)
-        self._summarize(task, metadata, artifacts)
+        self._summarize(task, metadata, artifacts, force=from_stage == "summarizing")
         task.status = TaskStatus.completed
         task.error = ""
         task.error_stage = ""
@@ -386,15 +386,22 @@ class Pipeline:
             task.extra["image_count"] = len(images)
             self.store.update(task)
 
-    def _summarize(self, task: Task, metadata: VideoMetadata, artifacts: ArtifactStore) -> None:
+    def _summarize(
+        self,
+        task: Task,
+        metadata: VideoMetadata,
+        artifacts: ArtifactStore,
+        *,
+        force: bool = False,
+    ) -> None:
         from datetime import datetime, timezone
 
-        from media_pipeline.summary import DEFAULT_PROMPT, idle_summary, run_summary_backends
+        from media_pipeline.summary import DEFAULT_PROMPT, coerce_summary_runs, idle_summary, run_summary_backends
         from media_pipeline.summary_llm import resolve_summary_backends
 
         existing = artifacts.load_summary() or {}
         markdown = str(existing.get("markdown") or "").strip()
-        if str(existing.get("status") or "") == "completed" and markdown:
+        if not force and str(existing.get("status") or "") == "completed" and markdown:
             if task.note_path:
                 self.notes.update_summary(Path(task.note_path), markdown)
             return
@@ -404,8 +411,12 @@ class Pipeline:
             return
         extra_dir = Path(task.video_path) if task.video_path else None
         prompt = str(existing.get("prompt") or DEFAULT_PROMPT)
+        history = coerce_summary_runs(existing)
         running = idle_summary(prompt)
         running["status"] = "running"
+        running["markdown"] = markdown
+        running["model"] = str(existing.get("model") or "")
+        running["runs"] = history
         running["updated_at"] = datetime.now(timezone.utc).isoformat()
         artifacts.save_summary(running)
         with self._stage(task, TaskStatus.summarizing, metadata, artifacts):
@@ -416,7 +427,7 @@ class Pipeline:
                     prompt=prompt,
                     metadata=metadata,
                     extra_image_dir=extra_dir if extra_dir and extra_dir.is_dir() else None,
-                    replace=True,
+                    existing_runs=history,
                     model_lock=self._model_slot(),
                 )
             except Exception as exc:
@@ -426,6 +437,11 @@ class Pipeline:
                 artifacts.save_summary(failed)
                 raise PipelineError(TaskStatus.summarizing, str(exc)) from exc
             artifacts.save_summary(result)
+            if str(result.get("status") or "") != "completed":
+                raise PipelineError(
+                    TaskStatus.summarizing,
+                    str(result.get("error") or "Summary model returned an empty summary"),
+                )
             if task.note_path:
                 self.notes.update_summary(Path(task.note_path), str(result.get("markdown") or ""))
 

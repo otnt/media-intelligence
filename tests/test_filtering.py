@@ -190,6 +190,21 @@ def test_invalidate_from_preserves_analysis_on_filter_rerun(tmp_path: Path):
     assert not artifacts.multimodal_path.exists()
 
 
+def test_invalidate_from_summarizing_keeps_summary_history(tmp_path: Path):
+    artifacts = ArtifactStore(tmp_path, "BVtest")
+    artifacts.save_summary(
+        {
+            "status": "completed",
+            "markdown": "旧简报",
+            "runs": [{"key": "qwen", "markdown": "旧简报"}],
+        }
+    )
+    artifacts.invalidate_from("summarizing")
+    assert artifacts.load_summary()["markdown"] == "旧简报"
+    artifacts.invalidate_from("transcribing")
+    assert artifacts.load_summary() is None
+
+
 def test_debug_summary_attaches_vlm_fields_to_kept_candidates(tmp_path: Path):
     from media_pipeline.visual.models import CandidateFrame, DedupInfo
 

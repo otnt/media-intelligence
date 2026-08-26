@@ -3,7 +3,14 @@ from pathlib import Path
 
 from media_pipeline.config import AppConfig, SummaryConfig, load_config
 from media_pipeline.models import NamedSegment, VideoMetadata
-from media_pipeline.summary import render_summary_runs, run_summary_backends
+from media_pipeline.summary import (
+    coerce_summary_runs,
+    format_run_duration,
+    parse_summary_output,
+    render_summary_runs,
+    run_summary_backends,
+    split_summary_thinking,
+)
 from media_pipeline.summary_llm import (
     SummaryBackend,
     _gemini_generate,
@@ -117,14 +124,79 @@ def test_resolve_qwen_xhigh_enables_thinking():
 def test_render_summary_runs_compares_models():
     text = render_summary_runs(
         [
-            {"key": "qwen", "label": "Qwen3.8 (local)", "markdown": "本地版"},
-            {"key": "gemini", "label": "Gemini (gemini-2.5-flash)", "markdown": "云端版"},
+            {"key": "qwen", "label": "Qwen3.8 (local)", "markdown": "本地版", "duration_sec": 1.2},
+            {"key": "gemini", "label": "Gemini (gemini-2.5-flash)", "markdown": "云端版", "duration_sec": 12},
         ]
     )
-    assert "### Qwen3.8 (local)" in text
+    assert text.index("### Gemini (gemini-2.5-flash) · 12s") < text.index("### Qwen3.8 (local) · 1.2s")
     assert "本地版" in text
-    assert "### Gemini (gemini-2.5-flash)" in text
     assert "云端版" in text
+
+
+def test_format_run_duration_buckets():
+    assert format_run_duration(3.4) == "3.4s"
+    assert format_run_duration(12) == "12s"
+    assert format_run_duration(63) == "1m 3s"
+    assert format_run_duration(None) == ""
+
+
+def test_coerce_summary_runs_seeds_legacy_markdown():
+    runs = coerce_summary_runs(
+        {
+            "markdown": "旧简报",
+            "model": "local-qwen",
+            "label": "Qwen3.8 (local)",
+            "updated_at": "2026-08-25T00:00:00+00:00",
+        }
+    )
+    assert len(runs) == 1
+    assert runs[0]["markdown"] == "旧简报"
+    assert runs[0]["label"] == "Qwen3.8 (local)"
+    assert runs[0]["model"] == "local-qwen"
+    assert runs[0]["thinking"] == ""
+
+
+def test_split_summary_thinking_keeps_answer():
+    thinking, answer = split_summary_thinking("<think>plan</think>\n\n核心结论：完成。\n")
+    assert thinking == "plan"
+    assert "核心结论：完成。" in answer
+    parsed_think, parsed_answer = parse_summary_output("draft</think>\n\n核心结论：拆开。\n")
+    assert "draft" in parsed_think
+    assert parsed_answer == "核心结论：拆开。"
+    assert "<think>" not in parsed_answer
+    assert "</think>" not in parsed_answer
+
+
+def test_coerce_summary_runs_extracts_orphan_thinking():
+    runs = coerce_summary_runs(
+        {
+            "runs": [
+                {
+                    "key": "qwen-xhigh",
+                    "label": "Qwen3.8 27B thinking xhigh",
+                    "markdown": "先列提纲\n</think>\n\n核心结论：正文。\n",
+                }
+            ]
+        }
+    )
+    assert runs[0]["thinking"] == "先列提纲"
+    assert runs[0]["markdown"] == "核心结论：正文。"
+
+
+def test_render_summary_runs_folds_thinking():
+    text = render_summary_runs(
+        [
+            {
+                "label": "Qwen3.8 27B thinking xhigh",
+                "markdown": "正文",
+                "thinking": "推理过程",
+            }
+        ]
+    )
+    assert "<details>" in text
+    assert "<summary>Thinking</summary>" in text
+    assert "推理过程" in text
+    assert text.index("推理过程") < text.index("正文")
 
 
 def test_run_summary_backends_keeps_success_when_one_fails(tmp_path: Path):
@@ -141,9 +213,12 @@ def test_run_summary_backends_keeps_success_when_one_fails(tmp_path: Path):
     assert "quota" in result["markdown"]
     assert result["runs"][0]["status"] == "completed"
     assert result["runs"][1]["status"] == "failed"
+    assert result["runs"][0]["duration_sec"] >= 0
+    assert result["runs"][1]["duration_sec"] >= 0
+    assert " · " in result["markdown"]
 
 
-def test_run_summary_backends_merges_a_single_model(tmp_path: Path):
+def test_run_summary_backends_appends_history(tmp_path: Path):
     artifacts = _store_with_transcript(tmp_path)
     qwen = SummaryBackend(key="qwen", label="Qwen", model_id="qwen", generate_fn=lambda *_a, **_k: "本地")
     gemini = SummaryBackend(
@@ -156,11 +231,34 @@ def test_run_summary_backends_merges_a_single_model(tmp_path: Path):
         prompt="总结",
         metadata=_metadata(),
         existing_runs=list(first["runs"]),
-        replace=False,
+    )
+    third = run_summary_backends(
+        artifacts,
+        [qwen],
+        prompt="总结",
+        metadata=_metadata(),
+        existing_runs=list(second["runs"]),
     )
     assert [item["key"] for item in second["runs"]] == ["qwen", "gemini"]
-    assert "本地" in second["markdown"]
-    assert "云端" in second["markdown"]
+    assert [item["key"] for item in third["runs"]] == ["qwen", "gemini", "qwen"]
+    assert "本地" in third["markdown"]
+    assert "云端" in third["markdown"]
+    assert all(item["duration_sec"] >= 0 for item in third["runs"])
+    assert third["markdown"].index("### Qwen") < third["markdown"].index("### Gemini")
+
+
+def test_run_summary_backends_keeps_failed_attempt(tmp_path: Path):
+    artifacts = _store_with_transcript(tmp_path)
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("quota")
+
+    bad = SummaryBackend(key="gemini", label="Gemini", model_id="gemini", generate_fn=boom)
+    result = run_summary_backends(artifacts, [bad], prompt="总结", metadata=_metadata())
+    assert result["status"] == "failed"
+    assert result["runs"][0]["status"] == "failed"
+    assert result["runs"][0]["duration_sec"] >= 0
+    assert "quota" in result["markdown"]
 
 
 def test_gemini_generate_reads_candidates(monkeypatch, tmp_path: Path):

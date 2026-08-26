@@ -155,6 +155,7 @@ def test_summarize_task_attaches_stills_but_strips_output_images(tmp_path: Path)
     assert result["image_count"] == 0
     assert "核心思想" in result["markdown"]
     assert "<think>" not in result["markdown"]
+    assert result["thinking"] == "skip"
     assert "![[" not in result["markdown"]
     assert vision.images == [keep]
     assert "Welcome." in vision.prompt

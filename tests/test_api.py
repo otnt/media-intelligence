@@ -407,6 +407,8 @@ def test_dashboard_and_frame_override(tmp_path: Path):
     assert "Extracted contents" in home.text
     assert "copy-extracted" in home.text
     assert "copy-summary" in home.text
+    assert "summary-run" in home.text
+    assert "summary-thinking" in home.text
     assert "qwen-low" in home.text
     assert "qwen-medium" in home.text
     assert "qwen-xhigh" in home.text

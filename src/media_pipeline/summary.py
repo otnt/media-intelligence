@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -25,7 +26,10 @@ LEGACY_PROMPT = (
 MAX_SUMMARY_IMAGES = 8
 MAX_TRANSCRIPT_CHARS = 24000
 SUMMARY_MAX_TOKENS = 2048
-_THINK_BLOCK = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+_THINK_BLOCK = re.compile(r"<think>(.*?)</think>", re.DOTALL | re.IGNORECASE)
+_THINK_CLOSE = re.compile(r"</think>", re.IGNORECASE)
+_THINK_OPEN = re.compile(r"<think>", re.IGNORECASE)
+_THINK_TAG = re.compile(r"</?think>", re.IGNORECASE)
 _SUMMARY_BLOCK = re.compile(r"(?ms)^## Summary\n.*?(?=^## |\Z)")
 _WIKILINK_IMAGE = re.compile(r"!\[\[[^\]]+\]\]")
 _ATTACHMENT_LINK = re.compile(r"\[\[attachments/[^\]]+\]\]")
@@ -193,13 +197,14 @@ def summarize_task(
     packed = build_model_prompt(user_prompt, metadata, _truncate(source_text), attached)
     logger.info("Summarizing %s with %s attached images; output is text-only", artifacts.video_id, len(attached))
     raw = provider.generate(packed, [item.path for item in attached], max_tokens)
-    markdown = strip_summary_media(raw)
-    if not markdown:
+    thinking, markdown = parse_summary_output(raw)
+    if not markdown and not thinking:
         raise RuntimeError("Summary model returned an empty summary")
     return {
         "status": "completed",
         "prompt": user_prompt,
         "markdown": markdown,
+        "thinking": thinking,
         "model": getattr(provider, "model_id", "") or "",
         "error": "",
         "image_count": 0,
@@ -217,7 +222,7 @@ def run_summary_backends(
     metadata: VideoMetadata | None = None,
     extra_image_dir: Path | None = None,
     existing_runs: list[dict] | None = None,
-    replace: bool = True,
+    replace: bool = False,
     model_lock=None,
 ) -> dict:
     if not backends:
@@ -228,6 +233,9 @@ def run_summary_backends(
     fresh: list[dict] = []
     for backend in backends:
         context = lock if backend.local else nullcontext()
+        started = time.perf_counter()
+        result: dict = {}
+        error = ""
         try:
             with context:
                 result = summarize_task(
@@ -237,18 +245,18 @@ def run_summary_backends(
                     metadata=metadata,
                     extra_image_dir=extra_image_dir,
                 )
-            fresh.append(_run_payload(backend, result, error=""))
         except Exception as exc:
             logger.warning("Summary backend %s failed: %s", backend.key, exc)
-            fresh.append(_run_payload(backend, {}, error=str(exc)))
-    runs = fresh if replace else _merge_runs(existing_runs or [], fresh)
+            error = str(exc)
+        duration_sec = round(max(0.0, time.perf_counter() - started), 3)
+        fresh.append(_run_payload(backend, result, error=error, duration_sec=duration_sec))
+    history = [] if replace else list(existing_runs or [])
+    runs = history + fresh
     markdown = render_summary_runs(runs)
-    succeeded = [item for item in runs if item.get("markdown")]
-    errors = [str(item.get("error") or "") for item in runs if item.get("error")]
-    if not succeeded:
-        raise RuntimeError("; ".join(errors) or "Summary model returned an empty summary")
+    succeeded = [item for item in runs if item.get("markdown") or item.get("thinking")]
+    errors = [str(item.get("error") or "") for item in fresh if item.get("error")]
     return {
-        "status": "completed",
+        "status": "completed" if succeeded else "failed",
         "prompt": normalize_prompt(prompt),
         "markdown": markdown,
         "model": ", ".join(item["model"] for item in succeeded if item.get("model")),
@@ -259,44 +267,134 @@ def run_summary_backends(
     }
 
 
+def coerce_summary_runs(existing: dict | None) -> list[dict]:
+    payload = existing or {}
+    runs = [item for item in (payload.get("runs") or []) if isinstance(item, dict)]
+    if runs:
+        return [_with_thinking(item) for item in runs]
+    markdown = str(payload.get("markdown") or "").strip()
+    if not markdown and not str(payload.get("thinking") or "").strip():
+        return []
+    return [
+        _with_thinking(
+            {
+                "key": str(payload.get("key") or ""),
+                "label": str(payload.get("label") or payload.get("model") or "Previous summary"),
+                "model": str(payload.get("model") or ""),
+                "status": "completed",
+                "markdown": markdown,
+                "thinking": str(payload.get("thinking") or ""),
+                "error": "",
+                "duration_sec": payload.get("duration_sec"),
+                "created_at": str(payload.get("updated_at") or ""),
+            }
+        )
+    ]
+
+
 def render_summary_runs(runs: list[dict]) -> str:
-    filled = [item for item in runs if str(item.get("markdown") or "").strip()]
-    if len(runs) == 1 and filled:
-        return str(filled[0]["markdown"]).strip() + "\n"
+    if not runs:
+        return ""
     blocks: list[str] = []
-    for item in runs:
-        label = str(item.get("label") or item.get("model") or item.get("key") or "Model")
-        blocks.append(f"### {label}")
+    for item in reversed(runs):
+        blocks.append(f"### {_run_heading(item)}")
         blocks.append("")
+        thinking = str(item.get("thinking") or "").strip()
+        if thinking:
+            blocks.append("<details>")
+            blocks.append("<summary>Thinking</summary>")
+            blocks.append("")
+            blocks.append(thinking)
+            blocks.append("")
+            blocks.append("</details>")
+            blocks.append("")
         text = str(item.get("markdown") or "").strip()
         if text:
             blocks.append(text)
-        else:
+        elif not thinking:
             blocks.append(f"（失败：{item.get('error') or 'empty'}）")
         blocks.append("")
     return "\n".join(blocks).strip() + "\n"
 
 
-def _run_payload(backend: SummaryBackend, result: dict, *, error: str) -> dict:
+def format_run_duration(seconds: float | None) -> str:
+    if seconds is None or seconds == "":
+        return ""
+    try:
+        value = float(seconds)
+    except (TypeError, ValueError):
+        return ""
+    if value < 0:
+        value = 0.0
+    if value < 10:
+        return f"{value:.1f}s"
+    if value < 60:
+        return f"{int(round(value))}s"
+    total = int(round(value))
+    hours, remainder = divmod(total, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours:
+        return f"{hours}h {minutes}m {secs}s"
+    return f"{minutes}m {secs}s"
+
+
+def _run_heading(item: dict) -> str:
+    label = str(item.get("label") or item.get("model") or item.get("key") or "Model")
+    duration = format_run_duration(item.get("duration_sec"))
+    if duration:
+        return f"{label} · {duration}"
+    return label
+
+
+def _run_payload(backend: SummaryBackend, result: dict, *, error: str, duration_sec: float = 0.0) -> dict:
+    thinking, markdown = _payload_thinking(result)
     return {
         "key": backend.key,
         "label": backend.label,
         "model": str(result.get("model") or backend.model_id),
-        "status": "completed" if result.get("markdown") and not error else "failed",
-        "markdown": strip_summary_media(str(result.get("markdown") or "")),
+        "status": "completed" if (markdown or thinking) and not error else "failed",
+        "markdown": markdown,
+        "thinking": thinking,
         "error": error,
+        "duration_sec": duration_sec,
+        "created_at": datetime.now(timezone.utc).isoformat(),
     }
 
 
-def _merge_runs(existing: list[dict], fresh: list[dict]) -> list[dict]:
-    by_key = {str(item.get("key") or ""): item for item in existing if item.get("key")}
-    for item in fresh:
-        by_key[str(item.get("key") or "")] = item
-    order = {
-        key: index
-        for index, key in enumerate(("qwen", "qwen-low", "qwen-medium", "qwen-xhigh", "gemini", "openai"))
-    }
-    return sorted(by_key.values(), key=lambda item: order.get(str(item.get("key") or ""), 9))
+def parse_summary_output(text: str) -> tuple[str, str]:
+    thinking, answer = split_summary_thinking(text)
+    return strip_summary_media(thinking), strip_summary_media(answer)
+
+
+def split_summary_thinking(text: str) -> tuple[str, str]:
+    raw = text or ""
+    chunks: list[str] = []
+
+    def _keep(match: re.Match[str]) -> str:
+        chunks.append(match.group(1).strip())
+        return "\n"
+
+    remainder = _THINK_BLOCK.sub(_keep, raw)
+    close = _THINK_CLOSE.search(remainder)
+    if close:
+        chunks.append(remainder[: close.start()].strip())
+        remainder = remainder[close.end() :]
+    remainder = _THINK_OPEN.sub("", remainder)
+    thinking = "\n\n".join(part for part in chunks if part)
+    return thinking.strip(), remainder.strip()
+
+
+def _with_thinking(item: dict) -> dict:
+    stored = str(item.get("thinking") or "").strip()
+    extracted, answer = parse_summary_output(str(item.get("markdown") or ""))
+    thinking = strip_summary_media(stored) or extracted
+    markdown = answer if extracted else strip_summary_media(str(item.get("markdown") or ""))
+    return {**item, "thinking": thinking, "markdown": markdown}
+
+
+def _payload_thinking(result: dict) -> tuple[str, str]:
+    item = _with_thinking(result)
+    return str(item.get("thinking") or ""), str(item.get("markdown") or "")
 
 
 def _plain_transcript(segments: list[NamedSegment]) -> str:
@@ -317,6 +415,7 @@ def _truncate(text: str, limit: int = MAX_TRANSCRIPT_CHARS) -> str:
 
 def strip_summary_media(text: str) -> str:
     cleaned = _THINK_BLOCK.sub("", text or "").strip()
+    cleaned = _THINK_TAG.sub("", cleaned).strip()
     cleaned = cleaned.replace("```markdown", "").replace("```", "").strip()
     cleaned = _WIKILINK_IMAGE.sub("", cleaned)
     cleaned = _ATTACHMENT_LINK.sub("", cleaned)
