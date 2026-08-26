@@ -449,6 +449,11 @@ def test_dashboard_and_frame_override(tmp_path: Path):
     assert "Bilibili max" in home.text
     assert 'id="open-settings"' in home.text
     assert 'id="settings-overlay"' in home.text
+    assert 'id="open-sidebar"' in home.text
+    assert 'id="sidebar-drawer"' in home.text
+    assert 'id="open-settings-chrome"' in home.text
+    assert "max-width: 899px" in home.text
+    assert "grid-template-columns: 340px 1fr" in home.text
     assert "Save settings" in home.text
     assert "Default summary prompt" in home.text
     assert "Visual stage defaults" in home.text
