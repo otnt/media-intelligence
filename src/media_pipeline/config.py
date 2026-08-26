@@ -26,6 +26,8 @@ DEFAULT_SUMMARY_PROVIDERS = ["qwen-xhigh"]
 DEFAULT_QWEN_8BIT_MODEL = "mlx-community/Qwen3.8-27B-8bit"
 _WORKER_BLOCK_RE = re.compile(r"(?m)^worker:\n(?:(?:[ \t]+.*|[ \t]*)\n)*")
 _DASHBOARD_BLOCK_RE = re.compile(r"(?m)^dashboard:\n(?:(?:[ \t]+.*|[ \t]*)\n)*")
+_VISUAL_BLOCK_RE = re.compile(r"(?m)^visual:\n(?:(?:[ \t]+.*|[ \t]*)\n)*")
+_SUMMARY_BLOCK_RE = re.compile(r"(?m)^summary:\n(?:(?:[ \t]+.*|[ \t]*)\n)*")
 
 
 @dataclass
@@ -94,6 +96,19 @@ class VisualConfig:
                 else:
                     payload[key] = float(value)
         return payload
+
+    def apply_overrides(self, overrides: dict | None) -> None:
+        payload = self.merged(overrides)
+        self.sample_interval_sec = float(payload["sample_interval_sec"])
+        self.scene_detector = str(payload["scene_detector"])
+        self.scene_threshold = float(payload["scene_threshold"])
+        self.min_scene_duration_sec = float(payload["min_scene_duration_sec"])
+        self.similarity_threshold = float(payload["similarity_threshold"])
+        self.visual_change_threshold = float(payload["visual_change_threshold"])
+        self.ocr_change_threshold = float(payload["ocr_change_threshold"])
+        self.context_before_sec = float(payload["context_before_sec"])
+        self.context_after_sec = float(payload["context_after_sec"])
+        self.vlm_keep_threshold = float(payload["vlm_keep_threshold"])
 
 
 @dataclass
@@ -178,6 +193,7 @@ class SummaryConfig:
     openai_model: str = "gpt-4.1-mini"
     gemini_api_key: str = ""
     openai_api_key: str = ""
+    prompt: str = ""
 
 
 @dataclass
@@ -326,6 +342,7 @@ def load_config(path: Path | None = None) -> AppConfig:
             openai_api_key=str(
                 summary_raw.get("openai_api_key") or os.environ.get("OPENAI_API_KEY") or ""
             ).strip(),
+            prompt=str(summary_raw.get("prompt") or "").strip(),
         ),
         worker=_worker_from_raw(worker_raw),
         dashboard=_dashboard_from_raw(dashboard_raw),
@@ -400,6 +417,25 @@ def persist_dashboard_config(config: AppConfig) -> None:
     _persist_named_block(config, _DASHBOARD_BLOCK_RE, _format_dashboard_yaml(config.dashboard))
 
 
+def persist_visual_config(config: AppConfig) -> None:
+    _persist_named_block(config, _VISUAL_BLOCK_RE, _format_visual_yaml(config.visual))
+
+
+def persist_summary_prompt(config: AppConfig) -> None:
+    path = config.source_path
+    if path is None or not path.exists():
+        return
+    prompt = str(config.summary.prompt or "").strip()
+    line = f"  prompt: {yaml_quote(prompt)}\n"
+    text = path.read_text(encoding="utf-8")
+    match = _SUMMARY_BLOCK_RE.search(text)
+    if match:
+        updated = text[: match.start()] + _upsert_indented_key(match.group(0), "prompt", line) + text[match.end() :]
+    else:
+        updated = text.rstrip() + "\n\nsummary:\n" + line
+    path.write_text(updated, encoding="utf-8")
+
+
 def _persist_named_block(config: AppConfig, pattern: re.Pattern[str], block: str) -> None:
     path = config.source_path
     if path is None or not path.exists():
@@ -425,6 +461,41 @@ def _format_dashboard_yaml(dashboard: DashboardConfig) -> str:
     for key, value in view.items():
         lines.append(f"  {key}: {value}\n")
     return "".join(lines)
+
+
+def _format_visual_yaml(visual: VisualConfig) -> str:
+    payload = visual.as_dict()
+    lines = ["visual:\n"]
+    for key, value in payload.items():
+        if key == "scene_detector":
+            lines.append(f"  {key}: {value}\n")
+        else:
+            lines.append(f"  {key}: {_yaml_number(float(value))}\n")
+    return "".join(lines)
+
+
+def _yaml_number(value: float) -> str:
+    number = float(value)
+    if number.is_integer():
+        return str(int(number))
+    return f"{number:.8f}".rstrip("0").rstrip(".")
+
+
+def _upsert_indented_key(block: str, key: str, formatted_line: str) -> str:
+    pattern = re.compile(
+        rf"(?m)^(?P<indent>[ \t]+){re.escape(key)}:[ \t]*(?:[|>][+-]?\d*)?[ \t]*\n"
+        rf"(?:(?:(?P=indent)[ \t]+.*|[ \t]*)\n)*"
+        rf"|^(?P<indent2>[ \t]+){re.escape(key)}:[ \t].*\n"
+    )
+    updated, count = pattern.subn(formatted_line, block, count=1)
+    if count:
+        return updated
+    if not block.endswith("\n"):
+        block += "\n"
+    newline_at = block.find("\n")
+    if newline_at == -1:
+        return block + formatted_line
+    return block[: newline_at + 1] + formatted_line + block[newline_at + 1 :]
 
 
 def _dashboard_from_raw(raw: dict[str, Any]) -> DashboardConfig:

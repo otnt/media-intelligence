@@ -447,6 +447,21 @@ def test_dashboard_and_frame_override(tmp_path: Path):
     assert "Concurrency" in home.text
     assert "YouTube max" in home.text
     assert "Bilibili max" in home.text
+    assert 'id="open-settings"' in home.text
+    assert 'id="settings-overlay"' in home.text
+    assert "Save settings" in home.text
+    assert "Default summary prompt" in home.text
+    assert "Visual stage defaults" in home.text
+    assert "settings-summary-prompt" in home.text
+    assert "settings-visual-fields" in home.text
+    assert "Save limits" not in home.text
+    assert 'target="_blank"' in home.text
+    assert "noopener noreferrer" in home.text
+    assert "source-link" in home.text
+    assert "sourceLineHtml" in home.text
+    health = client.get("/v1/health").json()
+    assert "summary_prompt" in health
+    assert "篇幅由信息密度决定" in health["summary_prompt"]
     created = client.post(
         "/v1/tasks",
         json={"url": "https://www.bilibili.com/video/BV181KNeuEi2", "asr_model": "qwen3-asr-1.7b"},
@@ -654,5 +669,58 @@ def test_update_dashboard_view(tmp_path: Path):
     view = client.get("/v1/dashboard").json()
     assert view["filter"] == "all"
     assert view["filters"][0]["id"] == "today"
+
+
+def test_update_visual_and_summary_settings(tmp_path: Path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "# keep this comment\n"
+        "server:\n  host: 127.0.0.1\n\n"
+        "summary:\n"
+        "  providers: [qwen-xhigh]\n"
+        "  gemini_api_key: secret-gemini\n",
+        encoding="utf-8",
+    )
+    config = AppConfig(
+        paths=PathsConfig(
+            videos=tmp_path / "videos",
+            audio=tmp_path / "audio",
+            artifacts=tmp_path / "artifacts",
+            logs=tmp_path / "logs",
+            vault=tmp_path / "vault",
+            db=tmp_path / "tasks.sqlite3",
+        ),
+        source_path=config_path,
+    )
+    config.ensure_directories()
+    client = TestClient(create_app(config, store=TaskStore(config.paths.db), worker=DummyWorker()))
+    empty_visual = client.put("/v1/visual/config", json={})
+    assert empty_visual.status_code == 400
+    visual = client.put(
+        "/v1/visual/config",
+        json={"sample_interval_sec": 8, "vlm_keep_threshold": 0.6},
+    )
+    assert visual.status_code == 200
+    assert visual.json()["visual"]["sample_interval_sec"] == 8
+    assert visual.json()["visual"]["vlm_keep_threshold"] == 0.6
+    assert config.visual.sample_interval_sec == 8
+    empty_prompt = client.put("/v1/summary/config", json={})
+    assert empty_prompt.status_code == 400
+    prompt = client.put("/v1/summary/config", json={"prompt": "自定义默认摘要"})
+    assert prompt.status_code == 200
+    assert prompt.json()["prompt"] == "自定义默认摘要"
+    assert config.summary.prompt == "自定义默认摘要"
+    saved = config_path.read_text(encoding="utf-8")
+    assert "# keep this comment" in saved
+    assert "gemini_api_key: secret-gemini" in saved
+    assert "sample_interval_sec: 8" in saved
+    assert "vlm_keep_threshold: 0.6" in saved
+    health = client.get("/v1/health").json()
+    assert health["visual"]["sample_interval_sec"] == 8
+    assert health["summary_prompt"] == "自定义默认摘要"
+    stored = client.get("/v1/summary/config").json()
+    assert stored["prompt"] == "自定义默认摘要"
+    invalid = client.put("/v1/visual/config", json={"vlm_keep_threshold": 2})
+    assert invalid.status_code == 422
 
 

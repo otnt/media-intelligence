@@ -1,6 +1,12 @@
 from pathlib import Path
 
-from media_pipeline.config import load_config, persist_dashboard_config, persist_worker_config
+from media_pipeline.config import (
+    load_config,
+    persist_dashboard_config,
+    persist_summary_prompt,
+    persist_visual_config,
+    persist_worker_config,
+)
 
 
 def test_load_config_reads_analysis_and_vlm_threshold(tmp_path: Path):
@@ -116,3 +122,91 @@ def test_persist_replaces_existing_worker_block(tmp_path: Path):
     assert "youtube: 5" in saved
     assert "visual:" in saved
     assert "sample_interval_sec: 12" in saved
+
+
+def test_load_config_reads_summary_prompt(tmp_path: Path):
+    path = tmp_path / "config.yaml"
+    path.write_text("summary:\n  prompt: 自定义默认摘要\n", encoding="utf-8")
+    config = load_config(path)
+    assert config.summary.prompt == "自定义默认摘要"
+
+
+def test_persist_visual_config_keeps_other_comments(tmp_path: Path):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "# keep me\nserver:\n  host: 127.0.0.1\n\npaths:\n  vault: /tmp/vault\n",
+        encoding="utf-8",
+    )
+    config = load_config(path)
+    config.visual.apply_overrides({"sample_interval_sec": 8, "vlm_keep_threshold": 0.6})
+    persist_visual_config(config)
+    saved = path.read_text(encoding="utf-8")
+    assert "# keep me" in saved
+    assert "vault: /tmp/vault" in saved
+    assert "sample_interval_sec: 8" in saved
+    assert "vlm_keep_threshold: 0.6" in saved
+    reloaded = load_config(path)
+    assert reloaded.visual.sample_interval_sec == 8
+    assert reloaded.visual.vlm_keep_threshold == 0.6
+    assert reloaded.visual.scene_threshold == 27
+
+
+def test_persist_summary_prompt_keeps_api_keys(tmp_path: Path):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "# keep me\n"
+        "summary:\n"
+        "  providers: [qwen-xhigh]\n"
+        "  gemini_api_key: secret-gemini\n"
+        "  openai_api_key: secret-openai\n"
+        "visual:\n"
+        "  sample_interval_sec: 12\n",
+        encoding="utf-8",
+    )
+    config = load_config(path)
+    config.summary.prompt = "自定义默认摘要"
+    persist_summary_prompt(config)
+    saved = path.read_text(encoding="utf-8")
+    assert "# keep me" in saved
+    assert "gemini_api_key: secret-gemini" in saved
+    assert "openai_api_key: secret-openai" in saved
+    assert "providers: [qwen-xhigh]" in saved
+    assert saved.count("prompt:") == 1
+    reloaded = load_config(path)
+    assert reloaded.summary.prompt == "自定义默认摘要"
+    assert reloaded.summary.gemini_api_key == "secret-gemini"
+
+
+def test_persist_summary_prompt_replaces_multiline_prompt(tmp_path: Path):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "summary:\n"
+        "  prompt: |\n"
+        "    old line\n"
+        "    still old\n"
+        "  gemini_api_key: secret\n",
+        encoding="utf-8",
+    )
+    config = load_config(path)
+    config.summary.prompt = "新的默认摘要"
+    persist_summary_prompt(config)
+    saved = path.read_text(encoding="utf-8")
+    assert saved.count("prompt:") == 1
+    assert "old line" not in saved
+    assert "still old" not in saved
+    assert "gemini_api_key: secret" in saved
+    reloaded = load_config(path)
+    assert reloaded.summary.prompt == "新的默认摘要"
+
+
+def test_persist_summary_prompt_roundtrips_builtin_newlines(tmp_path: Path):
+    from media_pipeline.summary import DEFAULT_PROMPT
+
+    path = tmp_path / "config.yaml"
+    path.write_text("summary:\n  providers: [qwen-xhigh]\n", encoding="utf-8")
+    config = load_config(path)
+    config.summary.prompt = DEFAULT_PROMPT
+    persist_summary_prompt(config)
+    reloaded = load_config(path)
+    assert reloaded.summary.prompt == DEFAULT_PROMPT
+    assert "篇幅由信息密度决定" in reloaded.summary.prompt

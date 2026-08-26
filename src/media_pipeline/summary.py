@@ -75,10 +75,16 @@ class SummaryStill:
     score: float = 0.0
 
 
-def normalize_prompt(prompt: str | None) -> str:
+_PROMPT_ALIASES = {LEGACY_PROMPT, PREVIOUS_DEFAULT_PROMPT, LENGTH_CAPPED_PROMPT, DEFAULT_PROMPT}
+
+
+def normalize_prompt(prompt: str | None, default: str | None = None) -> str:
+    fallback = (default or "").strip()
+    if not fallback or fallback in {LEGACY_PROMPT, PREVIOUS_DEFAULT_PROMPT, LENGTH_CAPPED_PROMPT}:
+        fallback = DEFAULT_PROMPT
     text = (prompt or "").strip()
-    if not text or text in {LEGACY_PROMPT, PREVIOUS_DEFAULT_PROMPT, LENGTH_CAPPED_PROMPT}:
-        return DEFAULT_PROMPT
+    if not text or text in _PROMPT_ALIASES:
+        return fallback
     return text
 
 

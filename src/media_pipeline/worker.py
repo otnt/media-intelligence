@@ -171,19 +171,20 @@ class TaskWorker:
     def summarize(self, task: Task, prompt: str = "", model: str = "") -> dict:
         from datetime import datetime, timezone
 
-        from media_pipeline.summary import coerce_summary_runs, idle_summary, normalize_prompt
+        from media_pipeline.summary import DEFAULT_PROMPT, coerce_summary_runs, idle_summary, normalize_prompt
 
         if not task.video_id:
             raise ValueError("Task has no video id yet")
         artifacts = ArtifactStore(self.config.paths.artifacts, task.video_id)
-        existing = artifacts.load_summary() or idle_summary(prompt)
+        default_prompt = normalize_prompt(self.config.summary.prompt, default=DEFAULT_PROMPT)
+        existing = artifacts.load_summary() or idle_summary(prompt or default_prompt)
         with self._lock:
             if task.id in self._summarizing:
                 return existing
             self._summarizing.add(task.id)
         payload = {
             "status": "running",
-            "prompt": normalize_prompt(prompt or existing.get("prompt")),
+            "prompt": normalize_prompt(prompt or existing.get("prompt"), default=default_prompt),
             "markdown": str(existing.get("markdown") or ""),
             "model": str(existing.get("model") or ""),
             "error": "",

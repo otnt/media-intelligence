@@ -122,6 +122,9 @@ def test_normalize_prompt_replaces_legacy_illustrated_default():
     assert "1.5–2" not in DEFAULT_PROMPT
     assert "篇幅由信息密度决定" in DEFAULT_PROMPT
     assert normalize_prompt("自定义摘要") == "自定义摘要"
+    assert normalize_prompt("", default="自定义默认") == "自定义默认"
+    assert normalize_prompt(DEFAULT_PROMPT, default="自定义默认") == "自定义默认"
+    assert normalize_prompt(LENGTH_CAPPED_PROMPT, default="自定义默认") == "自定义默认"
 
 
 def test_upsert_summary_replaces_existing_block():

@@ -396,7 +396,7 @@ class Pipeline:
     ) -> None:
         from datetime import datetime, timezone
 
-        from media_pipeline.summary import DEFAULT_PROMPT, coerce_summary_runs, idle_summary, run_summary_backends
+        from media_pipeline.summary import DEFAULT_PROMPT, coerce_summary_runs, idle_summary, normalize_prompt, run_summary_backends
         from media_pipeline.summary_llm import resolve_summary_backends
 
         existing = artifacts.load_summary() or {}
@@ -410,7 +410,10 @@ class Pipeline:
             logger.warning("Skipping summary for task %s: no summary model is available", task.id)
             return
         extra_dir = Path(task.video_path) if task.video_path else None
-        prompt = str(existing.get("prompt") or DEFAULT_PROMPT)
+        prompt = normalize_prompt(
+            existing.get("prompt"),
+            default=self.config.summary.prompt or DEFAULT_PROMPT,
+        )
         history = coerce_summary_runs(existing)
         running = idle_summary(prompt)
         running["status"] = "running"

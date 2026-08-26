@@ -22,11 +22,11 @@
     button, select, input { font: inherit; }
     .app { display: grid; grid-template-columns: 340px 1fr; height: 100%; }
     .sidebar { border-right: 1px solid var(--line); display: flex; flex-direction: column; min-width: 0; }
-    .brand { padding: 16px 18px 10px; }
+    .brand { padding: 16px 18px 10px; display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+    .brand-copy { min-width: 0; }
     .brand h1 { margin: 0; font-size: 16px; letter-spacing: -0.02em; }
     .brand p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
     .list { overflow: auto; flex: 1; }
-    .worker-panel { padding: 0 16px 14px; border-bottom: 1px solid var(--line); }
     .list-controls { padding: 10px 16px 12px; border-bottom: 1px solid var(--line); display: grid; gap: 8px; }
     .list-controls h2 { margin: 0 0 2px; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
     .task-block { padding-bottom: 8px; }
@@ -65,12 +65,38 @@
     .task-group.source-bilibili { border-left-color: #00a1d6; background: #1b2c38; }
     .task-group.source-rednote { border-left-color: #ff2442; background: #3a1c24; }
     .task-group.source-other { border-left-color: var(--warn); }
-    .worker-panel h2 { margin: 0 0 8px; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+    .worker-panel h2, .settings-sheet h3 { margin: 0 0 8px; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+    .settings-sheet h3 { margin: 18px 0 8px; }
     .worker-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
     .worker-fields label.field input { width: 100%; }
-    .worker-panel .actions { margin-top: 10px; align-items: center; }
+    .worker-panel .actions, .settings-actions { margin-top: 10px; align-items: center; }
     .worker-msg { font-size: 12px; color: var(--muted); }
     .occupancy { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .settings-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 80;
+      display: none;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 32px 16px 48px;
+      background: rgba(8, 10, 16, 0.72);
+      overflow: auto;
+    }
+    .settings-overlay.open { display: flex !important; }
+    .settings-sheet {
+      width: min(760px, 100%);
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 18px 20px 20px;
+      box-shadow: 0 18px 48px rgba(0,0,0,0.45);
+    }
+    .settings-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
+    .settings-head h2 { margin: 0; font-size: 20px; }
+    .settings-sheet textarea.prompt { min-height: 168px; }
+    .source-link { color: var(--accent); word-break: break-all; }
+    .source-line { color: var(--muted); padding: 0 0 12px; margin: 0; }
     .task { display: block; width: 100%; text-align: left; border: 0; border-bottom: 1px solid var(--line); background: transparent; color: inherit; padding: 12px 16px; cursor: pointer; }
     .task:hover, .task.active { background: #1e2430; }
     .task .title { font-weight: 650; }
@@ -231,27 +257,11 @@
   <div class="app">
     <aside class="sidebar">
       <div class="brand">
-        <h1>Extraction dashboard</h1>
-        <p id="health">Checking local backend…</p>
-      </div>
-      <div class="worker-panel">
-        <h2>Concurrency</h2>
-        <div class="worker-fields">
-          <label class="field">YouTube max
-            <input id="yt-limit" type="number" min="0" max="64" step="1" />
-          </label>
-          <label class="field">Bilibili max
-            <input id="bili-limit" type="number" min="0" max="64" step="1" />
-          </label>
-          <label class="field">ASR / diarization
-            <input id="model-limit" type="number" min="1" max="64" step="1" />
-          </label>
+        <div class="brand-copy">
+          <h1>Extraction dashboard</h1>
+          <p id="health">Checking local backend…</p>
         </div>
-        <div class="occupancy" id="worker-occupancy"></div>
-        <div class="actions">
-          <button class="btn primary" id="save-worker">Save limits</button>
-          <span class="worker-msg" id="worker-msg"></span>
-        </div>
+        <button type="button" class="btn" id="open-settings">Settings</button>
       </div>
       <div class="list-controls">
         <h2>List</h2>
@@ -285,6 +295,40 @@
       <div class="empty">Select a task to inspect the transcript, optional keyframes, and rerun stages.</div>
     </main>
   </div>
+  <div class="settings-overlay" id="settings-overlay" hidden aria-hidden="true">
+    <div class="settings-sheet" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <div class="settings-head">
+        <h2 id="settings-title">Settings</h2>
+        <button type="button" class="btn" id="close-settings">Close</button>
+      </div>
+      <div class="worker-panel">
+        <h3>Concurrency</h3>
+        <div class="worker-fields">
+          <label class="field">YouTube max
+            <input id="yt-limit" type="number" min="0" max="64" step="1" />
+          </label>
+          <label class="field">Bilibili max
+            <input id="bili-limit" type="number" min="0" max="64" step="1" />
+          </label>
+          <label class="field">ASR / diarization
+            <input id="model-limit" type="number" min="1" max="64" step="1" />
+          </label>
+        </div>
+        <div class="occupancy" id="worker-occupancy"></div>
+      </div>
+      <h3>Visual stage defaults</h3>
+      <p class="empty" style="padding:0 0 10px">These defaults apply to new extracts and to reruns that do not override a knob. Per-task rerun still uses the values on the task page.</p>
+      <div class="fields" id="settings-visual-fields"></div>
+      <h3>Default summary prompt</h3>
+      <label class="field">Prompt
+        <textarea id="settings-summary-prompt" class="prompt" rows="12"></textarea>
+      </label>
+      <div class="actions settings-actions">
+        <button type="button" class="btn primary" id="save-settings">Save settings</button>
+        <span class="worker-msg" id="settings-msg"></span>
+      </div>
+    </div>
+  </div>
   <script>
     const main = document.getElementById("main");
     const tasksEl = document.getElementById("tasks");
@@ -293,8 +337,9 @@
     const biliLimit = document.getElementById("bili-limit");
     const modelLimit = document.getElementById("model-limit");
     const occupancyEl = document.getElementById("worker-occupancy");
-    const workerMsg = document.getElementById("worker-msg");
-    const saveWorkerBtn = document.getElementById("save-worker");
+    const settingsMsg = document.getElementById("settings-msg");
+    const settingsOverlay = document.getElementById("settings-overlay");
+    const settingsPromptEl = document.getElementById("settings-summary-prompt");
     const listFilterEl = document.getElementById("list-filter");
     const listGroupEl = document.getElementById("list-group");
     const listOrderEl = document.getElementById("list-order");
@@ -305,6 +350,16 @@
     let summaryModel = "qwen-xhigh";
     let extractedMarkdown = "";
     let summaryMarkdown = "";
+    let visualDefaults = {
+      sample_interval_sec: 12,
+      scene_threshold: 27,
+      similarity_threshold: 0.92,
+      min_scene_duration_sec: 0.8,
+      context_before_sec: 10,
+      context_after_sec: 20,
+      vlm_keep_threshold: 0.45,
+    };
+    let defaultSummaryPrompt = "";
     const copyResetters = {};
     const LEGACY_SUMMARY_PROMPTS = new Set([
       "提取这个文章的核心思想，让我无需细读这个视频。生成一份图文输出（可以截屏）让我1分钟获得99%的信息。",
@@ -322,17 +377,17 @@
 5. 如果原内容包含风险、趋势、限制条件、启示或后续值得关注的问题，请点明，不要因为篇幅而省略。
 6. 使用简洁的中文，可少量使用 emoji 作为分点符号，但不要复述原文，不要插入图片或链接。
 7. 篇幅由信息密度决定：原文短、信息少就短写；原文长、分支多或论证深，就把关键信息写完整。不要为了凑长度而重复，也不要为了写短而丢掉判断所依赖的事实。`;
-
-    init();
+    defaultSummaryPrompt = DEFAULT_SUMMARY_PROMPT;
 
     async function init() {
+      bindSettings();
+      renderSettingsVisualFields();
       await loadHealth();
       await loadWorker();
       await loadOrganize();
       await loadTasks();
       if (selectedId) await openTask(selectedId);
       setInterval(() => { loadTasks(); loadWorker(); refreshSelected(); }, 4000);
-      saveWorkerBtn.onclick = saveWorker;
       listFilterEl.onchange = saveOrganize;
       listGroupEl.onchange = saveOrganize;
       listOrderEl.onchange = saveOrganize;
@@ -342,6 +397,14 @@
       try {
         const data = await api("/v1/health");
         healthEl.textContent = data.ok ? `Backend · dashboard ${data.dashboard || ""}` : "Backend not ready";
+        if (data.visual) {
+          visualDefaults = { ...visualDefaults, ...data.visual };
+          fillSettingsVisual();
+        }
+        if (data.summary_prompt) {
+          defaultSummaryPrompt = data.summary_prompt;
+          fillSettingsPrompt();
+        }
       } catch (error) {
         healthEl.textContent = error.message;
       }
@@ -350,10 +413,10 @@
     async function loadWorker() {
       try {
         const data = await api("/v1/worker");
-        renderWorker(data, { fillInputs: document.activeElement !== ytLimit && document.activeElement !== biliLimit && document.activeElement !== modelLimit });
+        renderWorker(data, { fillInputs: !settingsInputsBusy() });
       } catch (error) {
         occupancyEl.textContent = "";
-        workerMsg.textContent = error.message;
+        if (settingsMsg) settingsMsg.textContent = error.message;
       }
     }
 
@@ -381,22 +444,16 @@
     }
 
     async function saveWorker() {
-      workerMsg.textContent = "Saving…";
-      try {
-        const data = await api("/v1/worker", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            youtube: Number(ytLimit.value),
-            bilibili: Number(biliLimit.value),
-            model_jobs: Number(modelLimit.value),
-          }),
-        });
-        renderWorker(data.worker || data, { fillInputs: true });
-        workerMsg.textContent = "Saved. Applies immediately.";
-      } catch (error) {
-        workerMsg.textContent = error.message;
-      }
+      const data = await api("/v1/worker", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          youtube: Number(ytLimit.value),
+          bilibili: Number(biliLimit.value),
+          model_jobs: Number(modelLimit.value),
+        }),
+      });
+      renderWorker(data.worker || data, { fillInputs: true });
     }
 
     async function loadOrganize() {
@@ -426,6 +483,156 @@
       } finally {
         await loadTasks();
       }
+    }
+
+    function settingsInputsBusy() {
+      if (!settingsOverlay || !settingsOverlay.classList.contains("open")) return false;
+      return settingsOverlay.contains(document.activeElement);
+    }
+
+    function bindSettings() {
+      const openBtn = document.getElementById("open-settings");
+      const closeBtn = document.getElementById("close-settings");
+      const saveBtn = document.getElementById("save-settings");
+      if (openBtn) openBtn.onclick = openSettings;
+      if (closeBtn) closeBtn.onclick = closeSettings;
+      if (saveBtn) saveBtn.onclick = saveSettings;
+      if (settingsOverlay) {
+        settingsOverlay.addEventListener("click", (event) => {
+          if (event.target === settingsOverlay) closeSettings();
+        });
+      }
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && settingsOverlay && settingsOverlay.classList.contains("open")) {
+          closeSettings();
+        }
+      });
+    }
+
+    function renderSettingsVisualFields() {
+      const host = document.getElementById("settings-visual-fields");
+      if (!host) return;
+      host.innerHTML = [
+        knobField("sample_interval_sec", "Sample interval (s)", `<input id="settings-sample_interval_sec" type="number" />`),
+        knobField("scene_threshold", "Scene threshold", `<input id="settings-scene_threshold" type="number" />`),
+        knobField("similarity_threshold", "Similarity threshold", `<input id="settings-similarity_threshold" type="number" step="0.01" />`),
+        knobField("min_scene_duration_sec", "Min scene (s)", `<input id="settings-min_scene_duration_sec" type="number" step="0.1" />`),
+        knobField("context_before_sec", "Context before (s)", `<input id="settings-context_before_sec" type="number" />`),
+        knobField("context_after_sec", "Context after (s)", `<input id="settings-context_after_sec" type="number" />`),
+        knobField("vlm_keep_threshold", "VLM keep threshold", `<input id="settings-vlm_keep_threshold" type="number" step="0.05" min="0" max="1" />`),
+      ].join("");
+    }
+
+    function visualKnobValue(key, fallback) {
+      const value = visualDefaults[key];
+      return value == null || value === "" ? fallback : value;
+    }
+
+    function fillSettingsVisual({ force = false } = {}) {
+      if (!force && settingsInputsBusy()) return;
+      const fields = [
+        ["settings-sample_interval_sec", "sample_interval_sec"],
+        ["settings-scene_threshold", "scene_threshold"],
+        ["settings-similarity_threshold", "similarity_threshold"],
+        ["settings-min_scene_duration_sec", "min_scene_duration_sec"],
+        ["settings-context_before_sec", "context_before_sec"],
+        ["settings-context_after_sec", "context_after_sec"],
+        ["settings-vlm_keep_threshold", "vlm_keep_threshold"],
+      ];
+      fields.forEach(([id, key]) => {
+        const node = document.getElementById(id);
+        if (!node || document.activeElement === node) return;
+        if (visualDefaults[key] != null && visualDefaults[key] !== "") node.value = visualDefaults[key];
+      });
+    }
+
+    function fillSettingsPrompt({ force = false } = {}) {
+      if (!settingsPromptEl) return;
+      if (!force && (document.activeElement === settingsPromptEl || settingsInputsBusy())) return;
+      settingsPromptEl.value = defaultSummaryPrompt;
+    }
+
+    async function openSettings() {
+      if (!settingsOverlay) return;
+      settingsOverlay.hidden = false;
+      settingsOverlay.classList.add("open");
+      settingsOverlay.setAttribute("aria-hidden", "false");
+      if (settingsMsg) settingsMsg.textContent = "";
+      await loadHealth();
+      await loadWorker();
+      fillSettingsVisual({ force: true });
+      fillSettingsPrompt({ force: true });
+    }
+
+    function closeSettings() {
+      if (!settingsOverlay) return;
+      settingsOverlay.classList.remove("open");
+      settingsOverlay.hidden = true;
+      settingsOverlay.setAttribute("aria-hidden", "true");
+    }
+
+    function readSettingsVisual() {
+      const payload = {};
+      const fields = [
+        "sample_interval_sec",
+        "scene_threshold",
+        "similarity_threshold",
+        "min_scene_duration_sec",
+        "context_before_sec",
+        "context_after_sec",
+        "vlm_keep_threshold",
+      ];
+      fields.forEach((key) => {
+        const node = document.getElementById(`settings-${key}`);
+        if (node && node.value !== "") payload[key] = Number(node.value);
+      });
+      return payload;
+    }
+
+    async function saveSettings() {
+      if (settingsMsg) settingsMsg.textContent = "Saving…";
+      try {
+        await saveWorker();
+        const visualPayload = readSettingsVisual();
+        if (Object.keys(visualPayload).length) {
+          const visual = await api("/v1/visual/config", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(visualPayload),
+          });
+          visualDefaults = { ...visualDefaults, ...(visual.visual || {}) };
+          fillSettingsVisual({ force: true });
+        }
+        const promptPayload = await api("/v1/summary/config", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt: (settingsPromptEl && settingsPromptEl.value) || "" }),
+        });
+        defaultSummaryPrompt = promptPayload.prompt || defaultSummaryPrompt;
+        fillSettingsPrompt({ force: true });
+        const promptEl = document.getElementById("summary-prompt");
+        if (promptEl && !summaryPromptDirty && document.activeElement !== promptEl) {
+          promptEl.value = defaultSummaryPrompt;
+        }
+        if (settingsMsg) settingsMsg.textContent = "Saved. Applies immediately.";
+      } catch (error) {
+        if (settingsMsg) settingsMsg.textContent = error.message;
+      }
+    }
+
+    function sourceLineHtml(url, error) {
+      const href = String(url || "").trim();
+      let link = esc(href);
+      try {
+        const parsed = new URL(href);
+        if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+          link = `<a class="source-link" href="${esc(href)}" target="_blank" rel="noopener noreferrer">${esc(href)}</a>`;
+        }
+      } catch (_error) {
+        link = esc(href);
+      }
+      const suffix = error ? `${href ? " · " : ""}${esc(error)}` : "";
+      return `${link}${suffix}`;
     }
 
     async function loadTasks() {
@@ -526,7 +733,7 @@
       if (statusChip) statusChip.textContent = debug.status || "";
       const errorLine = document.getElementById("task-error");
       if (errorLine) {
-        errorLine.textContent = `${debug.url || ""}${debug.error ? " · " + debug.error : ""}`;
+        errorLine.innerHTML = sourceLineHtml(debug.url, debug.error);
       }
       if (!rerunPanelBusy()) {
         const gallery = document.getElementById("gallery");
@@ -551,7 +758,7 @@
 
     function renderDetail() {
       const task = debug;
-      const visual = task.visual || {};
+      const visual = { ...visualDefaults, ...(task.visual || {}) };
       main.innerHTML = `
         <h2>${esc(task.title || task.video_id || "Untitled")}</h2>
         <div class="row">
@@ -565,7 +772,7 @@
           <span class="chip">${task.keyframe_count || 0} keyframes</span>
           <span class="chip">${task.selected_count || (task.debug && task.debug.selected_count) || 0} kept by Qwen</span>
         </div>
-        <p class="empty" id="task-error" style="padding:0 0 12px">${esc(task.url || "")}${task.error ? " · " + esc(task.error) : ""}</p>
+        <p class="source-line" id="task-error">${sourceLineHtml(task.url, task.error)}</p>
         <div class="panel">
           <div class="stages" id="stages">${stagesInner(task)}</div>
         </div>
@@ -583,13 +790,13 @@
                 <option value="diarizing">Re-run diarization</option>
                 <option value="all">Full rerun</option>
               </select>`)}
-            ${knobField("sample_interval_sec", "Sample interval (s)", `<input id="sample_interval_sec" type="number" value="${esc(visual.sample_interval_sec ?? 12)}" />`)}
-            ${knobField("scene_threshold", "Scene threshold", `<input id="scene_threshold" type="number" value="${esc(visual.scene_threshold ?? 27)}" />`)}
-            ${knobField("similarity_threshold", "Similarity threshold", `<input id="similarity_threshold" type="number" step="0.01" value="${esc(visual.similarity_threshold ?? 0.92)}" />`)}
-            ${knobField("min_scene_duration_sec", "Min scene (s)", `<input id="min_scene_duration_sec" type="number" step="0.1" value="${esc(visual.min_scene_duration_sec ?? 0.8)}" />`)}
-            ${knobField("context_before_sec", "Context before (s)", `<input id="context_before_sec" type="number" value="${esc(visual.context_before_sec ?? 10)}" />`)}
-            ${knobField("context_after_sec", "Context after (s)", `<input id="context_after_sec" type="number" value="${esc(visual.context_after_sec ?? 20)}" />`)}
-            ${knobField("vlm_keep_threshold", "VLM keep threshold", `<input id="vlm_keep_threshold" type="number" step="0.05" min="0" max="1" value="${esc(visual.vlm_keep_threshold ?? 0.45)}" />`)}
+            ${knobField("sample_interval_sec", "Sample interval (s)", `<input id="sample_interval_sec" type="number" value="${esc(visual.sample_interval_sec ?? visualKnobValue("sample_interval_sec", 12))}" />`)}
+            ${knobField("scene_threshold", "Scene threshold", `<input id="scene_threshold" type="number" value="${esc(visual.scene_threshold ?? visualKnobValue("scene_threshold", 27))}" />`)}
+            ${knobField("similarity_threshold", "Similarity threshold", `<input id="similarity_threshold" type="number" step="0.01" value="${esc(visual.similarity_threshold ?? visualKnobValue("similarity_threshold", 0.92))}" />`)}
+            ${knobField("min_scene_duration_sec", "Min scene (s)", `<input id="min_scene_duration_sec" type="number" step="0.1" value="${esc(visual.min_scene_duration_sec ?? visualKnobValue("min_scene_duration_sec", 0.8))}" />`)}
+            ${knobField("context_before_sec", "Context before (s)", `<input id="context_before_sec" type="number" value="${esc(visual.context_before_sec ?? visualKnobValue("context_before_sec", 10))}" />`)}
+            ${knobField("context_after_sec", "Context after (s)", `<input id="context_after_sec" type="number" value="${esc(visual.context_after_sec ?? visualKnobValue("context_after_sec", 20))}" />`)}
+            ${knobField("vlm_keep_threshold", "VLM keep threshold", `<input id="vlm_keep_threshold" type="number" step="0.05" min="0" max="1" value="${esc(visual.vlm_keep_threshold ?? visualKnobValue("vlm_keep_threshold", 0.45))}" />`)}
           </div>
           <div class="actions">
             <button class="btn primary" id="rerun">Queue rerun</button>
@@ -619,7 +826,7 @@
             <span class="worker-msg" id="summary-status"></span>
           </div>
           <label class="field" style="margin-top:12px">Prompt
-            <textarea id="summary-prompt" class="prompt" rows="12">${esc(DEFAULT_SUMMARY_PROMPT)}</textarea>
+            <textarea id="summary-prompt" class="prompt" rows="12">${esc(defaultSummaryPrompt)}</textarea>
           </label>
         </div>
         <details class="fold" id="fold-frames">
@@ -810,7 +1017,7 @@
       const statusEl = document.getElementById("summary-status");
       const button = document.getElementById("summarize");
       const modelEl = document.getElementById("summary-model");
-      const raw = (promptEl && promptEl.value.trim()) || DEFAULT_SUMMARY_PROMPT;
+      const raw = (promptEl && promptEl.value.trim()) || defaultSummaryPrompt;
       const prompt = canonicalPrompt(raw);
       const model = (modelEl && modelEl.value) || summaryModel || "all";
       summaryModel = model;
@@ -962,7 +1169,7 @@
 
     function canonicalPrompt(text) {
       const raw = String(text || "").trim();
-      if (!raw || LEGACY_SUMMARY_PROMPTS.has(raw)) return DEFAULT_SUMMARY_PROMPT;
+      if (!raw || LEGACY_SUMMARY_PROMPTS.has(raw) || raw === DEFAULT_SUMMARY_PROMPT) return defaultSummaryPrompt;
       return raw;
     }
 
@@ -1083,6 +1290,8 @@
       const s = String(total % 60).padStart(2, "0");
       return `${h}:${m}:${s}`;
     }
+
+    init();
   </script>
 </body>
 </html>

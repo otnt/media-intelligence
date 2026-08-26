@@ -12,7 +12,13 @@ from pydantic import BaseModel, Field
 
 from media_pipeline.artifacts import ArtifactStore
 from media_pipeline.asr.registry import list_models
-from media_pipeline.config import AppConfig, persist_dashboard_config, persist_worker_config
+from media_pipeline.config import (
+    AppConfig,
+    persist_dashboard_config,
+    persist_summary_prompt,
+    persist_visual_config,
+    persist_worker_config,
+)
 from media_pipeline.dashboard_view import (
     dashboard_options,
     flatten_groups,
@@ -76,6 +82,20 @@ class DashboardViewRequest(BaseModel):
     order: str | None = None
 
 
+class VisualSettingsRequest(BaseModel):
+    sample_interval_sec: float | None = Field(default=None, ge=0.1, le=600)
+    scene_threshold: float | None = Field(default=None, ge=0, le=100)
+    similarity_threshold: float | None = Field(default=None, ge=0, le=1)
+    min_scene_duration_sec: float | None = Field(default=None, ge=0, le=60)
+    context_before_sec: float | None = Field(default=None, ge=0, le=600)
+    context_after_sec: float | None = Field(default=None, ge=0, le=600)
+    vlm_keep_threshold: float | None = Field(default=None, ge=0, le=1)
+
+
+class SummaryPromptRequest(BaseModel):
+    prompt: str | None = None
+
+
 def create_app(config: AppConfig, store: TaskStore | None = None, worker: TaskWorker | None = None) -> FastAPI:
     store = store or TaskStore(config.paths.db)
     worker = worker or TaskWorker(config, store)
@@ -116,6 +136,7 @@ def create_app(config: AppConfig, store: TaskStore | None = None, worker: TaskWo
             "dashboard": f"http://{config.server.host}:{config.server.port}/",
             "organize": config.dashboard.as_dict(),
             "visual": config.visual.as_dict(),
+            "summary_prompt": _configured_prompt(config),
             "worker": _worker_snapshot(worker, config),
         }
 
@@ -168,6 +189,27 @@ def create_app(config: AppConfig, store: TaskStore | None = None, worker: TaskWo
     @app.get("/v1/visual/config")
     def visual_config() -> dict[str, Any]:
         return {"visual": config.visual.as_dict(), "stages": sorted(RERUN_STAGES)}
+
+    @app.put("/v1/visual/config")
+    def update_visual_config(payload: VisualSettingsRequest) -> dict[str, Any]:
+        updates = payload.model_dump(exclude_none=True)
+        if not updates:
+            raise HTTPException(status_code=400, detail="No visual settings provided")
+        config.visual.apply_overrides(updates)
+        persist_visual_config(config)
+        return {"ok": True, "visual": config.visual.as_dict(), "stages": sorted(RERUN_STAGES)}
+
+    @app.get("/v1/summary/config")
+    def summary_config() -> dict[str, Any]:
+        return {"prompt": _configured_prompt(config)}
+
+    @app.put("/v1/summary/config")
+    def update_summary_config(payload: SummaryPromptRequest) -> dict[str, Any]:
+        if payload.prompt is None:
+            raise HTTPException(status_code=400, detail="No summary prompt provided")
+        config.summary.prompt = normalize_prompt(payload.prompt, default=DEFAULT_PROMPT)
+        persist_summary_prompt(config)
+        return {"ok": True, "prompt": _configured_prompt(config)}
 
     @app.get("/v1/inbox", status_code=202)
     def inbox(
@@ -252,10 +294,10 @@ def create_app(config: AppConfig, store: TaskStore | None = None, worker: TaskWo
             payload["scenes"] = [item.to_dict() for item in (artifacts.load_scenes() or [])]
             if not payload.get("selected_count"):
                 payload["selected_count"] = int(summary.get("selected_count") or 0)
-            payload["summary"] = _public_summary(task, artifacts, worker)
+            payload["summary"] = _public_summary(task, artifacts, worker, config)
             payload["extracted_markdown"] = _extracted_markdown(task, config, artifacts)
         else:
-            payload["summary"] = idle_summary()
+            payload["summary"] = idle_summary(_configured_prompt(config))
             payload["extracted_markdown"] = ""
         return payload
 
@@ -265,9 +307,9 @@ def create_app(config: AppConfig, store: TaskStore | None = None, worker: TaskWo
         if task is None:
             raise HTTPException(status_code=404, detail="Task not found")
         if not task.video_id:
-            return idle_summary()
+            return idle_summary(_configured_prompt(config))
         artifacts = ArtifactStore(config.paths.artifacts, task.video_id)
-        return _public_summary(task, artifacts, worker)
+        return _public_summary(task, artifacts, worker, config)
 
     @app.get("/v1/summary/models")
     def summary_models() -> dict[str, Any]:
@@ -286,7 +328,7 @@ def create_app(config: AppConfig, store: TaskStore | None = None, worker: TaskWo
             raise HTTPException(status_code=404, detail="Task not found")
         if not task.video_id:
             raise HTTPException(status_code=400, detail="Task has no video id yet")
-        prompt = normalize_prompt(payload.prompt if payload else None)
+        prompt = normalize_prompt(payload.prompt if payload else None, default=_configured_prompt(config))
         model = str(payload.model if payload and payload.model else "").strip()
         starter = getattr(worker, "summarize", None)
         if not callable(starter):
@@ -360,6 +402,10 @@ def _resolve_organize(
     }
 
 
+def _configured_prompt(config: AppConfig) -> str:
+    return normalize_prompt(config.summary.prompt, default=DEFAULT_PROMPT)
+
+
 def _dashboard_snapshot(config: AppConfig) -> dict[str, Any]:
     return {**config.dashboard.as_dict(), **dashboard_options()}
 
@@ -402,8 +448,9 @@ def _enrich_task(task: Task, config: AppConfig) -> dict[str, Any]:
     return payload
 
 
-def _public_summary(task: Task, artifacts: ArtifactStore, worker: object) -> dict[str, Any]:
-    payload = artifacts.load_summary() or idle_summary()
+def _public_summary(task: Task, artifacts: ArtifactStore, worker: object, config: AppConfig) -> dict[str, Any]:
+    default_prompt = _configured_prompt(config)
+    payload = artifacts.load_summary() or idle_summary(default_prompt)
     running = getattr(worker, "_summarizing", set())
     if payload.get("status") == "running" and task.id not in running:
         payload = {
@@ -411,8 +458,8 @@ def _public_summary(task: Task, artifacts: ArtifactStore, worker: object) -> dic
             "status": "failed",
             "error": payload.get("error") or "Summary was interrupted",
         }
-    payload.setdefault("prompt", DEFAULT_PROMPT)
-    payload["prompt"] = normalize_prompt(str(payload.get("prompt") or ""))
+    payload.setdefault("prompt", default_prompt)
+    payload["prompt"] = normalize_prompt(str(payload.get("prompt") or ""), default=default_prompt)
     payload.setdefault("error", "")
     payload.setdefault("model", "")
     runs = coerce_summary_runs(payload)

@@ -64,6 +64,8 @@ summary:
   # Prefer env vars GEMINI_API_KEY / GOOGLE_API_KEY and OPENAI_API_KEY instead of putting keys here.
   gemini_api_key: ""
   openai_api_key: ""
+  # Dashboard Settings writes this. Empty uses the built-in analyst briefing prompt.
+  prompt: ""
 
 visual:
   sample_interval_sec: 12
