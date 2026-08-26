@@ -23,6 +23,21 @@ DEFAULT_PROMPT = (
     "\n"
     "1. 先写出一句话或一小段核心结论：这份内容最重要的判断、冲突、问题或目的是什么。\n"
     "2. 提炼主要论证链条或信息结构，解释“为什么”和“如何”，而不仅仅罗列“是什么”。\n"
+    "3. 保留支撑核心结论的必要事实、数据、条件、案例、步骤或技术细节；次要花絮、重复表述和气氛铺垫直接丢掉。\n"
+    "4. 如果内容涉及多个观点、方案、主体或步骤，请对比它们的异同或逻辑关系。\n"
+    "5. 如果原内容包含风险、趋势、限制条件、启示或后续值得关注的问题，请点明，不要因为篇幅而省略。\n"
+    "6. 使用简洁的中文，可少量使用 emoji 作为分点符号，但不要复述原文，不要插入图片或链接。\n"
+    "7. 篇幅由信息密度决定：原文短、信息少就短写；原文长、分支多或论证深，就把关键信息写完整。"
+    "不要为了凑长度而重复，也不要为了写短而丢掉判断所依赖的事实。"
+)
+LENGTH_CAPPED_PROMPT = (
+    "你是一位资深分析师，擅长快速提炼复杂内容的本质，并将其转化为结构清晰、有深度的中文简报。"
+    "你的目标读者是希望快速理解核心思想、逻辑链条和关键细节的人，而不是只想知道表面事实的人。\n"
+    "\n"
+    "请基于以下内容，输出一份纯文字总结，要求如下：\n"
+    "\n"
+    "1. 先写出一句话或一小段核心结论：这份内容最重要的判断、冲突、问题或目的是什么。\n"
+    "2. 提炼主要论证链条或信息结构，解释“为什么”和“如何”，而不仅仅罗列“是什么”。\n"
     "3. 保留支撑核心结论的必要事实、数据、案例或技术细节，但不要做无关堆砌。\n"
     "4. 如果内容涉及多个观点、方案、主体或步骤，请对比它们的异同或逻辑关系。\n"
     "5. 如果原内容包含风险、趋势、启示或后续值得关注的问题，请在结尾适当点明。\n"
@@ -62,7 +77,7 @@ class SummaryStill:
 
 def normalize_prompt(prompt: str | None) -> str:
     text = (prompt or "").strip()
-    if not text or text in {LEGACY_PROMPT, PREVIOUS_DEFAULT_PROMPT}:
+    if not text or text in {LEGACY_PROMPT, PREVIOUS_DEFAULT_PROMPT, LENGTH_CAPPED_PROMPT}:
         return DEFAULT_PROMPT
     return text
 
@@ -170,7 +185,7 @@ def build_model_prompt(
         (user_prompt or DEFAULT_PROMPT).strip(),
         "",
         "Use the source text and any attached images as evidence. Do not invent facts they do not support.",
-        "Write a compact briefing. Prefer Chinese if the source is Chinese.",
+        "Match length to information density. Prefer Chinese if the source is Chinese.",
         "Plain text only. Light emoji is encouraged for scannability.",
         "Do not copy the source sentence by sentence or reproduce it as a rewritten article.",
         "Attached images are input only. Look at them, then write text.",
