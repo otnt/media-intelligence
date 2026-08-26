@@ -422,6 +422,7 @@ def test_dashboard_and_frame_override(tmp_path: Path):
     assert "Keyframes on" in home.text
     assert "资深分析师" in home.text
     assert "不要插入图片或链接" in home.text
+    assert "篇幅由信息密度决定" in home.text
     assert 'value="qwen-xhigh" selected' in home.text
     visual = client.get("/v1/visual/config").json()
     assert visual["visual"]["vlm_keep_threshold"] == 0.45
