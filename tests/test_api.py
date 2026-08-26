@@ -454,6 +454,10 @@ def test_dashboard_and_frame_override(tmp_path: Path):
     assert "Extracted contents" in home.text
     assert "copy-extracted" in home.text
     assert "copy-summary" in home.text
+    assert "Summary Generation" in home.text
+    assert "No summary yet" in home.text
+    assert "No extracted note yet" in home.text
+    assert "fold-stages" in home.text
     assert "summary-run" in home.text
     assert "summary-thinking" in home.text
     assert "qwen-low" in home.text
@@ -465,8 +469,6 @@ def test_dashboard_and_frame_override(tmp_path: Path):
     assert "qwen-3.8-27B 8bit thinking none" in home.text
     assert "fold-frames" in home.text
     assert "Extract keyframes" in home.text
-    assert "Transcript only" in home.text
-    assert "Keyframes on" in home.text
     assert "资深分析师" in home.text
     assert "不要插入图片或链接" in home.text
     assert "篇幅由信息密度决定" in home.text
