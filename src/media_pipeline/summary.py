@@ -8,6 +8,7 @@ from pathlib import Path
 
 from media_pipeline.artifacts import ArtifactStore
 from media_pipeline.models import NamedSegment, VideoMetadata, format_timestamp
+from media_pipeline.summary_llm import SummaryBackend
 from media_pipeline.visual.models import FrameVerdict, Keyframe
 from media_pipeline.visual.vlm import VisionProvider
 
@@ -57,6 +58,7 @@ def idle_summary(prompt: str = DEFAULT_PROMPT) -> dict:
         "error": "",
         "image_count": 0,
         "updated_at": "",
+        "runs": [],
     }
 
 
@@ -172,7 +174,7 @@ def build_model_prompt(
 
 def summarize_task(
     artifacts: ArtifactStore,
-    provider: VisionProvider,
+    provider: VisionProvider | SummaryBackend,
     *,
     prompt: str,
     metadata: VideoMetadata | None = None,
@@ -193,16 +195,105 @@ def summarize_task(
     raw = provider.generate(packed, [item.path for item in attached], max_tokens)
     markdown = strip_summary_media(raw)
     if not markdown:
-        raise RuntimeError("Qwen3.8 returned an empty summary")
+        raise RuntimeError("Summary model returned an empty summary")
     return {
         "status": "completed",
         "prompt": user_prompt,
         "markdown": markdown,
-        "model": provider.model_id,
+        "model": getattr(provider, "model_id", "") or "",
         "error": "",
         "image_count": 0,
         "updated_at": datetime.now(timezone.utc).isoformat(),
+        "key": str(getattr(provider, "key", "") or ""),
+        "label": str(getattr(provider, "label", "") or getattr(provider, "model_id", "") or ""),
     }
+
+
+def run_summary_backends(
+    artifacts: ArtifactStore,
+    backends: list[SummaryBackend],
+    *,
+    prompt: str,
+    metadata: VideoMetadata | None = None,
+    extra_image_dir: Path | None = None,
+    existing_runs: list[dict] | None = None,
+    replace: bool = True,
+    model_lock=None,
+) -> dict:
+    if not backends:
+        raise ValueError("No summary model is available")
+    from contextlib import nullcontext
+
+    lock = model_lock if model_lock is not None else nullcontext()
+    fresh: list[dict] = []
+    for backend in backends:
+        context = lock if backend.local else nullcontext()
+        try:
+            with context:
+                result = summarize_task(
+                    artifacts,
+                    backend,
+                    prompt=prompt,
+                    metadata=metadata,
+                    extra_image_dir=extra_image_dir,
+                )
+            fresh.append(_run_payload(backend, result, error=""))
+        except Exception as exc:
+            logger.warning("Summary backend %s failed: %s", backend.key, exc)
+            fresh.append(_run_payload(backend, {}, error=str(exc)))
+    runs = fresh if replace else _merge_runs(existing_runs or [], fresh)
+    markdown = render_summary_runs(runs)
+    succeeded = [item for item in runs if item.get("markdown")]
+    errors = [str(item.get("error") or "") for item in runs if item.get("error")]
+    if not succeeded:
+        raise RuntimeError("; ".join(errors) or "Summary model returned an empty summary")
+    return {
+        "status": "completed",
+        "prompt": normalize_prompt(prompt),
+        "markdown": markdown,
+        "model": ", ".join(item["model"] for item in succeeded if item.get("model")),
+        "error": "; ".join(errors),
+        "image_count": 0,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "runs": runs,
+    }
+
+
+def render_summary_runs(runs: list[dict]) -> str:
+    filled = [item for item in runs if str(item.get("markdown") or "").strip()]
+    if len(runs) == 1 and filled:
+        return str(filled[0]["markdown"]).strip() + "\n"
+    blocks: list[str] = []
+    for item in runs:
+        label = str(item.get("label") or item.get("model") or item.get("key") or "Model")
+        blocks.append(f"### {label}")
+        blocks.append("")
+        text = str(item.get("markdown") or "").strip()
+        if text:
+            blocks.append(text)
+        else:
+            blocks.append(f"（失败：{item.get('error') or 'empty'}）")
+        blocks.append("")
+    return "\n".join(blocks).strip() + "\n"
+
+
+def _run_payload(backend: SummaryBackend, result: dict, *, error: str) -> dict:
+    return {
+        "key": backend.key,
+        "label": backend.label,
+        "model": str(result.get("model") or backend.model_id),
+        "status": "completed" if result.get("markdown") and not error else "failed",
+        "markdown": strip_summary_media(str(result.get("markdown") or "")),
+        "error": error,
+    }
+
+
+def _merge_runs(existing: list[dict], fresh: list[dict]) -> list[dict]:
+    by_key = {str(item.get("key") or ""): item for item in existing if item.get("key")}
+    for item in fresh:
+        by_key[str(item.get("key") or "")] = item
+    order = {key: index for index, key in enumerate(("qwen", "gemini", "openai"))}
+    return sorted(by_key.values(), key=lambda item: order.get(str(item.get("key") or ""), 9))
 
 
 def _plain_transcript(segments: list[NamedSegment]) -> str:

@@ -157,6 +157,12 @@ def cmd_doctor(config: AppConfig) -> int:
 
     analysis_ok, analysis_detail = probe_vlm(config)
     checks.append(("analysis:qwen3.8", analysis_ok, analysis_detail or "ok"))
+    from media_pipeline.summary_llm import catalog_summary_backends
+
+    for item in catalog_summary_backends(config):
+        if item["key"] == "qwen":
+            continue
+        checks.append((f"summary:{item['key']}", item["available"], item["detail"] or item["model"]))
     try:
         import curl_cffi
 
@@ -170,7 +176,12 @@ def cmd_doctor(config: AppConfig) -> int:
 
     failed = 0
     for name, ok, detail in checks:
-        optional = name.startswith("asr:qwen") or name.startswith("analysis:") or name == "pyannote.audio"
+        optional = (
+            name.startswith("asr:qwen")
+            or name.startswith("analysis:")
+            or name.startswith("summary:")
+            or name == "pyannote.audio"
+        )
         if ok:
             mark = "ok"
         elif optional:

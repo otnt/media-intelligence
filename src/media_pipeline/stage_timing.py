@@ -17,6 +17,7 @@ STAGE_ORDER = (
     "filtering_frames",
     "aligning_multimodal",
     "writing_outputs",
+    "summarizing",
 )
 
 _VISUAL_FROM_SCENES = frozenset({"detecting_scenes", "all"})
@@ -120,6 +121,20 @@ def stage_keys_invalidated_by(stage: str) -> set[str]:
     if stage in _VISUAL_FROM_ALIGN:
         keys.add("aligning_multimodal")
         keys.add("writing_outputs")
+    if stage in {
+        "transcribing",
+        "diarizing",
+        "aligning_transcript",
+        "detecting_scenes",
+        "sampling_frames",
+        "deduplicating_frames",
+        "filtering_frames",
+        "aligning_multimodal",
+        "writing_outputs",
+        "summarizing",
+        "all",
+    }:
+        keys.add("summarizing")
     return keys
 
 

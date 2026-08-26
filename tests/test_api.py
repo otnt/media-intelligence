@@ -28,10 +28,10 @@ class DummyWorker:
         self.submitted.append(task.id)
         return task
 
-    def summarize(self, task: Task, prompt: str = "") -> dict:
+    def summarize(self, task: Task, prompt: str = "", model: str = "") -> dict:
         from media_pipeline.summary import DEFAULT_PROMPT
 
-        self.summarized.append((task.id, prompt))
+        self.summarized.append((task.id, prompt, model))
         self._summarizing.add(task.id)
         return {
             "status": "running",
@@ -400,7 +400,10 @@ def test_dashboard_and_frame_override(tmp_path: Path):
     assert "Sample interval" in home.text
     assert "Qwen3.8 frame filter" in home.text
     assert "vlm_keep_threshold" in home.text
-    assert "Generate summary" in home.text
+    assert "Regenerate summary" in home.text
+    assert "Compare all available" in home.text
+    assert "summary-model" in home.text
+    assert "/v1/summary/models" in home.text
     assert "Extracted contents" in home.text
     assert "fold-frames" in home.text
     assert "Extract keyframes" in home.text
@@ -411,6 +414,7 @@ def test_dashboard_and_frame_override(tmp_path: Path):
     visual = client.get("/v1/visual/config").json()
     assert visual["visual"]["vlm_keep_threshold"] == 0.45
     assert "filtering_frames" in visual["stages"]
+    assert "summarizing" in visual["stages"]
     assert "Concurrency" in home.text
     assert "YouTube max" in home.text
     assert "Bilibili max" in home.text
@@ -439,7 +443,36 @@ def test_dashboard_and_frame_override(tmp_path: Path):
     assert started.status_code == 202
     assert started.json()["status"] == "running"
     assert started.json()["prompt"] == "一句话概括"
-    assert worker.summarized == [(task_id, "一句话概括")]
+    assert worker.summarized == [(task_id, "一句话概括", "")]
+    compared = client.post(f"/v1/tasks/{task_id}/summary", json={"prompt": "一句话概括", "model": "all"})
+    assert compared.status_code == 202
+    assert worker.summarized[-1] == (task_id, "一句话概括", "all")
+
+
+def test_summary_models_endpoint(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    config = AppConfig(
+        paths=PathsConfig(
+            videos=tmp_path / "videos",
+            audio=tmp_path / "audio",
+            artifacts=tmp_path / "artifacts",
+            logs=tmp_path / "logs",
+            vault=tmp_path / "vault",
+            db=tmp_path / "tasks.sqlite3",
+        )
+    )
+    config.ensure_directories()
+    client = TestClient(create_app(config, store=TaskStore(config.paths.db), worker=DummyWorker()))
+    payload = client.get("/v1/summary/models").json()
+    assert payload["default"] == ["qwen"]
+    by_key = {item["key"]: item for item in payload["providers"]}
+    assert set(by_key) == {"qwen", "gemini", "openai"}
+    assert by_key["gemini"]["available"] is False
+    assert by_key["openai"]["available"] is False
+    assert "GEMINI_API_KEY" in by_key["gemini"]["detail"]
+    assert "OPENAI_API_KEY" in by_key["openai"]["detail"]
 
 
 def test_attachment_endpoint_serves_vault_and_video_images(tmp_path: Path):

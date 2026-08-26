@@ -45,6 +45,7 @@ RERUN_STAGES = frozenset(
         "filtering_frames",
         "aligning_multimodal",
         "writing_outputs",
+        "summarizing",
         "all",
     }
 )
@@ -121,6 +122,7 @@ class Pipeline:
         self.store.update(task)
         if metadata.media_kind == "image":
             self._write_image_post(task, metadata, artifacts, video_path)
+            self._summarize(task, metadata, artifacts)
             task.status = TaskStatus.completed
             task.error = ""
             task.error_stage = ""
@@ -147,6 +149,7 @@ class Pipeline:
             task.extra["selected_count"] = 0
             self.store.update(task)
         self._write_outputs(task, metadata, artifacts, named, visual_result)
+        self._summarize(task, metadata, artifacts)
         task.status = TaskStatus.completed
         task.error = ""
         task.error_stage = ""
@@ -382,6 +385,49 @@ class Pipeline:
                 self.notes.update_progress(Path(task.note_path), task, metadata, body=body)
             task.extra["image_count"] = len(images)
             self.store.update(task)
+
+    def _summarize(self, task: Task, metadata: VideoMetadata, artifacts: ArtifactStore) -> None:
+        from datetime import datetime, timezone
+
+        from media_pipeline.summary import DEFAULT_PROMPT, idle_summary, run_summary_backends
+        from media_pipeline.summary_llm import resolve_summary_backends
+
+        existing = artifacts.load_summary() or {}
+        markdown = str(existing.get("markdown") or "").strip()
+        if str(existing.get("status") or "") == "completed" and markdown:
+            if task.note_path:
+                self.notes.update_summary(Path(task.note_path), markdown)
+            return
+        backends = resolve_summary_backends(self.config, self.vision)
+        if not backends:
+            logger.warning("Skipping summary for task %s: no summary model is available", task.id)
+            return
+        extra_dir = Path(task.video_path) if task.video_path else None
+        prompt = str(existing.get("prompt") or DEFAULT_PROMPT)
+        running = idle_summary(prompt)
+        running["status"] = "running"
+        running["updated_at"] = datetime.now(timezone.utc).isoformat()
+        artifacts.save_summary(running)
+        with self._stage(task, TaskStatus.summarizing, metadata, artifacts):
+            try:
+                result = run_summary_backends(
+                    artifacts,
+                    backends,
+                    prompt=prompt,
+                    metadata=metadata,
+                    extra_image_dir=extra_dir if extra_dir and extra_dir.is_dir() else None,
+                    replace=True,
+                    model_lock=self._model_slot(),
+                )
+            except Exception as exc:
+                failed = artifacts.load_summary() or running
+                failed["status"] = "failed"
+                failed["error"] = str(exc)
+                artifacts.save_summary(failed)
+                raise PipelineError(TaskStatus.summarizing, str(exc)) from exc
+            artifacts.save_summary(result)
+            if task.note_path:
+                self.notes.update_summary(Path(task.note_path), str(result.get("markdown") or ""))
 
     def _set_status(self, task: Task, status: TaskStatus, metadata: VideoMetadata | None = None) -> None:
         task.status = status

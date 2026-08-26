@@ -25,9 +25,15 @@ def test_transcribe_help_documents_keyframes_flag(capsys):
     assert "default" in out
 
 
-def test_doctor_reports_qwen_analysis(capsys):
+def test_doctor_reports_qwen_analysis(capsys, monkeypatch):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     cmd_doctor(AppConfig())
     out = capsys.readouterr().out
     assert "analysis:qwen3.8" in out
     assert "curl-cffi" in out
+    assert "summary:gemini" in out
+    assert "summary:openai" in out
+    assert "WARN" in out
 

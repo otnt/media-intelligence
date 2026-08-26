@@ -191,6 +191,7 @@
     let selectedId = new URLSearchParams(location.search).get("task");
     let debug = null;
     let summaryPromptDirty = false;
+    let summaryModel = "qwen";
     const LEGACY_SUMMARY_PROMPT = "提取这个文章的核心思想，让我无需细读这个视频。生成一份图文输出（可以截屏）让我1分钟获得99%的信息。";
     const DEFAULT_SUMMARY_PROMPT = "提取核心思想，写成一份一分钟能读完的纯文字简报。可用少量 emoji 分点，不要复述原文，不要插入任何图片、截图或附件链接。";
 
@@ -293,7 +294,7 @@
     }
 
     const KNOB_HELP = {
-      stage: "Which pipeline step to restart from. Artifacts produced by that step and everything after it are discarded, then the job is queued again.\n\nRe-run Qwen3.8 frame filter: keep existing keyframe JPEGs and re-score which ones belong in the note. Changing the VLM keep threshold reuses cached verdicts and does not reload the model.\n\nRe-run deduplication: keep existing candidate JPEGs and recompute keep/drop with the similarity threshold and your manual Keep/Drop overrides.\n\nRe-run candidate generation: recut stills from scene boundaries, the sample interval, and visual-change spikes, then dedup again.\n\nRe-run scene detection: detect cuts again with the scene threshold and min scene length, then regenerate candidates and keyframes.\n\nRebuild multimodal alignment: keep keyframes; rebuild transcript context windows in multimodal.json. The Obsidian note puts each frame above the transcript block covering that timestamp.\n\nRe-run ASR: transcribe audio again, then redo diarization and transcript alignment. Video and WAV files are reused. Visual stills are kept unless a later visual stage is also selected.\n\nRe-run diarization: refresh speaker labels and realign the transcript. Frames stay; the multimodal timeline is rebuilt.\n\nFull rerun: redo ASR through note writing. Download and audio extraction run only if those files are missing.",
+      stage: "Which pipeline step to restart from. Artifacts produced by that step and everything after it are discarded, then the job is queued again.\n\nRe-run summary: keep the transcript, post, and stills; ask Qwen3.8 again for the one-minute text briefing.\n\nRe-run Qwen3.8 frame filter: keep existing keyframe JPEGs and re-score which ones belong in the note. Changing the VLM keep threshold reuses cached verdicts and does not reload the model.\n\nRe-run deduplication: keep existing candidate JPEGs and recompute keep/drop with the similarity threshold and your manual Keep/Drop overrides.\n\nRe-run candidate generation: recut stills from scene boundaries, the sample interval, and visual-change spikes, then dedup again.\n\nRe-run scene detection: detect cuts again with the scene threshold and min scene length, then regenerate candidates and keyframes.\n\nRebuild multimodal alignment: keep keyframes; rebuild transcript context windows in multimodal.json. The Obsidian note puts each frame above the transcript block covering that timestamp.\n\nRe-run ASR: transcribe audio again, then redo diarization and transcript alignment. Video and WAV files are reused. Visual stills are kept unless a later visual stage is also selected.\n\nRe-run diarization: refresh speaker labels and realign the transcript. Frames stay; the multimodal timeline is rebuilt.\n\nFull rerun: redo ASR through summary. Download and audio extraction run only if those files are missing.",
       sample_interval_sec: "How often to grab a still even when the picture is not changing, in seconds. Default 12.\n\nSmaller values catch more slides, title cards, and UI states, and produce more candidate JPEGs. Periodic samples are merged with scene cuts and visual-change spikes when they land within 0.4 seconds of each other.\n\nUsed when you rerun candidate generation or an earlier visual stage.",
       scene_threshold: "How sensitive scene-cut detection is. Default 27, in PySceneDetect ContentDetector units (about 0.30 as an ffmpeg scene score).\n\nLower values create more cuts and therefore more candidate frames. Higher values ignore small motion, zooms, and talking-head jitter.\n\nCuts shorter than Min scene are merged into the previous scene. Used when you rerun scene detection or a full visual rerun.",
       similarity_threshold: "When two candidate frames are similar enough to drop the later one as a duplicate. Default 0.92.\n\nEach candidate is compared to kept frames in the previous 30 seconds using dHash plus color histogram. It is auto-dropped only if similarity is at least this value. Lower means more aggressive dropping of talking-head frames; higher keeps more near-duplicates.\n\nManual Keep/Drop always wins. A large OCR text change can force-keep a frame that would otherwise drop.\n\nUsed when you rerun deduplication.",
@@ -316,6 +317,7 @@
       ["filtering_frames", "Qwen3.8 frame filter", "frame_analysis"],
       ["aligning_multimodal", "Multimodal alignment", "multimodal"],
       ["writing_outputs", "Writing outputs", "outputs"],
+      ["summarizing", "Summary", "summary"],
     ];
 
     async function refreshSelected() {
@@ -377,6 +379,7 @@
           <strong>Rerun a stage</strong>
           <div class="fields" style="margin-top:10px">
             ${knobField("stage", "Stage", `<select id="stage">
+                <option value="summarizing">Re-run summary</option>
                 <option value="filtering_frames">Re-run Qwen3.8 frame filter</option>
                 <option value="deduplicating_frames">Re-run deduplication</option>
                 <option value="sampling_frames">Re-run candidate generation</option>
@@ -400,10 +403,18 @@
           </div>
         </div>
         <div class="panel" id="summary-panel">
-          <strong>Generate summary</strong>
-          <p class="empty" style="padding:8px 0 10px">Qwen3.8 reads the transcript or original post and attached images, then writes a one-minute text briefing with light emoji. The summary itself has no images.</p>
+          <strong>Summary</strong>
+          <p class="empty" style="padding:8px 0 10px">The pipeline writes a local Qwen3.8 briefing by default. Use the model menu to regenerate with Gemini or OpenAI, or compare every available model on this note.</p>
+          <label class="field">Model
+            <select id="summary-model">
+              <option value="all">Compare all available</option>
+              <option value="qwen" selected>Qwen3.8 (local)</option>
+              <option value="gemini">Gemini</option>
+              <option value="openai">OpenAI</option>
+            </select>
+          </label>
           <div class="actions">
-            <button class="btn primary" id="summarize">Generate summary</button>
+            <button class="btn primary" id="summarize">Regenerate summary</button>
             <span class="worker-msg" id="summary-status"></span>
           </div>
           <label class="field" style="margin-top:12px">Prompt
@@ -433,6 +444,7 @@
       summaryPromptDirty = false;
       promptEl.addEventListener("input", () => { summaryPromptDirty = true; });
       paintSummary(task.summary || {}, { keepPrompt: false });
+      fillSummaryModels();
       paintExtracted(task.extracted_markdown || "", task.video_id);
       const gallery = document.getElementById("gallery");
       const decisions = task.decisions || [];
@@ -464,7 +476,8 @@
         keyframes: Boolean(d.keyframes),
         frame_analysis: Boolean(d.frame_analysis),
         multimodal: Boolean(d.multimodal),
-        outputs: task.status === "completed",
+        outputs: task.status === "completed" || Boolean(timings.writing_outputs && timings.writing_outputs.status === "succeeded"),
+        summary: Boolean(d.summary && d.summary.status === "completed" && d.summary.markdown),
       };
       const rows = STAGE_ROWS.map(([key, label, flag]) => {
         const timing = timings[key] || {};
@@ -587,21 +600,48 @@
       const promptEl = document.getElementById("summary-prompt");
       const statusEl = document.getElementById("summary-status");
       const button = document.getElementById("summarize");
+      const modelEl = document.getElementById("summary-model");
       const raw = (promptEl && promptEl.value.trim()) || DEFAULT_SUMMARY_PROMPT;
       const prompt = raw === LEGACY_SUMMARY_PROMPT ? DEFAULT_SUMMARY_PROMPT : raw;
+      const model = (modelEl && modelEl.value) || summaryModel || "all";
+      summaryModel = model;
       if (button) button.disabled = true;
       if (statusEl) statusEl.textContent = "Generating…";
       try {
         const payload = await api(`/v1/tasks/${debug.id}/summary`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ prompt }),
+          body: JSON.stringify({ prompt, model }),
         });
         paintSummary(payload, { keepPrompt: true });
       } catch (error) {
         if (statusEl) statusEl.textContent = error.message;
         if (button) button.disabled = false;
       }
+    }
+
+    async function fillSummaryModels() {
+      const select = document.getElementById("summary-model");
+      if (!select) return;
+      let providers = [];
+      try {
+        const data = await api("/v1/summary/models");
+        providers = data.providers || [];
+      } catch (_error) {
+        providers = [];
+      }
+      const byKey = Object.fromEntries(providers.map((item) => [item.key, item]));
+      [...select.options].forEach((option) => {
+        if (option.value === "all") return;
+        const info = byKey[option.value];
+        if (!info) return;
+        option.disabled = !info.available;
+        option.textContent = info.available ? info.label : `${info.label} — ${info.detail}`;
+      });
+      if ([...select.options].some((item) => item.value === summaryModel && !item.disabled)) {
+        select.value = summaryModel;
+      }
+      select.onchange = () => { summaryModel = select.value; };
     }
 
     function paintSummary(summary, { keepPrompt = false } = {}) {

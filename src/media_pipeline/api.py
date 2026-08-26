@@ -45,6 +45,7 @@ class FrameDecisionRequest(BaseModel):
 
 class SummarizeRequest(BaseModel):
     prompt: str | None = None
+    model: str | None = None
 
 
 class WorkerLimitsRequest(BaseModel):
@@ -218,6 +219,16 @@ def create_app(config: AppConfig, store: TaskStore | None = None, worker: TaskWo
         artifacts = ArtifactStore(config.paths.artifacts, task.video_id)
         return _public_summary(task, artifacts, worker)
 
+    @app.get("/v1/summary/models")
+    def summary_models() -> dict[str, Any]:
+        from media_pipeline.summary_llm import catalog_summary_backends
+
+        vision = getattr(worker, "_vision", None)
+        return {
+            "providers": catalog_summary_backends(config, vision),
+            "default": list(config.summary.providers),
+        }
+
     @app.post("/v1/tasks/{task_id}/summary", status_code=202)
     def start_summary(task_id: str, payload: SummarizeRequest | None = None) -> dict[str, Any]:
         task = store.get(task_id)
@@ -226,10 +237,13 @@ def create_app(config: AppConfig, store: TaskStore | None = None, worker: TaskWo
         if not task.video_id:
             raise HTTPException(status_code=400, detail="Task has no video id yet")
         prompt = normalize_prompt(payload.prompt if payload else None)
+        model = str(payload.model if payload and payload.model else "").strip()
         starter = getattr(worker, "summarize", None)
         if not callable(starter):
             raise HTTPException(status_code=501, detail="Worker cannot summarize")
         try:
+            return starter(task, prompt, model)
+        except TypeError:
             return starter(task, prompt)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -335,6 +349,7 @@ def _public_summary(task: Task, artifacts: ArtifactStore, worker: object) -> dic
     payload["markdown"] = strip_summary_media(str(payload.get("markdown") or ""))
     payload.setdefault("error", "")
     payload.setdefault("model", "")
+    payload.setdefault("runs", [])
     payload["image_count"] = 0
     payload.setdefault("updated_at", "")
     return payload

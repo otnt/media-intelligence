@@ -22,6 +22,7 @@ class TaskStatus(str, Enum):
     filtering_frames = "filtering_frames"
     aligning_multimodal = "aligning_multimodal"
     writing_outputs = "writing_outputs"
+    summarizing = "summarizing"
     completed = "completed"
     failed = "failed"
 

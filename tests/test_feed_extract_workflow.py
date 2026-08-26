@@ -19,6 +19,7 @@ from media_pipeline.diarization import NullDiarizationProvider
 from media_pipeline.models import Task, TaskStatus, VideoMetadata
 from media_pipeline.pipeline import Pipeline
 from media_pipeline.store import TaskStore
+from media_pipeline.visual.vlm import NullVisionProvider
 from media_pipeline.xhs import _POST_CACHE, download_xhs_post, extract_xhs_post
 
 from tests.test_pipeline import FakeVisual
@@ -236,7 +237,7 @@ def test_extract_click_queues_and_downloads_rednote_post(tmp_path: Path, monkeyp
             self.submitted.append(task.id)
             return task
 
-        def summarize(self, task: Task, prompt: str = "") -> dict:
+        def summarize(self, task: Task, prompt: str = "", model: str = "") -> dict:
             return {}
 
         def set_limits(self, **kwargs: int) -> None:
@@ -307,7 +308,13 @@ def test_extract_click_queues_and_downloads_rednote_post(tmp_path: Path, monkeyp
 
     monkeypatch.setattr("media_pipeline.pipeline.fetch_metadata", fake_fetch)
     monkeypatch.setattr("media_pipeline.pipeline.download_video", fake_download)
-    pipeline = Pipeline(config, store, diarization=NullDiarizationProvider(), visual=FakeVisual())
+    pipeline = Pipeline(
+        config,
+        store,
+        diarization=NullDiarizationProvider(),
+        visual=FakeVisual(),
+        vision=NullVisionProvider(),
+    )
     result = pipeline.run(stored)
     assert result.status == TaskStatus.completed
     assert result.extra.get("media_kind") == "image"

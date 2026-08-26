@@ -202,6 +202,20 @@ class ArtifactStore:
             self.frame_analysis_path.unlink(missing_ok=True)
         if stage in visual_from_align:
             self.multimodal_path.unlink(missing_ok=True)
+        if stage in {
+            "transcribing",
+            "diarizing",
+            "aligning_transcript",
+            "detecting_scenes",
+            "sampling_frames",
+            "deduplicating_frames",
+            "filtering_frames",
+            "aligning_multimodal",
+            "writing_outputs",
+            "summarizing",
+            "all",
+        }:
+            self.summary_path.unlink(missing_ok=True)
         self.clear_invalidated_timings(stage)
 
     def load_stage_timings(self) -> dict[str, Any]:

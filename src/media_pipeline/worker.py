@@ -167,7 +167,7 @@ class TaskWorker:
         self.submit(task)
         return task
 
-    def summarize(self, task: Task, prompt: str = "") -> dict:
+    def summarize(self, task: Task, prompt: str = "", model: str = "") -> dict:
         from datetime import datetime, timezone
 
         from media_pipeline.summary import idle_summary, normalize_prompt
@@ -188,11 +188,12 @@ class TaskWorker:
             "error": "",
             "image_count": 0,
             "updated_at": datetime.now(timezone.utc).isoformat(),
+            "runs": list(existing.get("runs") or []),
         }
         artifacts.save_summary(payload)
         thread = threading.Thread(
             target=self._run_summary,
-            args=(task.id, payload["prompt"]),
+            args=(task.id, payload["prompt"], (model or "").strip().lower()),
             name=f"media-pipeline-summary-{task.id[:8]}",
             daemon=True,
         )
@@ -325,11 +326,12 @@ class TaskWorker:
             if callable(closer):
                 closer()
 
-    def _run_summary(self, task_id: str, prompt: str) -> None:
+    def _run_summary(self, task_id: str, prompt: str, model: str = "") -> None:
         from pathlib import Path
 
         from media_pipeline.notes import NoteWriter
-        from media_pipeline.summary import summarize_task
+        from media_pipeline.summary import run_summary_backends
+        from media_pipeline.summary_llm import resolve_summary_backends
 
         task = self.store.get(task_id)
         if task is None or not task.video_id:
@@ -339,16 +341,23 @@ class TaskWorker:
         artifacts = ArtifactStore(self.config.paths.artifacts, task.video_id)
         extra_dir = Path(task.video_path) if task.video_path else None
         try:
-            provider = self._ensure_vision()
+            vision = self._vision_for_summary(model)
+            backends = resolve_summary_backends(self.config, vision, model)
+            if not backends:
+                raise ValueError(_missing_summary_model(model))
             metadata = artifacts.load_metadata()
-            with self._model_slots:
-                result = summarize_task(
-                    artifacts,
-                    provider,
-                    prompt=prompt,
-                    metadata=metadata,
-                    extra_image_dir=extra_dir if extra_dir and extra_dir.is_dir() else None,
-                )
+            existing = artifacts.load_summary() or {}
+            replace = model in {"", "default", "all"} or not (existing.get("runs") or [])
+            result = run_summary_backends(
+                artifacts,
+                backends,
+                prompt=prompt,
+                metadata=metadata,
+                extra_image_dir=extra_dir if extra_dir and extra_dir.is_dir() else None,
+                existing_runs=list(existing.get("runs") or []),
+                replace=replace,
+                model_lock=self._model_slots,
+            )
             artifacts.save_summary(result)
             if task.note_path:
                 try:
@@ -371,8 +380,31 @@ class TaskWorker:
                 self._summarizing.discard(task_id)
             self._wake.set()
 
+    def _vision_for_summary(self, model: str) -> VisionProvider | None:
+        wants_qwen = model in {"", "default", "all", "qwen", "qwen3.8", "local"}
+        if not wants_qwen:
+            return self._vision
+        try:
+            return self._ensure_vision()
+        except Exception:
+            if model in {"qwen", "qwen3.8", "local"}:
+                raise
+            logger.warning("Local Qwen3.8 is not available for this summary compare", exc_info=True)
+            return self._vision
+
     def _ensure_vision(self) -> VisionProvider:
         with self._diarization_lock:
             if self._vision is None:
                 self._vision = build_vision_provider(self.config)
             return self._vision
+
+
+def _missing_summary_model(model: str) -> str:
+    key = (model or "qwen").strip().lower()
+    if key in {"gemini"}:
+        return "Gemini is not configured. Set GEMINI_API_KEY or GOOGLE_API_KEY."
+    if key in {"openai"}:
+        return "OpenAI is not configured. Set OPENAI_API_KEY."
+    if key in {"all"}:
+        return "No summary model is available. Use local Qwen3.8, or set GEMINI_API_KEY / OPENAI_API_KEY."
+    return "Local Qwen3.8 is not available. uv pip install -e '.[analysis]'"

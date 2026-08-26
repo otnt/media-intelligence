@@ -136,6 +136,15 @@ class AnalysisConfig:
 
 
 @dataclass
+class SummaryConfig:
+    providers: list[str] = field(default_factory=lambda: ["qwen"])
+    gemini_model: str = "gemini-2.5-flash"
+    openai_model: str = "gpt-4.1-mini"
+    gemini_api_key: str = ""
+    openai_api_key: str = ""
+
+
+@dataclass
 class AppConfig:
     server: ServerConfig = field(default_factory=ServerConfig)
     paths: PathsConfig = field(default_factory=PathsConfig)
@@ -144,6 +153,7 @@ class AppConfig:
     diarization: DiarizationConfig = field(default_factory=DiarizationConfig)
     visual: VisualConfig = field(default_factory=VisualConfig)
     analysis: AnalysisConfig = field(default_factory=AnalysisConfig)
+    summary: SummaryConfig = field(default_factory=SummaryConfig)
     worker: WorkerConfig = field(default_factory=WorkerConfig)
     source_path: Path | None = None
 
@@ -200,6 +210,7 @@ def load_config(path: Path | None = None) -> AppConfig:
     diar_raw = raw.get("diarization") or {}
     visual_raw = raw.get("visual") or {}
     analysis_raw = raw.get("analysis") or {}
+    summary_raw = raw.get("summary") or {}
     worker_raw = raw.get("worker") or {}
 
     vault_value = paths_raw.get("vault") or ""
@@ -263,6 +274,20 @@ def load_config(path: Path | None = None) -> AppConfig:
             idle_unload_sec=float(analysis_raw.get("idle_unload_sec") or 600),
             max_tokens=int(analysis_raw.get("max_tokens") or 256),
         ),
+        summary=SummaryConfig(
+            providers=_summary_providers(summary_raw.get("providers")),
+            gemini_model=str(summary_raw.get("gemini_model") or "gemini-2.5-flash"),
+            openai_model=str(summary_raw.get("openai_model") or "gpt-4.1-mini"),
+            gemini_api_key=str(
+                summary_raw.get("gemini_api_key")
+                or os.environ.get("GEMINI_API_KEY")
+                or os.environ.get("GOOGLE_API_KEY")
+                or ""
+            ).strip(),
+            openai_api_key=str(
+                summary_raw.get("openai_api_key") or os.environ.get("OPENAI_API_KEY") or ""
+            ).strip(),
+        ),
         worker=_worker_from_raw(worker_raw),
         source_path=config_path if config_path.exists() else None,
     )
@@ -275,6 +300,24 @@ def _as_bool(value: Any, default: bool) -> bool:
     if isinstance(value, bool):
         return value
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _summary_providers(value: Any) -> list[str]:
+    if value is None or value == "":
+        names = ["qwen"]
+    elif isinstance(value, str):
+        names = [part.strip().lower() for part in value.split(",") if part.strip()]
+    elif isinstance(value, list):
+        names = [str(part).strip().lower() for part in value if str(part).strip()]
+    else:
+        names = ["qwen"]
+    known = {"qwen", "gemini", "openai", "all", "qwen3.8", "local"}
+    cleaned: list[str] = []
+    for name in names:
+        key = "qwen" if name in {"qwen3.8", "local"} else name
+        if key in known and key not in cleaned:
+            cleaned.append(key)
+    return cleaned or ["qwen"]
 
 
 def clamp_concurrency(value: Any, default: int, minimum: int = 0) -> int:

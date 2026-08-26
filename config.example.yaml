@@ -45,6 +45,16 @@ analysis:
   idle_unload_sec: 600
   max_tokens: 256
 
+summary:
+  # Pipeline default. qwen is local and free. Add gemini/openai to auto-compare every job.
+  # Dashboard can still run Gemini/OpenAI on one note without changing this list.
+  providers: [qwen]
+  gemini_model: gemini-2.5-flash
+  openai_model: gpt-4.1-mini
+  # Prefer env vars GEMINI_API_KEY / GOOGLE_API_KEY and OPENAI_API_KEY instead of putting keys here.
+  gemini_api_key: ""
+  openai_api_key: ""
+
 visual:
   sample_interval_sec: 12
   scene_detector: auto
