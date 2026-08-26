@@ -18,6 +18,7 @@ MAX_CONCURRENCY = 64
 DEFAULT_DOMAIN_CONCURRENCY = 10
 DEFAULT_MODEL_JOBS = 1
 DEFAULT_SUMMARY_PROVIDERS = ["qwen-xhigh"]
+DEFAULT_QWEN_8BIT_MODEL = "mlx-community/Qwen3.8-27B-8bit"
 _WORKER_BLOCK_RE = re.compile(r"(?m)^worker:\n(?:(?:[ \t]+.*|[ \t]*)\n)*")
 
 
@@ -139,6 +140,7 @@ class AnalysisConfig:
 @dataclass
 class SummaryConfig:
     providers: list[str] = field(default_factory=lambda: list(DEFAULT_SUMMARY_PROVIDERS))
+    qwen_8bit_model: str = DEFAULT_QWEN_8BIT_MODEL
     gemini_model: str = "gemini-2.5-flash"
     openai_model: str = "gpt-4.1-mini"
     gemini_api_key: str = ""
@@ -277,6 +279,7 @@ def load_config(path: Path | None = None) -> AppConfig:
         ),
         summary=SummaryConfig(
             providers=_summary_providers(summary_raw.get("providers")),
+            qwen_8bit_model=str(summary_raw.get("qwen_8bit_model") or DEFAULT_QWEN_8BIT_MODEL),
             gemini_model=str(summary_raw.get("gemini_model") or "gemini-2.5-flash"),
             openai_model=str(summary_raw.get("openai_model") or "gpt-4.1-mini"),
             gemini_api_key=str(
@@ -317,6 +320,10 @@ def _summary_providers(value: Any) -> list[str]:
         "qwen-low",
         "qwen-medium",
         "qwen-xhigh",
+        "qwen-8bit",
+        "qwen-8bit-low",
+        "qwen-8bit-medium",
+        "qwen-8bit-xhigh",
         "gemini",
         "openai",
         "all",

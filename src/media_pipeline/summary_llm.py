@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlparse
 
-from media_pipeline.config import AppConfig, DEFAULT_SUMMARY_PROVIDERS
+from media_pipeline.config import AppConfig, DEFAULT_QWEN_8BIT_MODEL, DEFAULT_SUMMARY_PROVIDERS
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +21,20 @@ QWEN_THINKING = (
     ("qwen-medium", "medium", "Qwen3.8 27B thinking medium"),
     ("qwen-xhigh", "xhigh", "Qwen3.8 27B thinking xhigh"),
 )
-ALL_BACKEND_KEYS = ("qwen", *(item[0] for item in QWEN_THINKING), "gemini", "openai")
+QWEN_8BIT_INSTRUCT = ("qwen-8bit", "Qwen3.8 8bit (local)")
+QWEN_8BIT_THINKING = (
+    ("qwen-8bit-low", "low", "Qwen3.8 8bit thinking low"),
+    ("qwen-8bit-medium", "medium", "Qwen3.8 8bit thinking medium"),
+    ("qwen-8bit-xhigh", "xhigh", "Qwen3.8 8bit thinking xhigh"),
+)
+ALL_BACKEND_KEYS = (
+    "qwen",
+    *(item[0] for item in QWEN_THINKING),
+    QWEN_8BIT_INSTRUCT[0],
+    *(item[0] for item in QWEN_8BIT_THINKING),
+    "gemini",
+    "openai",
+)
 THINKING_MAX_TOKENS = 8192
 _KEY_ALIASES = {
     "qwen3.8": "qwen",
@@ -36,6 +49,12 @@ _KEY_ALIASES = {
     "qwen_thinking_xhigh": "qwen-xhigh",
     "qwen_xhigh": "qwen-xhigh",
     "qwen-x-high": "qwen-xhigh",
+    "qwen8bit": "qwen-8bit",
+    "qwen-8": "qwen-8bit",
+    "qwen_8bit": "qwen-8bit",
+    "qwen-8bit-thinking-low": "qwen-8bit-low",
+    "qwen-8bit-thinking-medium": "qwen-8bit-medium",
+    "qwen-8bit-thinking-xhigh": "qwen-8bit-xhigh",
 }
 _IMAGE_TYPES = {
     ".jpg": "image/jpeg",
@@ -81,6 +100,19 @@ def catalog_summary_backends(config: AppConfig, vision: object | None = None) ->
     )
     for key, _effort, label in QWEN_THINKING:
         rows.append(_catalog_row(key, label, qwen_model, qwen_available, qwen_detail))
+    eight_model = _qwen_8bit_model(config)
+    eight_available, eight_detail = _probe_qwen_8bit(config)
+    rows.append(
+        _catalog_row(
+            QWEN_8BIT_INSTRUCT[0],
+            QWEN_8BIT_INSTRUCT[1],
+            eight_model,
+            eight_available,
+            eight_detail,
+        )
+    )
+    for key, _effort, label in QWEN_8BIT_THINKING:
+        rows.append(_catalog_row(key, label, eight_model, eight_available, eight_detail))
     gemini_key = _gemini_key(config)
     gemini_model = config.summary.gemini_model
     rows.append(
@@ -110,9 +142,10 @@ def resolve_summary_backends(
     config: AppConfig,
     vision: object | None = None,
     selection: str | None = None,
+    vision_8bit: object | None = None,
 ) -> list[SummaryBackend]:
     wanted = _wanted_keys(config, selection)
-    available = {item.key: item for item in _available_backends(config, vision)}
+    available = {item.key: item for item in _available_backends(config, vision, vision_8bit)}
     chosen: list[SummaryBackend] = []
     missing: list[str] = []
     for key in wanted:
@@ -134,6 +167,11 @@ def normalize_summary_key(name: str | None) -> str:
 def wants_local_qwen(selection: str | None) -> bool:
     key = normalize_summary_key(selection)
     return key in {"", "default", "all", "qwen"} or key.startswith("qwen-")
+
+
+def wants_8bit_qwen(selection: str | None) -> bool:
+    key = normalize_summary_key(selection)
+    return key == "qwen-8bit" or key.startswith("qwen-8bit-")
 
 
 def qwen_selection_required(selection: str | None) -> bool:
@@ -159,9 +197,14 @@ def _wanted_keys(config: AppConfig, selection: str | None) -> list[str]:
     return wanted or list(DEFAULT_SUMMARY_PROVIDERS)
 
 
-def _available_backends(config: AppConfig, vision: object | None) -> list[SummaryBackend]:
+def _available_backends(
+    config: AppConfig,
+    vision: object | None,
+    vision_8bit: object | None = None,
+) -> list[SummaryBackend]:
     backends: list[SummaryBackend] = []
     backends.extend(_qwen_backends(config, vision))
+    backends.extend(_qwen_8bit_backends(config, vision_8bit))
     gemini_key = _gemini_key(config)
     if gemini_key:
         model = config.summary.gemini_model
@@ -202,32 +245,74 @@ def _probe_qwen(config: AppConfig) -> tuple[bool, str]:
     return False, detail or "local Qwen3.8 is not available"
 
 
+def _probe_qwen_8bit(config: AppConfig) -> tuple[bool, str]:
+    from media_pipeline.visual.vlm import probe_vlm_model
+
+    model_id = _qwen_8bit_model(config)
+    ok, detail = probe_vlm_model(model_id)
+    if ok:
+        return True, ""
+    return False, detail or f"weights missing. hf download {model_id}"
+
+
+def qwen_8bit_model_id(config: AppConfig) -> str:
+    return str(getattr(config.summary, "qwen_8bit_model", "") or DEFAULT_QWEN_8BIT_MODEL)
+
+
+def _qwen_8bit_model(config: AppConfig) -> str:
+    return qwen_8bit_model_id(config)
+
+
 def _qwen_backend(config: AppConfig, vision: object | None) -> SummaryBackend | None:
     backends = _qwen_backends(config, vision)
     return backends[0] if backends else None
 
 
 def _qwen_backends(config: AppConfig, vision: object | None) -> list[SummaryBackend]:
+    return _family_backends(
+        vision,
+        instruct=("qwen", "Qwen3.8 (local)"),
+        thinking=QWEN_THINKING,
+        model_id=str(getattr(vision, "model_id", "") or config.analysis.model),
+    )
+
+
+def _qwen_8bit_backends(config: AppConfig, vision: object | None) -> list[SummaryBackend]:
+    return _family_backends(
+        vision,
+        instruct=QWEN_8BIT_INSTRUCT,
+        thinking=QWEN_8BIT_THINKING,
+        model_id=str(getattr(vision, "model_id", "") or _qwen_8bit_model(config)),
+    )
+
+
+def _family_backends(
+    vision: object | None,
+    *,
+    instruct: tuple[str, str],
+    thinking: tuple[tuple[str, str, str], ...],
+    model_id: str,
+) -> list[SummaryBackend]:
     if vision is None or getattr(vision, "name", "") == "none":
         return []
     generate = getattr(vision, "generate", None)
     if not callable(generate):
         return []
-    model_id = str(getattr(vision, "model_id", "") or config.analysis.model)
+    key, label = instruct
     backends = [
         SummaryBackend(
-            key="qwen",
-            label="Qwen3.8 (local)",
+            key=key,
+            label=label,
             model_id=model_id,
             local=True,
             generate_fn=_wrap_qwen_generate(generate, None),
         )
     ]
-    for key, effort, label in QWEN_THINKING:
+    for think_key, effort, think_label in thinking:
         backends.append(
             SummaryBackend(
-                key=key,
-                label=label,
+                key=think_key,
+                label=think_label,
                 model_id=model_id,
                 local=True,
                 generate_fn=_wrap_qwen_generate(generate, effort),

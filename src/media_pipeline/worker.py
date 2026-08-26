@@ -12,7 +12,7 @@ from media_pipeline.models import Task, TaskStatus
 from media_pipeline.pipeline import VISUAL_RERUN_STAGES, Pipeline
 from media_pipeline.stage_timing import clear_invalidated_timings
 from media_pipeline.store import TaskStore
-from media_pipeline.visual.vlm import VisionProvider, build_vision_provider
+from media_pipeline.visual.vlm import VisionProvider, build_vision_provider, build_vision_provider_for
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +110,7 @@ class TaskWorker:
         self._diarization: DiarizationProvider | None = None
         self._diarization_lock = threading.Lock()
         self._vision: VisionProvider | None = None
+        self._vision_8bit: VisionProvider | None = None
         self._summarizing: set[str] = set()
 
     def start(self) -> None:
@@ -272,6 +273,7 @@ class TaskWorker:
             if task is None:
                 return
             with self._diarization_lock:
+                self._unload_provider(self._vision_8bit, idle_only=False, idle_sec=0.0)
                 pipeline = Pipeline(
                     self.config,
                     self.store,
@@ -309,22 +311,34 @@ class TaskWorker:
 
     def _unload_vision(self, *, idle_only: bool = False, idle_sec: float = 0.0) -> None:
         with self._diarization_lock:
-            provider = self._vision
-            if provider is None:
+            for provider in (self._vision, self._vision_8bit):
+                self._unload_provider(provider, idle_only=idle_only, idle_sec=idle_sec, close=not idle_only)
+
+    def _unload_provider(
+        self,
+        provider: VisionProvider | None,
+        *,
+        idle_only: bool,
+        idle_sec: float,
+        close: bool = False,
+    ) -> None:
+        if provider is None:
+            return
+        if idle_only:
+            if not provider.loaded:
                 return
-            if idle_only:
-                if not provider.loaded:
-                    return
-                last = float(getattr(provider, "last_used", 0.0) or 0.0)
-                if last <= 0 or time.monotonic() - last < idle_sec:
-                    return
-                provider.unload()
+            last = float(getattr(provider, "last_used", 0.0) or 0.0)
+            if last <= 0 or time.monotonic() - last < idle_sec:
                 return
-            if provider.loaded:
-                provider.unload()
-            closer = getattr(provider, "close", None)
-            if callable(closer):
-                closer()
+            provider.unload()
+            return
+        if provider.loaded:
+            provider.unload()
+        if not close:
+            return
+        closer = getattr(provider, "close", None)
+        if callable(closer):
+            closer()
 
     def _run_summary(self, task_id: str, prompt: str, model: str = "") -> None:
         from pathlib import Path
@@ -342,7 +356,15 @@ class TaskWorker:
         extra_dir = Path(task.video_path) if task.video_path else None
         try:
             vision = self._vision_for_summary(model)
-            backends = resolve_summary_backends(self.config, vision, model)
+            from media_pipeline.summary_llm import wants_8bit_qwen
+
+            use_8bit = wants_8bit_qwen(model)
+            backends = resolve_summary_backends(
+                self.config,
+                None if use_8bit else vision,
+                model,
+                vision_8bit=vision if use_8bit else None,
+            )
             if not backends:
                 raise ValueError(_missing_summary_model(model))
             metadata = artifacts.load_metadata()
@@ -379,11 +401,13 @@ class TaskWorker:
             self._wake.set()
 
     def _vision_for_summary(self, model: str) -> VisionProvider | None:
-        from media_pipeline.summary_llm import qwen_selection_required, wants_local_qwen
+        from media_pipeline.summary_llm import qwen_selection_required, wants_8bit_qwen, wants_local_qwen
 
         if not wants_local_qwen(model):
             return self._vision
         try:
+            if wants_8bit_qwen(model):
+                return self._ensure_vision_8bit()
             return self._ensure_vision()
         except Exception:
             if qwen_selection_required(model):
@@ -393,9 +417,22 @@ class TaskWorker:
 
     def _ensure_vision(self) -> VisionProvider:
         with self._diarization_lock:
+            self._unload_provider(self._vision_8bit, idle_only=False, idle_sec=0.0)
             if self._vision is None:
                 self._vision = build_vision_provider(self.config)
             return self._vision
+
+    def _ensure_vision_8bit(self) -> VisionProvider:
+        from media_pipeline.summary_llm import qwen_8bit_model_id
+
+        model_id = qwen_8bit_model_id(self.config)
+        with self._diarization_lock:
+            self._unload_provider(self._vision, idle_only=False, idle_sec=0.0)
+            if self._vision_8bit is None or getattr(self._vision_8bit, "name", "") == "none":
+                self._vision_8bit = build_vision_provider_for(model_id, max_tokens=int(self.config.analysis.max_tokens))
+            if getattr(self._vision_8bit, "name", "") == "none":
+                raise RuntimeError(f"Qwen3.8 8bit weights are missing. hf download {model_id}")
+            return self._vision_8bit
 
 
 def _missing_summary_model(model: str) -> str:
@@ -404,6 +441,8 @@ def _missing_summary_model(model: str) -> str:
         return "Gemini is not configured. Set GEMINI_API_KEY or GOOGLE_API_KEY."
     if key in {"openai"}:
         return "OpenAI is not configured. Set OPENAI_API_KEY."
+    if key.startswith("qwen-8bit"):
+        return "Qwen3.8 8bit weights are missing. hf download mlx-community/Qwen3.8-27B-8bit"
     if key in {"all"}:
         return "No summary model is available. Use local Qwen3.8, or set GEMINI_API_KEY / OPENAI_API_KEY."
     return "Local Qwen3.8 is not available. uv pip install -e '.[analysis]'"

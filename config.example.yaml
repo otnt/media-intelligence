@@ -46,9 +46,10 @@ analysis:
   max_tokens: 256
 
 summary:
-  # Pipeline default is local Qwen3.8 thinking xhigh. Use qwen for the faster instruct path.
-  # Add gemini/openai to auto-compare every job. Dashboard can still pick other models on one note.
+  # Pipeline default is local Qwen3.8 4bit thinking xhigh. Use qwen for the faster instruct path.
+  # Add gemini/openai to auto-compare every job. Dashboard can still pick 8bit Qwen or other models on one note.
   providers: [qwen-xhigh]
+  qwen_8bit_model: mlx-community/Qwen3.8-27B-8bit
   gemini_model: gemini-2.5-flash
   openai_model: gpt-4.1-mini
   # Prefer env vars GEMINI_API_KEY / GOOGLE_API_KEY and OPENAI_API_KEY instead of putting keys here.

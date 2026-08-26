@@ -8,11 +8,12 @@ from concurrent.futures import Future
 from pathlib import Path
 from queue import SimpleQueue
 
-from media_pipeline.config import AnalysisConfig, AppConfig
+from media_pipeline.config import AnalysisConfig, AppConfig, DEFAULT_QWEN_8BIT_MODEL
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_VLM_MODEL = "mlx-community/Qwen3.8-27B-4bit"
+DEFAULT_VLM_8BIT_MODEL = DEFAULT_QWEN_8BIT_MODEL
 
 
 class _MlxSerialLoop:
@@ -229,15 +230,19 @@ def probe_vlm(config: AppConfig | AnalysisConfig | None = None) -> tuple[bool, s
     analysis = _analysis_config(config)
     if not analysis.enabled:
         return True, "disabled"
+    return probe_vlm_model(analysis.model)
+
+
+def probe_vlm_model(model_id: str) -> tuple[bool, str]:
     try:
         import mlx_vlm  # noqa: F401
     except ImportError as exc:
         return False, f"not installed ({exc.name}). uv pip install -e '.[analysis]'"
     except Exception as exc:
         return False, f"mlx_vlm import failed: {exc}"
-    if not _local_model_available(analysis.model):
-        return False, f"weights missing. hf download {analysis.model}"
-    return True, analysis.model
+    if not _local_model_available(model_id):
+        return False, f"weights missing. hf download {model_id}"
+    return True, model_id
 
 
 def build_vision_provider(config: AppConfig | AnalysisConfig | None = None) -> VisionProvider:
@@ -249,6 +254,14 @@ def build_vision_provider(config: AppConfig | AnalysisConfig | None = None) -> V
         logger.warning("Vision analysis unavailable: %s", detail)
         return NullVisionProvider()
     return MlxVlmProvider(analysis.model, max_tokens=int(analysis.max_tokens))
+
+
+def build_vision_provider_for(model_id: str, max_tokens: int = 256) -> VisionProvider:
+    available, detail = probe_vlm_model(model_id)
+    if not available:
+        logger.warning("Vision model unavailable: %s", detail)
+        return NullVisionProvider()
+    return MlxVlmProvider(model_id, max_tokens=int(max_tokens))
 
 
 def _analysis_config(config: AppConfig | AnalysisConfig | None) -> AnalysisConfig:

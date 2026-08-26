@@ -61,13 +61,14 @@ def _store_with_transcript(tmp_path: Path):
 def test_load_config_reads_summary_providers(tmp_path: Path):
     path = tmp_path / "config.yaml"
     path.write_text(
-        "summary:\n  providers: [qwen, gemini]\n  gemini_model: gemini-2.5-pro\n  openai_model: gpt-4.1\n",
+        "summary:\n  providers: [qwen, gemini]\n  qwen_8bit_model: org/custom-8bit\n  gemini_model: gemini-2.5-pro\n  openai_model: gpt-4.1\n",
         encoding="utf-8",
     )
     config = load_config(path)
     assert config.summary.providers == ["qwen", "gemini"]
     assert config.summary.gemini_model == "gemini-2.5-pro"
     assert config.summary.openai_model == "gpt-4.1"
+    assert config.summary.qwen_8bit_model == "org/custom-8bit"
 
 
 def test_catalog_probes_qwen_without_loaded_vision(monkeypatch):
@@ -80,6 +81,9 @@ def test_catalog_probes_qwen_without_loaded_vision(monkeypatch):
     assert by_key["qwen"]["available"] is True
     assert by_key["qwen-low"]["available"] is True
     assert by_key["qwen-xhigh"]["available"] is True
+    assert "qwen-8bit" in by_key
+    assert "qwen-8bit-xhigh" in by_key
+    assert by_key["qwen-8bit"]["model"] == "mlx-community/Qwen3.8-27B-8bit"
 
 
 def test_catalog_marks_cloud_unavailable_without_keys(monkeypatch):
@@ -117,6 +121,36 @@ def test_resolve_default_expands_all_providers():
     config = AppConfig(summary=SummaryConfig(providers=["all"], gemini_api_key="g", openai_api_key="o"))
     backends = resolve_summary_backends(config, FakeVision(), "")
     assert [item.key for item in backends] == ["qwen", "gemini", "openai"]
+
+
+def test_resolve_qwen_8bit_xhigh_uses_8bit_vision():
+    four = FakeVision()
+    eight = FakeVision()
+    eight.model_id = "mlx-community/Qwen3.8-27B-8bit"
+    backends = resolve_summary_backends(AppConfig(), four, "qwen-8bit-xhigh", vision_8bit=eight)
+    assert [item.key for item in backends] == ["qwen-8bit-xhigh"]
+    assert backends[0].label == "Qwen3.8 8bit thinking xhigh"
+    backends[0].generate("hello", [], 128)
+    assert four.calls == []
+    assert eight.calls[-1]["enable_thinking"] is True
+    assert eight.calls[-1]["reasoning_effort"] == "xhigh"
+    assert eight.calls[-1]["max_tokens"] >= 8192
+
+
+def test_catalog_lists_8bit_even_without_weights(monkeypatch):
+    monkeypatch.setattr(
+        "media_pipeline.visual.vlm.probe_vlm",
+        lambda *_args, **_kwargs: (True, "mlx-community/Qwen3.8-27B-4bit"),
+    )
+    monkeypatch.setattr(
+        "media_pipeline.summary_llm._probe_qwen_8bit",
+        lambda _config: (False, "weights missing. hf download mlx-community/Qwen3.8-27B-8bit"),
+    )
+    rows = catalog_summary_backends(AppConfig(), None)
+    by_key = {item["key"]: item for item in rows}
+    assert by_key["qwen-8bit"]["available"] is False
+    assert by_key["qwen-8bit-xhigh"]["available"] is False
+    assert "hf download" in by_key["qwen-8bit"]["detail"]
 
 
 def test_resolve_qwen_xhigh_enables_thinking():
