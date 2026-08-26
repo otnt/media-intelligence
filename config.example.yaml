@@ -34,8 +34,17 @@ worker:
   youtube: 10
   bilibili: 10
   other: 10
-  # Local MLX/pyannote jobs. Keep this low on Apple Silicon.
+  # Max local ASR/diarization jobs. Keep this low on Apple Silicon.
   model_jobs: 1
+
+dashboard:
+  # Sidebar list defaults. Changing Filter / Grouping / Order in the dashboard writes them here.
+  # filter: today | 7d | all
+  filter: today
+  # group: source | none | status | day
+  group: source
+  # order: requested_desc | requested_asc | updated_desc | title
+  order: requested_desc
 
 analysis:
   # Local Qwen3.8-27B judges each keyframe after dedup. Install with: uv pip install -e '.[analysis]'

@@ -5,6 +5,7 @@ from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 
 class TaskStatus(str, Enum):
@@ -273,6 +274,9 @@ class Task:
             "status": self.status.value,
             "video_id": self.video_id,
             "platform": self.platform,
+            "source": source_key(self.platform, self.url),
+            "source_label": source_label(self.platform, self.url),
+            "requested_at": self.created_at,
             "title": self.title,
             "note_path": self.note_path,
             "video_path": self.video_path,
@@ -312,6 +316,45 @@ class Task:
 
 def now_stamp() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M")
+
+
+SOURCE_YOUTUBE = "youtube"
+SOURCE_BILIBILI = "bilibili"
+SOURCE_REDNOTE = "rednote"
+SOURCE_OTHER = "other"
+SOURCE_LABELS = {
+    SOURCE_YOUTUBE: "YouTube",
+    SOURCE_BILIBILI: "Bilibili",
+    SOURCE_REDNOTE: "RedNote",
+    SOURCE_OTHER: "Other",
+}
+
+
+def source_key(platform: str | None = "", url: str | None = "") -> str:
+    """Canonical extract source. Xiaohongshu and RedNote are the same source."""
+    name = (platform or "").strip().lower()
+    if name in {"youtube"}:
+        return SOURCE_YOUTUBE
+    if name in {"bilibili"}:
+        return SOURCE_BILIBILI
+    if name in {"xiaohongshu", "rednote", "xhs", "red book", "redbook"}:
+        return SOURCE_REDNOTE
+    host = urlparse(url or "").netloc.lower()
+    if host.startswith("www."):
+        host = host[4:]
+    if host in {"youtube.com", "m.youtube.com", "youtu.be"} or host.endswith(".youtube.com"):
+        return SOURCE_YOUTUBE
+    if host in {"bilibili.com", "b23.tv"} or host.endswith(".bilibili.com"):
+        return SOURCE_BILIBILI
+    if host in {"xiaohongshu.com", "rednote.com", "xhslink.com"} or host.endswith(".xiaohongshu.com") or host.endswith(
+        ".rednote.com"
+    ):
+        return SOURCE_REDNOTE
+    return SOURCE_OTHER
+
+
+def source_label(platform: str | None = "", url: str | None = "") -> str:
+    return SOURCE_LABELS[source_key(platform, url)]
 
 
 def format_duration(seconds: float | None) -> str:

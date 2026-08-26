@@ -90,6 +90,14 @@ class TaskStore:
             ).fetchall()
         return [_task_from_row(row) for row in rows]
 
+    def list_all(self, limit: int = 2000) -> list[Task]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM tasks ORDER BY created_at DESC, id DESC LIMIT ?",
+                (max(1, int(limit)),),
+            ).fetchall()
+        return [_task_from_row(row) for row in rows]
+
     def list_incomplete(self) -> list[Task]:
         with self._lock:
             rows = self._conn.execute(

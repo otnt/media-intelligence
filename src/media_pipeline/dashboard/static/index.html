@@ -27,6 +27,44 @@
     .brand p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
     .list { overflow: auto; flex: 1; }
     .worker-panel { padding: 0 16px 14px; border-bottom: 1px solid var(--line); }
+    .list-controls { padding: 10px 16px 12px; border-bottom: 1px solid var(--line); display: grid; gap: 8px; }
+    .list-controls h2 { margin: 0 0 2px; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+    .task-block { padding-bottom: 8px; }
+    .task-block .task { padding-left: 18px; }
+    .task-group {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin: 10px 10px 6px;
+      padding: 8px 12px;
+      font-size: 15px;
+      font-weight: 750;
+      letter-spacing: -0.02em;
+      color: var(--text);
+      background: #243044;
+      border: 1px solid #3d4b63;
+      border-left: 5px solid var(--accent);
+      border-radius: 8px;
+      position: sticky;
+      top: 6px;
+      z-index: 2;
+      box-shadow: 0 8px 18px rgba(0,0,0,0.4);
+    }
+    .task-group:first-child { margin-top: 8px; }
+    .task-group .count {
+      flex: 0 0 auto;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text);
+      background: #10141c;
+      border-radius: 999px;
+      padding: 2px 8px;
+    }
+    .task-group.source-youtube { border-left-color: #ff4d4f; background: #322028; }
+    .task-group.source-bilibili { border-left-color: #00a1d6; background: #1b2c38; }
+    .task-group.source-rednote { border-left-color: #ff2442; background: #3a1c24; }
+    .task-group.source-other { border-left-color: var(--warn); }
     .worker-panel h2 { margin: 0 0 8px; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
     .worker-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
     .worker-fields label.field input { width: 100%; }
@@ -215,6 +253,32 @@
           <span class="worker-msg" id="worker-msg"></span>
         </div>
       </div>
+      <div class="list-controls">
+        <h2>List</h2>
+        <label class="field">Filter
+          <select id="list-filter">
+            <option value="today" selected>Today</option>
+            <option value="7d">Last 7 days</option>
+            <option value="all">All</option>
+          </select>
+        </label>
+        <label class="field">Grouping
+          <select id="list-group">
+            <option value="source" selected>Source</option>
+            <option value="none">None</option>
+            <option value="status">Status</option>
+            <option value="day">Day</option>
+          </select>
+        </label>
+        <label class="field">Order
+          <select id="list-order">
+            <option value="requested_desc" selected>Requested newest</option>
+            <option value="requested_asc">Requested oldest</option>
+            <option value="updated_desc">Updated newest</option>
+            <option value="title">Title</option>
+          </select>
+        </label>
+      </div>
       <div class="list" id="tasks"></div>
     </aside>
     <main class="main" id="main">
@@ -231,6 +295,9 @@
     const occupancyEl = document.getElementById("worker-occupancy");
     const workerMsg = document.getElementById("worker-msg");
     const saveWorkerBtn = document.getElementById("save-worker");
+    const listFilterEl = document.getElementById("list-filter");
+    const listGroupEl = document.getElementById("list-group");
+    const listOrderEl = document.getElementById("list-order");
     let tasks = [];
     let selectedId = new URLSearchParams(location.search).get("task");
     let debug = null;
@@ -260,10 +327,14 @@
     async function init() {
       await loadHealth();
       await loadWorker();
+      await loadOrganize();
       await loadTasks();
       if (selectedId) await openTask(selectedId);
       setInterval(() => { loadTasks(); loadWorker(); refreshSelected(); }, 4000);
       saveWorkerBtn.onclick = saveWorker;
+      listFilterEl.onchange = saveOrganize;
+      listGroupEl.onchange = saveOrganize;
+      listOrderEl.onchange = saveOrganize;
     }
 
     async function loadHealth() {
@@ -327,22 +398,83 @@
       }
     }
 
+    async function loadOrganize() {
+      try {
+        const data = await api("/v1/dashboard");
+        if (data.filter) listFilterEl.value = data.filter;
+        if (data.group) listGroupEl.value = data.group;
+        if (data.order) listOrderEl.value = data.order;
+      } catch (_error) {
+        return;
+      }
+    }
+
+    async function saveOrganize() {
+      try {
+        await api("/v1/dashboard", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            filter: listFilterEl.value,
+            group: listGroupEl.value,
+            order: listOrderEl.value,
+          }),
+        });
+      } catch (_error) {
+        return;
+      } finally {
+        await loadTasks();
+      }
+    }
+
     async function loadTasks() {
-      const data = await api("/v1/tasks");
+      const query = new URLSearchParams({
+        filter: listFilterEl.value,
+        group: listGroupEl.value,
+        order: listOrderEl.value,
+      });
+      const data = await api(`/v1/tasks?${query}`);
       tasks = data.tasks || [];
-      tasksEl.innerHTML = tasks.map((task) => {
-        const title = task.title || task.video_id || task.url;
-        const counts = task.media_kind === "image"
-          ? `${task.image_count || 0} images`
-          : `${task.segment_count || 0} segs · ${task.extract_keyframes ? (task.keyframe_count || 0) + " keys" : "transcript"}`;
-        return `<button class="task ${task.id === selectedId ? "active" : ""}" data-id="${task.id}">
-          <div class="title">${esc(title)}</div>
-          <div class="meta">${esc(task.status)} · ${esc(task.platform || "")} · ${esc(counts)}</div>
-        </button>`;
-      }).join("") || `<div class="empty">No tasks yet. Use the browser extension to extract a video.</div>`;
+      const groups = Array.isArray(data.groups) ? data.groups : [{ key: "all", label: "", tasks }];
+      const today = localStampDate();
+      const html = groups.map((group) => {
+        const rows = (group.tasks || []).map((task) => taskButton(task, today)).join("");
+        const count = (group.tasks || []).length;
+        const heading = group.label
+          ? `<div class="task-group source-${esc(String(group.key || ""))}"><span>${esc(group.label)}</span><span class="count">${count}</span></div>`
+          : "";
+        return `<div class="task-block">${heading}${rows}</div>`;
+      }).join("");
+      const empty = listFilterEl.value === "today"
+        ? `<div class="empty">No extracts today. Switch filter to All to see older requests.</div>`
+        : `<div class="empty">No tasks yet. Use the browser extension to extract a video.</div>`;
+      tasksEl.innerHTML = html || empty;
       tasksEl.querySelectorAll(".task").forEach((button) => {
         button.onclick = () => openTask(button.dataset.id);
       });
+    }
+
+    function taskButton(task, today) {
+      const title = task.title || task.video_id || task.url;
+      const requested = task.requested_at || task.created_at || "";
+      const when = requested.startsWith(today) && requested.length > 10
+        ? requested.slice(11)
+        : requested;
+      const source = task.source_label || task.platform || "";
+      const counts = task.media_kind === "image"
+        ? `${task.image_count || 0} images`
+        : `${task.segment_count || 0} segs · ${task.extract_keyframes ? (task.keyframe_count || 0) + " keys" : "transcript"}`;
+      return `<button class="task ${task.id === selectedId ? "active" : ""}" data-id="${task.id}">
+          <div class="title">${esc(title)}</div>
+          <div class="meta">${esc(when)} · ${esc(source)} · ${esc(task.status)} · ${esc(counts)}</div>
+        </button>`;
+    }
+
+    function localStampDate() {
+      const now = new Date();
+      const month = String(now.getMonth() + 1).padStart(2, "0");
+      const day = String(now.getDate()).padStart(2, "0");
+      return `${now.getFullYear()}-${month}-${day}`;
     }
 
     async function openTask(id) {
@@ -424,7 +556,8 @@
         <div class="row">
           <span class="chip" id="task-status">${esc(task.status)}</span>
           <span class="chip">${esc(task.asr_label || task.asr_model)}</span>
-          <span class="chip">${esc(task.platform)} ${esc(task.video_id)}</span>
+          <span class="chip">${esc(task.source_label || task.platform)} ${esc(task.video_id)}</span>
+          <span class="chip">${esc(task.requested_at || task.created_at || "")}</span>
           <span class="chip">${esc(task.media_kind === "image" ? "Images" : (task.extract_keyframes ? "Keyframes on" : "Transcript only"))}</span>
           <span class="chip">${task.segment_count || 0} transcript segments</span>
           <span class="chip">${task.candidate_count || 0} candidates</span>

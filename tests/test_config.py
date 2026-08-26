@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from media_pipeline.config import load_config, persist_worker_config
+from media_pipeline.config import load_config, persist_dashboard_config, persist_worker_config
 
 
 def test_load_config_reads_analysis_and_vlm_threshold(tmp_path: Path):
@@ -58,6 +58,48 @@ def test_persist_worker_config_keeps_other_comments(tmp_path: Path):
     assert reloaded.worker.youtube == 3
     assert reloaded.worker.bilibili == 12
     assert reloaded.worker.model_jobs == 2
+
+
+def test_load_config_defaults_dashboard_view(tmp_path: Path):
+    path = tmp_path / "config.yaml"
+    path.write_text("server:\n  host: 127.0.0.1\n", encoding="utf-8")
+    config = load_config(path)
+    assert config.dashboard.filter == "today"
+    assert config.dashboard.group == "source"
+    assert config.dashboard.order == "requested_desc"
+
+
+def test_load_config_reads_dashboard_section(tmp_path: Path):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "dashboard:\n  filter: all\n  group: none\n  order: title\n",
+        encoding="utf-8",
+    )
+    config = load_config(path)
+    assert config.dashboard.filter == "all"
+    assert config.dashboard.group == "none"
+    assert config.dashboard.order == "title"
+
+
+def test_persist_dashboard_config_keeps_other_comments(tmp_path: Path):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "# keep me\nserver:\n  host: 127.0.0.1\n\npaths:\n  vault: /tmp/vault\n",
+        encoding="utf-8",
+    )
+    config = load_config(path)
+    config.dashboard.set_view(filter="7d", group="status", order="requested_asc")
+    persist_dashboard_config(config)
+    saved = path.read_text(encoding="utf-8")
+    assert "# keep me" in saved
+    assert "vault: /tmp/vault" in saved
+    assert "filter: 7d" in saved
+    assert "group: status" in saved
+    assert "order: requested_asc" in saved
+    reloaded = load_config(path)
+    assert reloaded.dashboard.filter == "7d"
+    assert reloaded.dashboard.group == "status"
+    assert reloaded.dashboard.order == "requested_asc"
 
 
 def test_persist_replaces_existing_worker_block(tmp_path: Path):

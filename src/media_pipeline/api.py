@@ -12,9 +12,17 @@ from pydantic import BaseModel, Field
 
 from media_pipeline.artifacts import ArtifactStore
 from media_pipeline.asr.registry import list_models
-from media_pipeline.config import AppConfig, persist_worker_config
+from media_pipeline.config import AppConfig, persist_dashboard_config, persist_worker_config
+from media_pipeline.dashboard_view import (
+    dashboard_options,
+    flatten_groups,
+    normalize_dashboard_filter,
+    normalize_dashboard_group,
+    normalize_dashboard_order,
+    organize_task_payloads,
+)
 from media_pipeline.media import UnsupportedURLError, extract_supported_url, parse_video_ref
-from media_pipeline.models import ASR_MODELS, Task, TaskStatus, asr_label
+from media_pipeline.models import ASR_MODELS, Task, TaskStatus, asr_label, source_key, source_label
 from media_pipeline.notes import load_note
 from media_pipeline.pipeline import RERUN_STAGES
 from media_pipeline.stage_timing import merge_stage_timings
@@ -62,6 +70,12 @@ class WorkerLimitsRequest(BaseModel):
     model_jobs: int | None = Field(default=None, ge=1, le=64)
 
 
+class DashboardViewRequest(BaseModel):
+    filter: str | None = None
+    group: str | None = None
+    order: str | None = None
+
+
 def create_app(config: AppConfig, store: TaskStore | None = None, worker: TaskWorker | None = None) -> FastAPI:
     store = store or TaskStore(config.paths.db)
     worker = worker or TaskWorker(config, store)
@@ -100,6 +114,7 @@ def create_app(config: AppConfig, store: TaskStore | None = None, worker: TaskWo
             "default_asr_model": config.asr.default,
             "default_language": config.asr.language,
             "dashboard": f"http://{config.server.host}:{config.server.port}/",
+            "organize": config.dashboard.as_dict(),
             "visual": config.visual.as_dict(),
             "worker": _worker_snapshot(worker, config),
         }
@@ -119,6 +134,19 @@ def create_app(config: AppConfig, store: TaskStore | None = None, worker: TaskWo
             setter(**updates)
         persist_worker_config(config)
         return {"ok": True, "worker": _worker_snapshot(worker, config)}
+
+    @app.get("/v1/dashboard")
+    def dashboard_view() -> dict[str, Any]:
+        return _dashboard_snapshot(config)
+
+    @app.put("/v1/dashboard")
+    def update_dashboard(payload: DashboardViewRequest) -> dict[str, Any]:
+        updates = payload.model_dump(exclude_none=True)
+        if not updates:
+            raise HTTPException(status_code=400, detail="No dashboard view provided")
+        config.dashboard.set_view(**updates)
+        persist_dashboard_config(config)
+        return {"ok": True, **_dashboard_snapshot(config)}
 
     @app.get("/v1/models")
     def models() -> dict[str, Any]:
@@ -183,9 +211,24 @@ def create_app(config: AppConfig, store: TaskStore | None = None, worker: TaskWo
         )
 
     @app.get("/v1/tasks")
-    def list_tasks() -> dict[str, Any]:
-        tasks = [_enrich_task(item, config) for item in store.list_recent()]
-        return {"tasks": tasks}
+    def list_tasks(
+        filter: str | None = None,
+        group: str | None = None,
+        order: str | None = None,
+    ) -> dict[str, Any]:
+        organize = _resolve_organize(config, filter=filter, group=group, order=order)
+        payloads = [_enrich_task(item, config) for item in store.list_all()]
+        groups = organize_task_payloads(
+            payloads,
+            time_filter=organize["filter"],
+            group=organize["group"],
+            order=organize["order"],
+        )
+        return {
+            "tasks": flatten_groups(groups),
+            "groups": groups,
+            "organize": organize,
+        }
 
     @app.get("/v1/tasks/{task_id}")
     def get_task(task_id: str) -> dict[str, Any]:
@@ -301,6 +344,24 @@ def create_app(config: AppConfig, store: TaskStore | None = None, worker: TaskWo
         return {"ok": True, "filename": filename, "decision": decision, "overrides": overrides}
 
     return app
+
+
+def _resolve_organize(
+    config: AppConfig,
+    *,
+    filter: str | None = None,
+    group: str | None = None,
+    order: str | None = None,
+) -> dict[str, str]:
+    return {
+        "filter": normalize_dashboard_filter(filter or config.dashboard.filter),
+        "group": normalize_dashboard_group(group or config.dashboard.group),
+        "order": normalize_dashboard_order(order or config.dashboard.order),
+    }
+
+
+def _dashboard_snapshot(config: AppConfig) -> dict[str, Any]:
+    return {**config.dashboard.as_dict(), **dashboard_options()}
 
 
 def _worker_snapshot(worker: object, config: AppConfig) -> dict[str, Any]:
@@ -472,6 +533,11 @@ def _enqueue_share(
         "language": task.extra["language"],
         "extract_keyframes": bool(task.extra.get("extract_keyframes")),
         "url": page_url,
+        "platform": platform,
+        "source": source_key(platform, page_url),
+        "source_label": source_label(platform, page_url),
+        "created_at": task.created_at,
+        "requested_at": task.created_at,
         "message": "Added to queue",
     }
 

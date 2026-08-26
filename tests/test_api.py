@@ -236,6 +236,13 @@ def test_create_task_accepts_rednote_url(tmp_path: Path):
     assert stored is not None
     assert stored.platform == "Xiaohongshu"
     assert stored.video_id == "64aaaaaaaaaaaaaaaaaaaaaa"
+    assert response.json()["source"] == "rednote"
+    assert response.json()["source_label"] == "RedNote"
+    assert response.json()["requested_at"]
+    listed = client.get("/v1/tasks").json()["tasks"][0]
+    assert listed["source"] == "rednote"
+    assert listed["source_label"] == "RedNote"
+    assert listed["requested_at"] == stored.created_at
 
 
 def test_rejects_unknown_model_and_platform(tmp_path: Path):
@@ -284,6 +291,7 @@ def test_models_mark_qwen_as_multilingual(tmp_path: Path):
     assert health["worker"]["youtube"]["limit"] == 10
     assert health["worker"]["bilibili"]["limit"] == 10
     assert health["worker"]["model_jobs"]["limit"] == 1
+    assert health["organize"] == {"filter": "today", "group": "source", "order": "requested_desc"}
     by_id = {item["id"]: item for item in payload["models"]}
     assert by_id["qwen3-asr-1.7b"]["code_switching"] is True
     assert by_id["whisper-large-v3-turbo"]["code_switching"] is False
@@ -395,6 +403,14 @@ def test_dashboard_and_frame_override(tmp_path: Path):
     home = client.get("/")
     assert home.status_code == 200
     assert "Extraction dashboard" in home.text
+    assert "list-filter" in home.text
+    assert "list-group" in home.text
+    assert "list-order" in home.text
+    assert "task-group" in home.text
+    assert "source-rednote" in home.text
+    assert 'value="today" selected' in home.text
+    assert 'value="source" selected' in home.text
+    assert 'value="requested_desc" selected' in home.text
     assert "Started" in home.text
     assert "class=\"help\"" in home.text
     assert "Sample interval" in home.text
@@ -563,5 +579,79 @@ def test_update_worker_limits(tmp_path: Path):
     assert status["youtube"]["limit"] == 3
     invalid = client.put("/v1/worker", json={"youtube": -1})
     assert invalid.status_code == 422
+
+
+def test_dashboard_organizes_tasks_by_source_and_request_time(tmp_path: Path):
+    config = AppConfig(
+        paths=PathsConfig(
+            videos=tmp_path / "videos",
+            audio=tmp_path / "audio",
+            artifacts=tmp_path / "artifacts",
+            logs=tmp_path / "logs",
+            vault=tmp_path / "vault",
+            db=tmp_path / "tasks.sqlite3",
+        )
+    )
+    config.ensure_directories()
+    store = TaskStore(config.paths.db)
+    client = TestClient(create_app(config, store=store, worker=DummyWorker()))
+    bili = client.post(
+        "/v1/tasks",
+        json={"url": "https://www.bilibili.com/video/BV181KNeuEi2", "asr_model": "qwen3-asr-1.7b"},
+    )
+    note = client.post(
+        "/v1/tasks",
+        json={
+            "url": "https://www.rednote.com/explore/64aaaaaaaaaaaaaaaaaaaaaa?xsec_token=abc",
+            "asr_model": "qwen3-asr-1.7b",
+        },
+    )
+    older = store.get(bili.json()["id"])
+    newer = store.get(note.json()["id"])
+    assert older is not None and newer is not None
+    older.created_at = "2026-08-25 18:00"
+    newer.created_at = "2026-08-25 21:00"
+    store.update(older)
+    store.update(newer)
+    payload = client.get("/v1/tasks", params={"filter": "all", "group": "source", "order": "requested_desc"}).json()
+    assert payload["organize"] == {"filter": "all", "group": "source", "order": "requested_desc"}
+    assert [item["key"] for item in payload["groups"]] == ["rednote", "bilibili"]
+    assert payload["groups"][0]["label"] == "RedNote"
+    assert payload["tasks"][0]["id"] == note.json()["id"]
+    today = client.get("/v1/tasks", params={"filter": "today"}).json()
+    assert {item["id"] for item in today["tasks"]} <= {bili.json()["id"], note.json()["id"]}
+
+
+def test_update_dashboard_view(tmp_path: Path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("# keep this comment\nserver:\n  host: 127.0.0.1\n", encoding="utf-8")
+    config = AppConfig(
+        paths=PathsConfig(
+            videos=tmp_path / "videos",
+            audio=tmp_path / "audio",
+            artifacts=tmp_path / "artifacts",
+            logs=tmp_path / "logs",
+            vault=tmp_path / "vault",
+            db=tmp_path / "tasks.sqlite3",
+        ),
+        source_path=config_path,
+    )
+    config.ensure_directories()
+    client = TestClient(create_app(config, store=TaskStore(config.paths.db), worker=DummyWorker()))
+    empty = client.put("/v1/dashboard", json={})
+    assert empty.status_code == 400
+    response = client.put("/v1/dashboard", json={"filter": "all", "group": "none", "order": "title"})
+    assert response.status_code == 200
+    assert response.json()["filter"] == "all"
+    assert response.json()["group"] == "none"
+    assert response.json()["order"] == "title"
+    assert config.dashboard.filter == "all"
+    saved = config_path.read_text(encoding="utf-8")
+    assert "# keep this comment" in saved
+    assert "filter: all" in saved
+    assert "group: none" in saved
+    view = client.get("/v1/dashboard").json()
+    assert view["filter"] == "all"
+    assert view["filters"][0]["id"] == "today"
 
 

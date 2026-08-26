@@ -10,6 +10,11 @@ from typing import Any
 import yaml
 
 from media_pipeline.models import expand_path
+from media_pipeline.dashboard_view import (
+    normalize_dashboard_filter,
+    normalize_dashboard_group,
+    normalize_dashboard_order,
+)
 
 
 DEFAULT_CONFIG_PATH = Path.home() / ".config" / "media-pipeline" / "config.yaml"
@@ -20,6 +25,7 @@ DEFAULT_MODEL_JOBS = 1
 DEFAULT_SUMMARY_PROVIDERS = ["qwen-xhigh"]
 DEFAULT_QWEN_8BIT_MODEL = "mlx-community/Qwen3.8-27B-8bit"
 _WORKER_BLOCK_RE = re.compile(r"(?m)^worker:\n(?:(?:[ \t]+.*|[ \t]*)\n)*")
+_DASHBOARD_BLOCK_RE = re.compile(r"(?m)^dashboard:\n(?:(?:[ \t]+.*|[ \t]*)\n)*")
 
 
 @dataclass
@@ -130,6 +136,33 @@ class WorkerConfig:
 
 
 @dataclass
+class DashboardConfig:
+    filter: str = "today"
+    group: str = "source"
+    order: str = "requested_desc"
+
+    def as_dict(self) -> dict[str, str]:
+        return {
+            "filter": self.filter,
+            "group": self.group,
+            "order": self.order,
+        }
+
+    def set_view(
+        self,
+        filter: str | None = None,
+        group: str | None = None,
+        order: str | None = None,
+    ) -> None:
+        if filter is not None:
+            self.filter = normalize_dashboard_filter(filter)
+        if group is not None:
+            self.group = normalize_dashboard_group(group)
+        if order is not None:
+            self.order = normalize_dashboard_order(order)
+
+
+@dataclass
 class AnalysisConfig:
     enabled: bool = True
     model: str = "mlx-community/Qwen3.8-27B-4bit"
@@ -158,6 +191,7 @@ class AppConfig:
     analysis: AnalysisConfig = field(default_factory=AnalysisConfig)
     summary: SummaryConfig = field(default_factory=SummaryConfig)
     worker: WorkerConfig = field(default_factory=WorkerConfig)
+    dashboard: DashboardConfig = field(default_factory=DashboardConfig)
     source_path: Path | None = None
 
     def ensure_directories(self) -> None:
@@ -215,6 +249,7 @@ def load_config(path: Path | None = None) -> AppConfig:
     analysis_raw = raw.get("analysis") or {}
     summary_raw = raw.get("summary") or {}
     worker_raw = raw.get("worker") or {}
+    dashboard_raw = raw.get("dashboard") or {}
 
     vault_value = paths_raw.get("vault") or ""
     vault = expand_path(vault_value) if str(vault_value).strip() else detect_obsidian_vault()
@@ -293,6 +328,7 @@ def load_config(path: Path | None = None) -> AppConfig:
             ).strip(),
         ),
         worker=_worker_from_raw(worker_raw),
+        dashboard=_dashboard_from_raw(dashboard_raw),
         source_path=config_path if config_path.exists() else None,
     )
     return config
@@ -357,12 +393,19 @@ def _worker_from_raw(raw: dict[str, Any]) -> WorkerConfig:
 
 
 def persist_worker_config(config: AppConfig) -> None:
+    _persist_named_block(config, _WORKER_BLOCK_RE, _format_worker_yaml(config.worker))
+
+
+def persist_dashboard_config(config: AppConfig) -> None:
+    _persist_named_block(config, _DASHBOARD_BLOCK_RE, _format_dashboard_yaml(config.dashboard))
+
+
+def _persist_named_block(config: AppConfig, pattern: re.Pattern[str], block: str) -> None:
     path = config.source_path
     if path is None or not path.exists():
         return
     text = path.read_text(encoding="utf-8")
-    block = _format_worker_yaml(config.worker)
-    updated, count = _WORKER_BLOCK_RE.subn(block, text, count=1)
+    updated, count = pattern.subn(block, text, count=1)
     if count == 0:
         updated = text.rstrip() + "\n\n" + block
     path.write_text(updated, encoding="utf-8")
@@ -374,6 +417,22 @@ def _format_worker_yaml(worker: WorkerConfig) -> str:
     for key, value in limits.items():
         lines.append(f"  {key}: {value}\n")
     return "".join(lines)
+
+
+def _format_dashboard_yaml(dashboard: DashboardConfig) -> str:
+    view = dashboard.as_dict()
+    lines = ["dashboard:\n"]
+    for key, value in view.items():
+        lines.append(f"  {key}: {value}\n")
+    return "".join(lines)
+
+
+def _dashboard_from_raw(raw: dict[str, Any]) -> DashboardConfig:
+    return DashboardConfig(
+        filter=normalize_dashboard_filter(str(raw.get("filter") or "today")),
+        group=normalize_dashboard_group(str(raw.get("group") or "source")),
+        order=normalize_dashboard_order(str(raw.get("order") or "requested_desc")),
+    )
 
 
 def write_default_config(path: Path | None = None) -> Path:
