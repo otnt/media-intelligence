@@ -29,11 +29,30 @@ def test_doctor_reports_qwen_analysis(capsys, monkeypatch):
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(
+        "media_pipeline.tailscale.doctor_checks",
+        lambda: [
+            ("tailscale", True, "mac.example.ts.net"),
+            ("tailscale serve", False, "not publishing"),
+        ],
+    )
     cmd_doctor(AppConfig())
     out = capsys.readouterr().out
     assert "analysis:qwen3.8" in out
     assert "curl-cffi" in out
     assert "summary:gemini" in out
     assert "summary:openai" in out
+    assert "tailscale" in out
+    assert "tailscale serve" in out
     assert "WARN" in out
+
+
+def test_serve_help_documents_tailscale(capsys):
+    try:
+        main(["serve", "-h"])
+    except SystemExit as exc:
+        assert exc.code == 0
+    out = capsys.readouterr().out
+    assert "--tailscale" in out
+    assert "Funnel" in out
 
