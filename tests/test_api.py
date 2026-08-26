@@ -416,8 +416,9 @@ def test_dashboard_and_frame_override(tmp_path: Path):
     assert "Extract keyframes" in home.text
     assert "Transcript only" in home.text
     assert "Keyframes on" in home.text
-    assert "提取核心思想" in home.text
-    assert "不要插入任何图片" in home.text
+    assert "资深分析师" in home.text
+    assert "不要插入图片或链接" in home.text
+    assert 'value="qwen-xhigh" selected' in home.text
     visual = client.get("/v1/visual/config").json()
     assert visual["visual"]["vlm_keep_threshold"] == 0.45
     assert "filtering_frames" in visual["stages"]
@@ -473,7 +474,7 @@ def test_summary_models_endpoint(tmp_path: Path, monkeypatch):
     config.ensure_directories()
     client = TestClient(create_app(config, store=TaskStore(config.paths.db), worker=DummyWorker()))
     payload = client.get("/v1/summary/models").json()
-    assert payload["default"] == ["qwen"]
+    assert payload["default"] == ["qwen-xhigh"]
     by_key = {item["key"]: item for item in payload["providers"]}
     assert set(by_key) == {
         "qwen",

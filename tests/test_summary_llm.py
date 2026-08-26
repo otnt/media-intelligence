@@ -104,6 +104,15 @@ def test_resolve_all_uses_only_available_backends(monkeypatch):
     assert [item.key for item in backends] == ["qwen", "gemini"]
 
 
+def test_resolve_default_uses_qwen_xhigh():
+    vision = FakeVision()
+    backends = resolve_summary_backends(AppConfig(), vision, "")
+    assert [item.key for item in backends] == ["qwen-xhigh"]
+    backends[0].generate("hello", [], 128)
+    assert vision.calls[-1]["enable_thinking"] is True
+    assert vision.calls[-1]["reasoning_effort"] == "xhigh"
+
+
 def test_resolve_default_expands_all_providers():
     config = AppConfig(summary=SummaryConfig(providers=["all"], gemini_api_key="g", openai_api_key="o"))
     backends = resolve_summary_backends(config, FakeVision(), "")

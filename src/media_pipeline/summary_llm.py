@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlparse
 
-from media_pipeline.config import AppConfig
+from media_pipeline.config import AppConfig, DEFAULT_SUMMARY_PROVIDERS
 
 logger = logging.getLogger(__name__)
 
@@ -156,7 +156,7 @@ def _wanted_keys(config: AppConfig, selection: str | None) -> list[str]:
         key = normalize_summary_key(name)
         if key in ALL_BACKEND_KEYS and key not in wanted:
             wanted.append(key)
-    return wanted or ["qwen"]
+    return wanted or list(DEFAULT_SUMMARY_PROVIDERS)
 
 
 def _available_backends(config: AppConfig, vision: object | None) -> list[SummaryBackend]:

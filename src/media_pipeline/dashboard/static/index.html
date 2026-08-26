@@ -235,12 +235,25 @@
     let selectedId = new URLSearchParams(location.search).get("task");
     let debug = null;
     let summaryPromptDirty = false;
-    let summaryModel = "qwen";
+    let summaryModel = "qwen-xhigh";
     let extractedMarkdown = "";
     let summaryMarkdown = "";
     const copyResetters = {};
-    const LEGACY_SUMMARY_PROMPT = "提取这个文章的核心思想，让我无需细读这个视频。生成一份图文输出（可以截屏）让我1分钟获得99%的信息。";
-    const DEFAULT_SUMMARY_PROMPT = "提取核心思想，写成一份一分钟能读完的纯文字简报。可用少量 emoji 分点，不要复述原文，不要插入任何图片、截图或附件链接。";
+    const LEGACY_SUMMARY_PROMPTS = new Set([
+      "提取这个文章的核心思想，让我无需细读这个视频。生成一份图文输出（可以截屏）让我1分钟获得99%的信息。",
+      "提取核心思想，写成一份一分钟能读完的纯文字简报。可用少量 emoji 分点，不要复述原文，不要插入任何图片、截图或附件链接。",
+    ]);
+    const DEFAULT_SUMMARY_PROMPT = `你是一位资深分析师，擅长快速提炼复杂内容的本质，并将其转化为结构清晰、有深度的中文简报。你的目标读者是希望快速理解核心思想、逻辑链条和关键细节的人，而不是只想知道表面事实的人。
+
+请基于以下内容，输出一份纯文字总结，要求如下：
+
+1. 先写出一句话或一小段核心结论：这份内容最重要的判断、冲突、问题或目的是什么。
+2. 提炼主要论证链条或信息结构，解释“为什么”和“如何”，而不仅仅罗列“是什么”。
+3. 保留支撑核心结论的必要事实、数据、案例或技术细节，但不要做无关堆砌。
+4. 如果内容涉及多个观点、方案、主体或步骤，请对比它们的异同或逻辑关系。
+5. 如果原内容包含风险、趋势、启示或后续值得关注的问题，请在结尾适当点明。
+6. 使用简洁的中文，可少量使用 emoji 作为分点符号，但不要复述原文，不要插入图片或链接。
+7. 篇幅控制在阅读时间约 1.5–2 分钟，信息密度要高，不要为了凑长度而重复内容。`;
 
     init();
 
@@ -451,14 +464,14 @@
         </div>
         <div class="panel" id="summary-panel">
           <strong>Summary</strong>
-          <p class="empty" style="padding:8px 0 10px">The pipeline writes a local Qwen3.8 briefing by default. Use the model menu to regenerate with Qwen thinking, Gemini, or OpenAI, or compare every available model on this note.</p>
+          <p class="empty" style="padding:8px 0 10px">The pipeline writes a local Qwen3.8 thinking xhigh briefing by default. Use the model menu to regenerate with instruct Qwen, other thinking levels, Gemini, or OpenAI, or compare every available model on this note.</p>
           <label class="field">Model
             <select id="summary-model">
               <option value="all">Compare all available</option>
-              <option value="qwen" selected>Qwen3.8 (local)</option>
+              <option value="qwen">Qwen3.8 (local)</option>
               <option value="qwen-low">Qwen3.8 27B thinking low</option>
               <option value="qwen-medium">Qwen3.8 27B thinking medium</option>
-              <option value="qwen-xhigh">Qwen3.8 27B thinking xhigh</option>
+              <option value="qwen-xhigh" selected>Qwen3.8 27B thinking xhigh</option>
               <option value="gemini">Gemini</option>
               <option value="openai">OpenAI</option>
             </select>
@@ -468,7 +481,7 @@
             <span class="worker-msg" id="summary-status"></span>
           </div>
           <label class="field" style="margin-top:12px">Prompt
-            <textarea id="summary-prompt" class="prompt" rows="4">${esc(DEFAULT_SUMMARY_PROMPT)}</textarea>
+            <textarea id="summary-prompt" class="prompt" rows="12">${esc(DEFAULT_SUMMARY_PROMPT)}</textarea>
           </label>
         </div>
         <details class="fold" id="fold-frames">
@@ -660,7 +673,7 @@
       const button = document.getElementById("summarize");
       const modelEl = document.getElementById("summary-model");
       const raw = (promptEl && promptEl.value.trim()) || DEFAULT_SUMMARY_PROMPT;
-      const prompt = raw === LEGACY_SUMMARY_PROMPT ? DEFAULT_SUMMARY_PROMPT : raw;
+      const prompt = canonicalPrompt(raw);
       const model = (modelEl && modelEl.value) || summaryModel || "all";
       summaryModel = model;
       if (button) button.disabled = true;
@@ -685,6 +698,10 @@
       try {
         const data = await api("/v1/summary/models");
         providers = data.providers || [];
+        const defaults = data.default || [];
+        if (defaults[0] && !select.dataset.userSet) {
+          summaryModel = defaults[0];
+        }
       } catch (_error) {
         providers = [];
       }
@@ -699,7 +716,10 @@
       if ([...select.options].some((item) => item.value === summaryModel && !item.disabled)) {
         select.value = summaryModel;
       }
-      select.onchange = () => { summaryModel = select.value; };
+      select.onchange = () => {
+        summaryModel = select.value;
+        select.dataset.userSet = "1";
+      };
     }
 
     function paintSummary(summary, { keepPrompt = false } = {}) {
@@ -750,7 +770,7 @@
         }
       }
       const focused = document.activeElement === promptEl;
-      const storedPrompt = summary.prompt === LEGACY_SUMMARY_PROMPT ? DEFAULT_SUMMARY_PROMPT : summary.prompt;
+      const storedPrompt = canonicalPrompt(summary.prompt);
       if (!keepPrompt && !summaryPromptDirty && !focused && storedPrompt) {
         promptEl.value = storedPrompt;
       }
@@ -800,6 +820,12 @@
       const secs = total % 60;
       if (hours) return `${hours}h ${minutes}m ${secs}s`;
       return `${minutes}m ${secs}s`;
+    }
+
+    function canonicalPrompt(text) {
+      const raw = String(text || "").trim();
+      if (!raw || LEGACY_SUMMARY_PROMPTS.has(raw)) return DEFAULT_SUMMARY_PROMPT;
+      return raw;
     }
 
     function paintExtracted(markdown, videoId) {

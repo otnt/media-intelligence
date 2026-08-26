@@ -17,6 +17,7 @@ OBSIDIAN_JSON = Path.home() / "Library" / "Application Support" / "obsidian" / "
 MAX_CONCURRENCY = 64
 DEFAULT_DOMAIN_CONCURRENCY = 10
 DEFAULT_MODEL_JOBS = 1
+DEFAULT_SUMMARY_PROVIDERS = ["qwen-xhigh"]
 _WORKER_BLOCK_RE = re.compile(r"(?m)^worker:\n(?:(?:[ \t]+.*|[ \t]*)\n)*")
 
 
@@ -137,7 +138,7 @@ class AnalysisConfig:
 
 @dataclass
 class SummaryConfig:
-    providers: list[str] = field(default_factory=lambda: ["qwen"])
+    providers: list[str] = field(default_factory=lambda: list(DEFAULT_SUMMARY_PROVIDERS))
     gemini_model: str = "gemini-2.5-flash"
     openai_model: str = "gpt-4.1-mini"
     gemini_api_key: str = ""
@@ -304,13 +305,13 @@ def _as_bool(value: Any, default: bool) -> bool:
 
 def _summary_providers(value: Any) -> list[str]:
     if value is None or value == "":
-        names = ["qwen"]
+        names = list(DEFAULT_SUMMARY_PROVIDERS)
     elif isinstance(value, str):
         names = [part.strip().lower() for part in value.split(",") if part.strip()]
     elif isinstance(value, list):
         names = [str(part).strip().lower() for part in value if str(part).strip()]
     else:
-        names = ["qwen"]
+        names = list(DEFAULT_SUMMARY_PROVIDERS)
     known = {
         "qwen",
         "qwen-low",
@@ -327,7 +328,7 @@ def _summary_providers(value: Any) -> list[str]:
         key = "qwen" if name in {"qwen3.8", "local"} else name
         if key in known and key not in cleaned:
             cleaned.append(key)
-    return cleaned or ["qwen"]
+    return cleaned or list(DEFAULT_SUMMARY_PROVIDERS)
 
 
 def clamp_concurrency(value: Any, default: int, minimum: int = 0) -> int:

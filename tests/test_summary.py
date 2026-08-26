@@ -6,6 +6,7 @@ from media_pipeline.notes import NoteDocument, NoteWriter, load_note
 from media_pipeline.summary import (
     DEFAULT_PROMPT,
     LEGACY_PROMPT,
+    PREVIOUS_DEFAULT_PROMPT,
     SummaryStill,
     build_model_prompt,
     choose_images,
@@ -113,6 +114,9 @@ def test_build_prompt_labels_image_post_as_original():
 def test_normalize_prompt_replaces_legacy_illustrated_default():
     assert normalize_prompt("") == DEFAULT_PROMPT
     assert normalize_prompt(LEGACY_PROMPT) == DEFAULT_PROMPT
+    assert normalize_prompt(PREVIOUS_DEFAULT_PROMPT) == DEFAULT_PROMPT
+    assert "资深分析师" in DEFAULT_PROMPT
+    assert DEFAULT_PROMPT.count("资深分析师") == 1
     assert normalize_prompt("自定义摘要") == "自定义摘要"
 
 
