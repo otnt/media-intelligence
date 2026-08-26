@@ -405,6 +405,8 @@ def test_dashboard_and_frame_override(tmp_path: Path):
     assert "summary-model" in home.text
     assert "/v1/summary/models" in home.text
     assert "Extracted contents" in home.text
+    assert "copy-extracted" in home.text
+    assert "copy-summary" in home.text
     assert "fold-frames" in home.text
     assert "Extract keyframes" in home.text
     assert "Transcript only" in home.text

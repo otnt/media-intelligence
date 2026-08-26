@@ -134,6 +134,9 @@
       margin: 16px 0;
     }
     details.fold > summary {
+      display: flex;
+      align-items: center;
+      gap: 8px;
       cursor: pointer;
       font-weight: 650;
       padding: 14px 16px;
@@ -142,6 +145,8 @@
     details.fold > summary::-webkit-details-marker { display: none; }
     details.fold > summary::before { content: "▸ "; color: var(--muted); }
     details.fold[open] > summary::before { content: "▾ "; }
+    details.fold > summary .fold-title { flex: 1; }
+    details.fold > summary .fold-copy { flex: 0 0 auto; font-weight: 600; }
     details.fold .fold-body { padding: 0 16px 16px; }
   </style>
 </head>
@@ -192,6 +197,9 @@
     let debug = null;
     let summaryPromptDirty = false;
     let summaryModel = "qwen";
+    let extractedMarkdown = "";
+    let summaryMarkdown = "";
+    const copyResetters = {};
     const LEGACY_SUMMARY_PROMPT = "提取这个文章的核心思想，让我无需细读这个视频。生成一份图文输出（可以截屏）让我1分钟获得99%的信息。";
     const DEFAULT_SUMMARY_PROMPT = "提取核心思想，写成一份一分钟能读完的纯文字简报。可用少量 emoji 分点，不要复述原文，不要插入任何图片、截图或附件链接。";
 
@@ -428,11 +436,17 @@
           </div>
         </details>
         <details class="fold" id="fold-extracted">
-          <summary>Extracted contents</summary>
+          <summary>
+            <span class="fold-title">Extracted contents</span>
+            <button type="button" class="btn fold-copy" id="copy-extracted" disabled>Copy</button>
+          </summary>
           <div class="fold-body note-md" id="extracted-output"></div>
         </details>
         <details class="fold" id="fold-summary" hidden>
-          <summary>Summary</summary>
+          <summary>
+            <span class="fold-title">Summary</span>
+            <button type="button" class="btn fold-copy" id="copy-summary" disabled>Copy</button>
+          </summary>
           <div class="fold-body summary-md" id="summary-output"></div>
         </details>
       `;
@@ -440,6 +454,8 @@
       const extractBtn = document.getElementById("extract-keyframes");
       if (extractBtn) extractBtn.onclick = extractKeyframes;
       document.getElementById("summarize").onclick = summarize;
+      bindCopyButton("copy-extracted", () => extractedMarkdown);
+      bindCopyButton("copy-summary", () => summaryMarkdown);
       const promptEl = document.getElementById("summary-prompt");
       summaryPromptDirty = false;
       promptEl.addEventListener("input", () => { summaryPromptDirty = true; });
@@ -660,6 +676,9 @@
       else if (status === "completed") statusEl.textContent = summary.model ? `Done · ${summary.model}` : "Done";
       else statusEl.textContent = "";
       output.innerHTML = renderSummaryMarkdown(markdown);
+      summaryMarkdown = markdown;
+      const copyBtn = document.getElementById("copy-summary");
+      if (copyBtn) copyBtn.disabled = !markdown.trim();
       if (fold) {
         const show = Boolean(markdown);
         fold.hidden = !show;
@@ -678,7 +697,52 @@
     function paintExtracted(markdown, videoId) {
       const output = document.getElementById("extracted-output");
       if (!output) return;
+      extractedMarkdown = markdown || "";
+      const copyBtn = document.getElementById("copy-extracted");
+      if (copyBtn) copyBtn.disabled = !extractedMarkdown.trim();
       output.innerHTML = renderNoteMarkdown(markdown, videoId) || `<div class="empty">No extracted note yet.</div>`;
+    }
+
+    function bindCopyButton(id, getText) {
+      const button = document.getElementById(id);
+      if (!button) return;
+      const stop = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      };
+      button.addEventListener("pointerdown", stop);
+      button.addEventListener("click", async (event) => {
+        stop(event);
+        const text = String(getText() || "").trim();
+        if (!text) return;
+        try {
+          await copyText(text);
+          button.textContent = "Copied";
+          clearTimeout(copyResetters[id]);
+          copyResetters[id] = setTimeout(() => { button.textContent = "Copy"; }, 1600);
+        } catch (_error) {
+          button.textContent = "Copy failed";
+          clearTimeout(copyResetters[id]);
+          copyResetters[id] = setTimeout(() => { button.textContent = "Copy"; }, 1600);
+        }
+      });
+    }
+
+    async function copyText(text) {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return;
+      }
+      const area = document.createElement("textarea");
+      area.value = text;
+      area.setAttribute("readonly", "");
+      area.style.position = "fixed";
+      area.style.left = "-9999px";
+      document.body.appendChild(area);
+      area.select();
+      const ok = document.execCommand("copy");
+      area.remove();
+      if (!ok) throw new Error("copy failed");
     }
 
     function stripSummaryImages(text) {
