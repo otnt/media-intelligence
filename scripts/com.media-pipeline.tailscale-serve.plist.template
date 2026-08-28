@@ -3,16 +3,11 @@
 <plist version="1.0">
   <dict>
     <key>Label</key>
-    <string>com.media-pipeline.server</string>
+    <string>com.media-pipeline.tailscale-serve</string>
     <key>ProgramArguments</key>
     <array>
       <string>__VENV_PYTHON__</string>
-      <string>-m</string>
-      <string>media_pipeline</string>
-      <string>serve</string>
-      <string>--lan</string>
-      <string>--port</string>
-      <string>8875</string>
+      <string>__REPO_ROOT__/scripts/apply_tailscale_serve.py</string>
     </array>
     <key>WorkingDirectory</key>
     <string>__REPO_ROOT__</string>
@@ -23,11 +18,9 @@
     </dict>
     <key>RunAtLoad</key>
     <true/>
-    <key>KeepAlive</key>
-    <true/>
     <key>StandardOutPath</key>
-    <string>__HOME__/AIContent/logs/launchd.out.log</string>
+    <string>__HOME__/AIContent/logs/tailscale-serve.out.log</string>
     <key>StandardErrorPath</key>
-    <string>__HOME__/AIContent/logs/launchd.err.log</string>
+    <string>__HOME__/AIContent/logs/tailscale-serve.err.log</string>
   </dict>
 </plist>

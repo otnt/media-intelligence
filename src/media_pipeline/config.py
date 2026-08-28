@@ -33,7 +33,7 @@ _SUMMARY_BLOCK_RE = re.compile(r"(?m)^summary:\n(?:(?:[ \t]+.*|[ \t]*)\n)*")
 @dataclass
 class ServerConfig:
     host: str = "127.0.0.1"
-    port: int = 8765
+    port: int = 8875
     ingest_token: str = ""
 
 
@@ -278,7 +278,7 @@ def load_config(path: Path | None = None) -> AppConfig:
     config = AppConfig(
         server=ServerConfig(
             host=str(server_raw.get("host") or "127.0.0.1"),
-            port=int(server_raw.get("port") or 8765),
+            port=int(server_raw.get("port") or 8875),
             ingest_token=str(
                 server_raw.get("ingest_token")
                 or os.environ.get("MEDIA_PIPELINE_INGEST_TOKEN")
@@ -517,7 +517,7 @@ def write_default_config(path: Path | None = None) -> Path:
     if vault and 'vault: ""' in text:
         text = text.replace('vault: ""', f"vault: {yaml_quote(str(vault))}")
     if not text:
-        text = "server:\n  host: 127.0.0.1\n  port: 8765\n"
+        text = "server:\n  host: 127.0.0.1\n  port: 8875\n"
     target.write_text(text, encoding="utf-8")
     return target
 

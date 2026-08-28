@@ -1,4 +1,4 @@
-const DEFAULT_BASE = "http://127.0.0.1:8765";
+const DEFAULT_BASE = "http://127.0.0.1:8875";
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   handle(message)
