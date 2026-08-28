@@ -21,4 +21,4 @@ sed \
 launchctl unload "$DEST" 2>/dev/null || true
 launchctl load "$DEST"
 echo "Loaded $DEST"
-echo "Dashboard: http://127.0.0.1:8875/ (LAN; Tailscale: ./scripts/install-tailscale-serve.sh)"
+echo "Dashboard: http://127.0.0.1:8875/ (LAN; Tailscale: ./scripts/tailscale/install.sh)"

@@ -3,14 +3,12 @@
 <plist version="1.0">
   <dict>
     <key>Label</key>
-    <string>com.media-pipeline.tailscale-serve</string>
+    <string>com.tailscale.serve</string>
     <key>ProgramArguments</key>
     <array>
-      <string>__VENV_PYTHON__</string>
-      <string>__REPO_ROOT__/scripts/apply_tailscale_serve.py</string>
+      <string>/usr/bin/python3</string>
+      <string>__CONFIG_DIR__/apply-serve.py</string>
     </array>
-    <key>WorkingDirectory</key>
-    <string>__REPO_ROOT__</string>
     <key>EnvironmentVariables</key>
     <dict>
       <key>PATH</key>

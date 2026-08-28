@@ -14,7 +14,7 @@ Choose an ASR model.
 Leave **Extract keyframes** unchecked unless you want stills in the note.
 Then submit.
 The browser can be closed.
-Inspect progress at `http://127.0.0.1:8765/`.
+Inspect progress at `http://127.0.0.1:8875/`.
 Later, the Obsidian vault contains metadata and a transcript for videos, or the post text and images for Xiaohongshu image posts.
 If you opted into keyframes, the note also includes a visual timeline.
 
@@ -75,13 +75,46 @@ Keep the local service running:
 uv run media-pipeline serve
 ```
 
-The dashboard is `http://127.0.0.1:8765/`.
+The dashboard is `http://127.0.0.1:8875/`.
 
 To start it at login:
 
 ```bash
 ./scripts/install-launch-agent.sh
 ```
+
+The LaunchAgent runs `media-pipeline serve --lan --port 8875` (default port 8875 avoids conflict with other local services on 8765).
+
+### LAN and Tailscale
+
+`--lan` exposes the API on your LAN (for example `http://10.0.0.x:8875/`).
+For phone access over Tailscale, use the machine-wide Tailscale Serve config instead of `serve --tailscale`.
+
+Tailscale Serve is **not** owned by this repo.
+Install it once from here:
+
+```bash
+./scripts/tailscale/install.sh
+```
+
+That deploys to `~/.config/tailscale/`:
+
+| Path | Role |
+|------|------|
+| `~/.config/tailscale/serve.json` | Routes for all local services on this Mac |
+| `~/.config/tailscale/apply-serve.py` | Applies `serve.json` via the Tailscale CLI |
+| `~/Library/LaunchAgents/com.tailscale.serve.plist` | Re-applies Serve after login |
+
+The example in `scripts/tailscale/serve.example.json` publishes media-pipeline at `http://<your-machine>.ts.net:8875/` → `http://127.0.0.1:8875`.
+Edit `~/.config/tailscale/serve.json` to add other backends on other ports, then run:
+
+```bash
+python3 ~/.config/tailscale/apply-serve.py
+```
+
+Host keys like `:8875` are expanded with your MagicDNS name automatically.
+Tailscale Serve is tailnet-only; do not enable Funnel.
+Set `server.ingest_token` in `~/.config/media-pipeline/config.yaml` before exposing the API off localhost.
 
 Check the machine:
 

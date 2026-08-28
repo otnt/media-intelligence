@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-"""Apply scripts/tailscale-serve.json using node-level `tailscale serve` commands."""
+"""Apply ~/.config/tailscale/serve.json using node-level `tailscale serve` commands."""
 
 from __future__ import annotations
 
 import json
 import os
 import shutil
+import socket
 import subprocess
 import sys
 import time
-import urllib.error
-import urllib.request
+import urllib.parse
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_CONFIG = ROOT / "scripts" / "tailscale-serve.json"
+CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "tailscale"
+DEFAULT_CONFIG = CONFIG_DIR / "serve.json"
 LOG = "[tailscale-serve]"
 
 
@@ -86,18 +86,20 @@ def load_serve_status(cli: str) -> dict:
 
 
 def wait_for_backend(proxy: str) -> None:
+    parsed = urllib.parse.urlparse(proxy)
+    host = parsed.hostname or "127.0.0.1"
+    if host in {"localhost", "::1"}:
+        host = "127.0.0.1"
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
     attempts = int(os.environ.get("BACKEND_WAIT_ATTEMPTS", "90"))
     delay = float(os.environ.get("BACKEND_WAIT_DELAY_SEC", "2"))
-    health = proxy.rstrip("/") + "/v1/health"
     for _ in range(attempts):
         try:
-            with urllib.request.urlopen(health, timeout=2) as resp:
-                if 200 <= resp.status < 300:
-                    return
-        except (urllib.error.URLError, TimeoutError, OSError):
-            pass
-        time.sleep(delay)
-    raise ApplyError(f"Backend {proxy} did not become healthy in time")
+            with socket.create_connection((host, port), timeout=2):
+                return
+        except OSError:
+            time.sleep(delay)
+    raise ApplyError(f"Backend {proxy} did not accept TCP connections in time")
 
 
 def expand_host(host_key: str, dns_name: str) -> str:
@@ -127,6 +129,16 @@ def remove_legacy_https_443(cli: str, status: dict) -> None:
         return
     print(f"{LOG} Removing legacy HTTPS :443 handler")
     run(cli, ["serve", "--https=443", "off"], timeout=15)
+
+
+def example_urls(dns_name: str, tcp: dict, web: dict) -> list[str]:
+    urls: list[str] = []
+    for host_key in web:
+        host = expand_host(str(host_key), dns_name)
+        port = host.rsplit(":", 1)[-1]
+        scheme = protocol_for_port(tcp, port)
+        urls.append(f"{scheme}://{host}/")
+    return urls
 
 
 def publish_route(cli: str, *, scheme: str, port: str, path: str, proxy: str, status: dict, host: str) -> None:
@@ -178,7 +190,8 @@ def apply_config(cli: str, config_path: Path) -> None:
             )
             status = load_serve_status(cli)
 
-    print(f"{LOG} Done. Example: http://{dns_name}:8875/")
+    for url in example_urls(dns_name, tcp, web):
+        print(f"{LOG} Done. Example: {url}")
     proc = run(cli, ["serve", "status"], timeout=10)
     if proc.stdout:
         print(proc.stdout.rstrip())
@@ -190,6 +203,7 @@ def main() -> int:
     config = Path(os.environ.get("TAILSCALE_SERVE_CONFIG", str(DEFAULT_CONFIG)))
     if not config.is_file():
         print(f"{LOG} Config not found: {config}", file=sys.stderr)
+        print(f"{LOG} Run: scripts/tailscale/install.sh", file=sys.stderr)
         return 1
     try:
         cli = find_cli()
