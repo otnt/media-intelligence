@@ -544,6 +544,21 @@ def test_dashboard_and_frame_override(tmp_path: Path):
     assert "Extracted contents" in home.text
     assert "copy-extracted" in home.text
     assert "copy-summary" in home.text
+    assert "chatgpt-summary" in home.text
+    assert "在 ChatGPT 继续" in home.text
+    assert "chatgpt.com" in home.text
+    # Copy must run before window.open so the click gesture still owns the clipboard.
+    assert "await copyText(payload)" in home.text
+    assert "copyTextSync" in home.text
+    assert home.text.index("await copyText(payload)") < home.text.index(
+        'window.open(`${CHATGPT_URL}?q=${stub}`'
+    )
+    assert home.text.index("copyTextSync(text)") < home.text.index(
+        "navigator.clipboard.writeText"
+    )
+    assert "已复制；请允许弹窗或手动打开 ChatGPT" in home.text
+    assert 'id="copy-fallback-overlay"' in home.text
+    assert "showCopyFallback(payload)" in home.text
     assert "Summary Generation" in home.text
     assert "No summary yet" in home.text
     assert "No extracted note yet" in home.text

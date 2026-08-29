@@ -237,11 +237,17 @@
     }
     .summary-run:first-child { margin-top: 0; }
     .summary-run-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
       color: var(--muted);
       font-size: 12px;
       font-weight: 650;
       margin-bottom: 8px;
     }
+    .summary-run-head .run-label { min-width: 0; }
+    .summary-run-head .fold-copy { flex: 0 0 auto; font-weight: 600; }
     .summary-run.failed .summary-run-head { color: var(--drop); }
     .summary-run-error { color: var(--drop); margin: 0; }
     .summary-run-body h2, .summary-run-body h3 { margin: 10px 0 8px; }
@@ -477,6 +483,19 @@
       <button type="button" class="sidebar-backdrop" id="sidebar-backdrop" tabindex="-1" aria-label="Close list"></button>
     </div>
   </div>
+  <div class="settings-overlay" id="copy-fallback-overlay" hidden aria-hidden="true">
+    <div class="settings-sheet" role="dialog" aria-modal="true" aria-labelledby="copy-fallback-title">
+      <div class="settings-head">
+        <h2 id="copy-fallback-title">Copy failed</h2>
+        <button type="button" class="btn" id="close-copy-fallback">Close</button>
+      </div>
+      <p class="empty" style="padding:8px 0 10px">Select all, copy, then paste into ChatGPT.</p>
+      <textarea id="copy-fallback-text" class="prompt" rows="14" readonly></textarea>
+      <div class="actions settings-actions">
+        <button type="button" class="btn primary" id="copy-fallback-select">Select all</button>
+      </div>
+    </div>
+  </div>
   <div class="settings-overlay" id="settings-overlay" hidden aria-hidden="true">
     <div class="settings-sheet" role="dialog" aria-modal="true" aria-labelledby="settings-title">
       <div class="settings-head">
@@ -543,6 +562,11 @@
     let summaryModel = "qwen-xhigh";
     let extractedMarkdown = "";
     let summaryMarkdown = "";
+    let summaryDisplayRuns = [];
+    const CHATGPT_BUTTON_LABEL = "在 ChatGPT 继续";
+    const CHATGPT_COPIED_LABEL = "已复制，请粘贴";
+    const CHATGPT_STUB = "继续基于我粘贴的内容提问：";
+    const CHATGPT_URL = "https://chatgpt.com/";
     let visualDefaults = {
       sample_interval_sec: 12,
       scene_threshold: 27,
@@ -1247,6 +1271,7 @@
         <details class="fold" id="fold-summary" open>
           <summary>
             <span class="fold-title">Summary</span>
+            <button type="button" class="btn fold-copy" id="chatgpt-summary" disabled>在 ChatGPT 继续</button>
             <button type="button" class="btn fold-copy" id="copy-summary" disabled>Copy</button>
           </summary>
           <div class="fold-body summary-md" id="summary-output"></div>
@@ -1337,6 +1362,7 @@
       bindTagControls();
       bindCopyButton("copy-extracted", () => extractedMarkdown);
       bindCopyButton("copy-summary", () => summaryMarkdown);
+      bindChatGptButton("chatgpt-summary", () => summaryMarkdown);
       const promptEl = document.getElementById("summary-prompt");
       summaryPromptDirty = false;
       promptEl.addEventListener("input", () => { summaryPromptDirty = true; });
@@ -1571,7 +1597,8 @@
         output.querySelectorAll("details.summary-thinking").forEach((el) => {
           if (el.open && el.dataset.thinkKey) openThinking[el.dataset.thinkKey] = true;
         });
-        output.innerHTML = [...runs].reverse().map((item, index) => renderSummaryRun(item, index)).join("");
+        summaryDisplayRuns = [...runs].reverse();
+        output.innerHTML = summaryDisplayRuns.map((item, index) => renderSummaryRun(item, index)).join("");
         output.querySelectorAll("details.summary-thinking").forEach((el) => {
           if (openThinking[el.dataset.thinkKey]) el.open = true;
           const summaryEl = el.querySelector(":scope > summary");
@@ -1579,13 +1606,18 @@
           summaryEl.addEventListener("click", (event) => event.stopPropagation());
           summaryEl.addEventListener("pointerdown", (event) => event.stopPropagation());
         });
+        bindSummaryRunChatGptButtons(output);
         summaryMarkdown = markdown || copyMarkdownFromRuns(runs);
       } else {
+        summaryDisplayRuns = [];
         output.innerHTML = renderSummaryMarkdown(markdown) || `<div class="empty">No summary yet.</div>`;
         summaryMarkdown = markdown;
       }
+      const hasSummary = Boolean(String(summaryMarkdown || "").trim());
       const copyBtn = document.getElementById("copy-summary");
-      if (copyBtn) copyBtn.disabled = !String(summaryMarkdown || "").trim();
+      if (copyBtn) copyBtn.disabled = !hasSummary;
+      const chatBtn = document.getElementById("chatgpt-summary");
+      if (chatBtn) chatBtn.disabled = !hasSummary;
       const focused = document.activeElement === promptEl;
       const storedPrompt = canonicalPrompt(summary.prompt);
       if (!keepPrompt && !summaryPromptDirty && !focused && storedPrompt) {
@@ -1607,21 +1639,26 @@
       const body = markdown
         ? `${thinkingHtml}<div class="summary-run-body">${renderSummaryMarkdown(item.markdown)}</div>`
         : thinkingHtml || `<p class="summary-run-error">失败：${esc(item.error || "empty")}</p>`;
-      return `<article class="summary-run${failed ? " failed" : ""}"><header class="summary-run-head">${esc(head)}</header>${body}</article>`;
+      const chatBtn = failed
+        ? ""
+        : `<button type="button" class="btn fold-copy summary-chatgpt" data-run-index="${index}">${CHATGPT_BUTTON_LABEL}</button>`;
+      return `<article class="summary-run${failed ? " failed" : ""}"><header class="summary-run-head"><span class="run-label">${esc(head)}</span>${chatBtn}</header>${body}</article>`;
     }
 
     function copyMarkdownFromRuns(runs) {
-      return [...runs].reverse().map((item) => {
-        const label = item.label || item.model || item.key || "Model";
-        const duration = formatRunDuration(item.duration_sec);
-        const head = duration ? `${label} · ${duration}` : label;
-        const thinking = String(item.thinking || "").trim();
-        const briefing = String(item.markdown || "").trim() || (thinking ? "" : `（失败：${item.error || "empty"}）`);
-        const thinkBlock = thinking
-          ? `<details>\n<summary>Thinking</summary>\n\n${thinking}\n\n</details>\n\n`
-          : "";
-        return `### ${head}\n\n${thinkBlock}${briefing}\n`;
-      }).join("\n");
+      return [...runs].reverse().map((item) => runCopyMarkdown(item)).join("\n");
+    }
+
+    function runCopyMarkdown(item) {
+      const label = item.label || item.model || item.key || "Model";
+      const duration = formatRunDuration(item.duration_sec);
+      const head = duration ? `${label} · ${duration}` : label;
+      const thinking = String(item.thinking || "").trim();
+      const briefing = String(item.markdown || "").trim() || (thinking ? "" : `（失败：${item.error || "empty"}）`);
+      const thinkBlock = thinking
+        ? `<details>\n<summary>Thinking</summary>\n\n${thinking}\n\n</details>\n\n`
+        : "";
+      return `### ${head}\n\n${thinkBlock}${briefing}\n`;
     }
 
     function formatRunDuration(seconds) {
@@ -1679,21 +1716,155 @@
       });
     }
 
-    async function copyText(text) {
-      if (navigator.clipboard && window.isSecureContext) {
-        await navigator.clipboard.writeText(text);
-        return;
+    function buildChatGptPayload(summaryText) {
+      const extracted = String(extractedMarkdown || "").trim();
+      const summary = String(summaryText || "").trim();
+      const parts = [];
+      if (extracted) parts.push(`## Extracted contents\n\n${extracted}`);
+      if (summary) parts.push(`## Summary\n\n${summary}`);
+      if (!parts.length) return "";
+      parts.push("请基于以上内容继续提问和讨论。");
+      return parts.join("\n\n---\n\n");
+    }
+
+    function bindChatGptButton(id, getSummaryText) {
+      const button = document.getElementById(id);
+      if (!button) return;
+      const stop = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      };
+      button.addEventListener("pointerdown", stop);
+      button.addEventListener("click", async (event) => {
+        stop(event);
+        await continueInChatGpt(getSummaryText(), button, id);
+      });
+    }
+
+    function bindSummaryRunChatGptButtons(output) {
+      output.querySelectorAll("button.summary-chatgpt").forEach((button) => {
+        const stop = (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+        };
+        button.addEventListener("pointerdown", stop);
+        button.addEventListener("click", async (event) => {
+          stop(event);
+          const index = Number(button.dataset.runIndex);
+          const item = summaryDisplayRuns[index];
+          if (!item) return;
+          const resetKey = `summary-chatgpt-${index}`;
+          await continueInChatGpt(runCopyMarkdown(item), button, resetKey);
+        });
+      });
+    }
+
+    async function continueInChatGpt(summaryText, button, resetKey) {
+      const payload = buildChatGptPayload(summaryText);
+      if (!payload) return;
+      let copied = false;
+      try {
+        // Copy during the click gesture first — Clipboard API after opening a new
+        // tab loses user-activation and fails on Safari / some Chromium builds.
+        await copyText(payload);
+        copied = true;
+        if (button) {
+          button.textContent = CHATGPT_COPIED_LABEL;
+          clearTimeout(copyResetters[resetKey]);
+          copyResetters[resetKey] = setTimeout(() => {
+            button.textContent = CHATGPT_BUTTON_LABEL;
+          }, 2200);
+        }
+      } catch (_error) {
+        showCopyFallback(payload);
+        if (button) {
+          button.textContent = "Copy failed";
+          clearTimeout(copyResetters[resetKey]);
+          copyResetters[resetKey] = setTimeout(() => {
+            button.textContent = CHATGPT_BUTTON_LABEL;
+          }, 2200);
+        }
       }
+      const stub = encodeURIComponent(CHATGPT_STUB);
+      const opened = window.open(`${CHATGPT_URL}?q=${stub}`, "_blank", "noopener,noreferrer");
+      if (copied && !opened && button) {
+        button.textContent = "已复制；请允许弹窗或手动打开 ChatGPT";
+        clearTimeout(copyResetters[resetKey]);
+        copyResetters[resetKey] = setTimeout(() => {
+          button.textContent = CHATGPT_BUTTON_LABEL;
+        }, 4200);
+      }
+    }
+
+    function showCopyFallback(text) {
+      const overlay = document.getElementById("copy-fallback-overlay");
+      const area = document.getElementById("copy-fallback-text");
+      const selectBtn = document.getElementById("copy-fallback-select");
+      const closeBtn = document.getElementById("close-copy-fallback");
+      if (!overlay || !area) return;
+      area.value = text;
+      overlay.hidden = false;
+      overlay.classList.add("open");
+      overlay.setAttribute("aria-hidden", "false");
+      const close = () => {
+        overlay.classList.remove("open");
+        overlay.hidden = true;
+        overlay.setAttribute("aria-hidden", "true");
+      };
+      if (closeBtn) closeBtn.onclick = close;
+      if (selectBtn) {
+        selectBtn.onclick = () => {
+          area.focus();
+          area.select();
+          area.setSelectionRange(0, area.value.length);
+        };
+      }
+      overlay.onclick = (event) => {
+        if (event.target === overlay) close();
+      };
+      area.focus();
+      area.select();
+      area.setSelectionRange(0, area.value.length);
+    }
+
+    function copyTextSync(text) {
       const area = document.createElement("textarea");
       area.value = text;
       area.setAttribute("readonly", "");
       area.style.position = "fixed";
-      area.style.left = "-9999px";
+      area.style.top = "0";
+      area.style.left = "0";
+      area.style.width = "1px";
+      area.style.height = "1px";
+      area.style.opacity = "0";
+      area.style.pointerEvents = "none";
       document.body.appendChild(area);
+      area.focus();
       area.select();
-      const ok = document.execCommand("copy");
-      area.remove();
+      area.setSelectionRange(0, area.value.length);
+      let ok = false;
+      try {
+        ok = document.execCommand("copy");
+      } finally {
+        area.remove();
+      }
       if (!ok) throw new Error("copy failed");
+    }
+
+    async function copyText(text) {
+      // Prefer sync execCommand while the click gesture is still active
+      // (more reliable than Clipboard API after focus moves to a new tab).
+      try {
+        copyTextSync(text);
+        return;
+      } catch (_syncError) {
+        /* fall through to Clipboard API */
+      }
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return;
+      }
+      throw new Error("copy failed");
     }
 
     function stripSummaryImages(text) {
