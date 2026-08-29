@@ -127,6 +127,7 @@
     .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin: 16px 0; }
     label.field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); position: relative; overflow: visible; }
     label.field input, label.field select { background: #10141c; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 7px 8px; }
+    label.field input[type="date"] { color-scheme: dark; width: 100%; min-width: 0; }
     .fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; overflow: visible; }
     .label-row { display: flex; align-items: center; gap: 6px; }
     .help {
@@ -407,9 +408,14 @@
           <label class="field">Filter
             <select id="list-filter">
               <option value="today" selected>Today</option>
+              <option value="yesterday">Yesterday</option>
               <option value="7d">Last 7 days</option>
               <option value="all">All</option>
+              <option value="date">On date…</option>
             </select>
+          </label>
+          <label class="field" id="list-filter-date-wrap" hidden>Date
+            <input id="list-filter-date" type="date" />
           </label>
           <label class="field">Grouping
             <select id="list-group">
@@ -483,8 +489,11 @@
     const settingsOverlay = document.getElementById("settings-overlay");
     const settingsPromptEl = document.getElementById("settings-summary-prompt");
     const listFilterEl = document.getElementById("list-filter");
+    const listFilterDateEl = document.getElementById("list-filter-date");
+    const listFilterDateWrap = document.getElementById("list-filter-date-wrap");
     const listGroupEl = document.getElementById("list-group");
     const listOrderEl = document.getElementById("list-order");
+    const NAMED_FILTERS = new Set(["today", "yesterday", "7d", "all"]);
     const sidebarEl = document.getElementById("sidebar-drawer");
     const sidebarBackdrop = document.getElementById("sidebar-backdrop");
     const openSidebarBtn = document.getElementById("open-sidebar");
@@ -536,9 +545,11 @@
       await loadTasks();
       if (selectedId) await openTask(selectedId);
       setInterval(() => { loadTasks(); loadWorker(); refreshSelected(); }, 4000);
-      listFilterEl.onchange = saveOrganize;
+      listFilterEl.onchange = onFilterSelectChange;
+      if (listFilterDateEl) listFilterDateEl.onchange = saveOrganize;
       listGroupEl.onchange = saveOrganize;
       listOrderEl.onchange = saveOrganize;
+      if (listFilterDateEl && !listFilterDateEl.value) listFilterDateEl.value = localStampDate();
     }
 
     async function loadHealth() {
@@ -604,10 +615,55 @@
       renderWorker(data.worker || data, { fillInputs: true });
     }
 
+    function isIsoDateFilter(value) {
+      return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ""));
+    }
+
+    function effectiveFilter() {
+      if (listFilterEl.value === "date") {
+        const picked = listFilterDateEl && listFilterDateEl.value;
+        return picked || localStampDate();
+      }
+      return listFilterEl.value;
+    }
+
+    function applyFilterToControls(filter) {
+      const value = String(filter || "today");
+      if (isIsoDateFilter(value)) {
+        listFilterEl.value = "date";
+        if (listFilterDateEl) listFilterDateEl.value = value;
+        setDatePickerVisible(true);
+        return;
+      }
+      listFilterEl.value = NAMED_FILTERS.has(value) ? value : "today";
+      setDatePickerVisible(false);
+      if (listFilterDateEl && !listFilterDateEl.value) listFilterDateEl.value = localStampDate();
+    }
+
+    function setDatePickerVisible(show) {
+      if (!listFilterDateWrap) return;
+      listFilterDateWrap.hidden = !show;
+    }
+
+    function onFilterSelectChange() {
+      if (listFilterEl.value === "date") {
+        if (listFilterDateEl) {
+          if (!listFilterDateEl.value) listFilterDateEl.value = localStampDate();
+          setDatePickerVisible(true);
+          listFilterDateEl.focus();
+        } else {
+          setDatePickerVisible(true);
+        }
+      } else {
+        setDatePickerVisible(false);
+      }
+      saveOrganize();
+    }
+
     async function loadOrganize() {
       try {
         const data = await api("/v1/dashboard");
-        if (data.filter) listFilterEl.value = data.filter;
+        if (data.filter) applyFilterToControls(data.filter);
         if (data.group) listGroupEl.value = data.group;
         if (data.order) listOrderEl.value = data.order;
       } catch (_error) {
@@ -621,7 +677,7 @@
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            filter: listFilterEl.value,
+            filter: effectiveFilter(),
             group: listGroupEl.value,
             order: listOrderEl.value,
           }),
@@ -847,8 +903,9 @@
     }
 
     async function loadTasks() {
+      const filter = effectiveFilter();
       const query = new URLSearchParams({
-        filter: listFilterEl.value,
+        filter,
         group: listGroupEl.value,
         order: listOrderEl.value,
       });
@@ -864,9 +921,7 @@
           : "";
         return `<div class="task-block">${heading}${rows}</div>`;
       }).join("");
-      const empty = listFilterEl.value === "today"
-        ? `<div class="empty">No extracts today. Switch filter to All to see older requests.</div>`
-        : `<div class="empty">No tasks yet. Use the browser extension to extract a video.</div>`;
+      const empty = emptyListMessage(filter);
       tasksEl.innerHTML = html || empty;
       tasksEl.querySelectorAll(".task").forEach((button) => {
         button.onclick = () => openTask(button.dataset.id);
@@ -894,6 +949,19 @@
       const month = String(now.getMonth() + 1).padStart(2, "0");
       const day = String(now.getDate()).padStart(2, "0");
       return `${now.getFullYear()}-${month}-${day}`;
+    }
+
+    function emptyListMessage(filter) {
+      if (filter === "today") {
+        return `<div class="empty">No extracts today. Switch filter to All to see older requests.</div>`;
+      }
+      if (filter === "yesterday") {
+        return `<div class="empty">No extracts yesterday. Switch filter to All to see other days.</div>`;
+      }
+      if (isIsoDateFilter(filter)) {
+        return `<div class="empty">No extracts on ${esc(filter)}. Switch filter to All to see other days.</div>`;
+      }
+      return `<div class="empty">No tasks yet. Use the browser extension to extract a video.</div>`;
     }
 
     async function openTask(id) {

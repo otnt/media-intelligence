@@ -87,6 +87,16 @@ def test_load_config_reads_dashboard_section(tmp_path: Path):
     assert config.dashboard.order == "title"
 
 
+def test_load_config_reads_dashboard_date_filter(tmp_path: Path):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "dashboard:\n  filter: 2026-08-24\n  group: day\n  order: requested_asc\n",
+        encoding="utf-8",
+    )
+    config = load_config(path)
+    assert config.dashboard.filter == "2026-08-24"
+
+
 def test_persist_dashboard_config_keeps_other_comments(tmp_path: Path):
     path = tmp_path / "config.yaml"
     path.write_text(

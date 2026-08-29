@@ -1,16 +1,18 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta
 from typing import Any
 
 from media_pipeline.models import SOURCE_LABELS, source_key, source_label
 
 
-DASHBOARD_FILTERS = ("today", "7d", "all")
+DASHBOARD_FILTERS = ("today", "yesterday", "7d", "all")
 DASHBOARD_GROUPS = ("source", "none", "status", "day")
 DASHBOARD_ORDERS = ("requested_desc", "requested_asc", "updated_desc", "title")
 DASHBOARD_FILTER_OPTIONS = (
     ("today", "Today"),
+    ("yesterday", "Yesterday"),
     ("7d", "Last 7 days"),
     ("all", "All"),
 )
@@ -26,10 +28,17 @@ DASHBOARD_ORDER_OPTIONS = (
     ("updated_desc", "Updated newest"),
     ("title", "Title"),
 )
+_DATE_FILTER_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 def normalize_dashboard_filter(value: str | None, default: str = "today") -> str:
-    return _pick(value, DASHBOARD_FILTERS, default)
+    key = (value or "").strip().lower()
+    if key in DASHBOARD_FILTERS:
+        return key
+    raw = (value or "").strip()
+    if _is_dashboard_date_filter(raw):
+        return raw
+    return default
 
 
 def normalize_dashboard_group(value: str | None, default: str = "source") -> str:
@@ -70,12 +79,27 @@ def flatten_groups(groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return tasks
 
 
+def _is_dashboard_date_filter(value: str) -> bool:
+    if not _DATE_FILTER_RE.fullmatch(value):
+        return False
+    try:
+        datetime.strptime(value, "%Y-%m-%d")
+    except ValueError:
+        return False
+    return True
+
+
 def _filter_payloads(payloads: list[dict[str, Any]], time_filter: str, now: datetime) -> list[dict[str, Any]]:
     if time_filter == "all":
         return list(payloads)
-    today = now.strftime("%Y-%m-%d")
     if time_filter == "today":
-        return [item for item in payloads if _stamp_date(item) == today]
+        target = now.strftime("%Y-%m-%d")
+        return [item for item in payloads if _stamp_date(item) == target]
+    if time_filter == "yesterday":
+        target = (now.date() - timedelta(days=1)).isoformat()
+        return [item for item in payloads if _stamp_date(item) == target]
+    if _is_dashboard_date_filter(time_filter):
+        return [item for item in payloads if _stamp_date(item) == time_filter]
     start = (now.date() - timedelta(days=6)).isoformat()
     return [item for item in payloads if _stamp_date(item) >= start]
 

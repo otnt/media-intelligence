@@ -40,7 +40,7 @@ worker:
 
 dashboard:
   # Sidebar list defaults. Changing Filter / Grouping / Order in the dashboard writes them here.
-  # filter: today | 7d | all
+  # filter: today | yesterday | 7d | all | YYYY-MM-DD
   filter: today
   # group: source | none | status | day
   group: source

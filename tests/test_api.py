@@ -807,6 +807,18 @@ def test_update_dashboard_view(tmp_path: Path):
     view = client.get("/v1/dashboard").json()
     assert view["filter"] == "all"
     assert view["filters"][0]["id"] == "today"
+    assert {item["id"] for item in view["filters"]} >= {"today", "yesterday", "7d", "all"}
+
+    dated = client.put("/v1/dashboard", json={"filter": "yesterday"})
+    assert dated.status_code == 200
+    assert dated.json()["filter"] == "yesterday"
+    assert config.dashboard.filter == "yesterday"
+
+    day = client.put("/v1/dashboard", json={"filter": "2026-08-24"})
+    assert day.status_code == 200
+    assert day.json()["filter"] == "2026-08-24"
+    assert config.dashboard.filter == "2026-08-24"
+    assert "filter: 2026-08-24" in config_path.read_text(encoding="utf-8")
 
 
 def test_update_visual_and_summary_settings(tmp_path: Path):

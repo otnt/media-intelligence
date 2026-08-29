@@ -1,6 +1,10 @@
 from datetime import datetime
 
-from media_pipeline.dashboard_view import flatten_groups, organize_task_payloads
+from media_pipeline.dashboard_view import (
+    flatten_groups,
+    normalize_dashboard_filter,
+    organize_task_payloads,
+)
 from media_pipeline.models import source_key, source_label
 
 
@@ -13,6 +17,13 @@ def test_xiaohongshu_and_rednote_are_the_same_source():
     assert source_key("YouTube") == "youtube"
     assert source_key("Bilibili") == "bilibili"
     assert source_label("YouTube") == "YouTube"
+
+
+def test_normalize_dashboard_filter_accepts_yesterday_and_iso_date():
+    assert normalize_dashboard_filter("yesterday") == "yesterday"
+    assert normalize_dashboard_filter("2026-08-24") == "2026-08-24"
+    assert normalize_dashboard_filter("2026-02-31") == "today"
+    assert normalize_dashboard_filter("nope") == "today"
 
 
 def test_organize_defaults_today_grouped_by_source_newest_first():
@@ -30,6 +41,34 @@ def test_organize_defaults_today_grouped_by_source_newest_first():
     assert [item["id"] for item in groups[1]["tasks"]] == ["new-red", "new-xhs"]
     assert flatten_groups(groups)[0]["id"] == "new-bili"
     assert all(item["requested_at"].startswith("2026-08-25") for item in flatten_groups(groups))
+
+
+def test_organize_yesterday_filter():
+    now = datetime(2026, 8, 25, 21, 0, 0)
+    payloads = [
+        _task("old-yt", "YouTube", "2026-08-24 09:00", "Yesterday YT"),
+        _task("new-yt", "YouTube", "2026-08-25 10:00", "New YT"),
+        _task("older", "Bilibili", "2026-08-23 10:00", "Older"),
+    ]
+    groups = organize_task_payloads(payloads, time_filter="yesterday", group="none", now=now)
+    assert [item["id"] for item in groups[0]["tasks"]] == ["old-yt"]
+
+
+def test_organize_specific_date_filter():
+    now = datetime(2026, 8, 25, 21, 0, 0)
+    payloads = [
+        _task("old-yt", "YouTube", "2026-08-24 09:00", "Yesterday YT"),
+        _task("new-yt", "YouTube", "2026-08-25 10:00", "New YT"),
+        _task("older", "Bilibili", "2026-08-23 11:00", "Older"),
+    ]
+    groups = organize_task_payloads(
+        payloads,
+        time_filter="2026-08-23",
+        group="none",
+        order="requested_asc",
+        now=now,
+    )
+    assert [item["id"] for item in groups[0]["tasks"]] == ["older"]
 
 
 def test_organize_all_none_requested_asc():
