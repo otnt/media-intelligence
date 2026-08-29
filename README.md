@@ -76,6 +76,8 @@ uv run media-pipeline serve
 ```
 
 The dashboard is `http://127.0.0.1:8875/`.
+While a job is running, the detail page polls about every 4 seconds.
+After a task is `completed` (and summary is not regenerating), it stops rewriting the extracted note and summary so text selection is not cleared.
 
 To start it at login:
 

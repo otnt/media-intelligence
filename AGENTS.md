@@ -79,3 +79,18 @@ git worktree add .worktrees/<short-name> <branch>
 ```
 
 Never create sibling worktrees such as `../media-download-<name>`.
+
+## Dashboard polling (text selection)
+
+The detail page polls every 4s (`loadTasks` / `loadWorker` / `refreshSelected`).
+
+`refreshSelected` must **not** rewrite Extracted / Summary / gallery via `innerHTML` when:
+
+1. The task `status` is `completed` **and** `summary.status` is not `running`, or
+2. The user currently has a text selection inside `#main`.
+
+Rewriting those nodes clears the browser selection and breaks selecting long passages.
+
+Still poll the sidebar and worker chips.
+Still refresh detail body while the pipeline is in progress, or while summary regeneration is `running`.
+Actions like Regenerate summary / Rerun / Keep-Drop call `openTask` or `paintSummary` directly and do not rely on the idle completed poll path.

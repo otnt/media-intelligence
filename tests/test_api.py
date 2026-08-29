@@ -548,6 +548,8 @@ def test_dashboard_and_frame_override(tmp_path: Path):
     assert "No summary yet" in home.text
     assert "No extracted note yet" in home.text
     assert "fold-stages" in home.text
+    assert "detailBodyNeedsPoll" in home.text
+    assert "hasDetailTextSelection" in home.text
     assert "summary-run" in home.text
     assert "summary-thinking" in home.text
     assert "qwen-low" in home.text

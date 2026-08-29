@@ -1093,6 +1093,9 @@
         tagsEl.innerHTML = tagRowHtml(debug.tags || []);
         bindTagControls();
       }
+      // Completed tasks are static unless summary is regenerating.
+      // Rewriting extracted/summary via innerHTML clears the user's text selection.
+      if (!detailBodyNeedsPoll() || hasDetailTextSelection()) return;
       if (!rerunPanelBusy()) {
         const gallery = document.getElementById("gallery");
         const decisions = debug.decisions || [];
@@ -1105,6 +1108,22 @@
       }
       paintExtracted(debug.extracted_markdown || "", debug.video_id);
       paintSummary(debug.summary || {}, { keepPrompt: true });
+    }
+
+    function detailBodyNeedsPoll() {
+      const status = String((debug && debug.status) || "");
+      const summaryStatus = String(((debug && debug.summary) || {}).status || "");
+      if (summaryStatus === "running") return true;
+      if (status === "completed") return false;
+      return true;
+    }
+
+    function hasDetailTextSelection() {
+      const sel = window.getSelection && window.getSelection();
+      if (!sel || sel.isCollapsed || !sel.rangeCount) return false;
+      const node = sel.anchorNode;
+      if (!node || !main) return false;
+      return main.contains(node);
     }
 
     function rerunPanelBusy() {
