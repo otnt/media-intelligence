@@ -83,12 +83,20 @@ To start it at login:
 ./scripts/install-launch-agent.sh
 ```
 
-The LaunchAgent runs `media-pipeline serve --lan --port 8875` (default port 8875 avoids conflict with other local services on 8765).
+The LaunchAgent runs `media-pipeline serve --host 127.0.0.1 --port 8875`.
+It uses `KeepAlive` and a 30s `ThrottleInterval` so the API comes back after crashes or login.
+Bind is **localhost only**: Tailscale Serve already owns the Tailscale IP on port 8875; binding `0.0.0.0` fights that listener and launchd will thrash then stop.
 
 ### LAN and Tailscale
 
-`--lan` exposes the API on your LAN (for example `http://10.0.0.x:8875/`).
-For phone access over Tailscale, use the machine-wide Tailscale Serve config instead of `serve --tailscale`.
+Use Tailscale for phone and off-LAN access (including while you are on home Wi‑Fi):
+
+```text
+http://<your-machine>.ts.net:8875/
+```
+
+Do not run LaunchAgent with `--lan` while Serve publishes the same port.
+For local debugging, use `http://127.0.0.1:8875/`.
 
 Tailscale Serve is **not** owned by this repo.
 Install it once from here:
@@ -103,7 +111,7 @@ That deploys to `~/.config/tailscale/`:
 |------|------|
 | `~/.config/tailscale/serve.json` | Routes for all local services on this Mac |
 | `~/.config/tailscale/apply-serve.py` | Applies `serve.json` via the Tailscale CLI |
-| `~/Library/LaunchAgents/com.tailscale.serve.plist` | Re-applies Serve after login |
+| `~/Library/LaunchAgents/com.tailscale.serve.plist` | Re-applies Serve after login and every 5 minutes |
 
 The example in `scripts/tailscale/serve.example.json` publishes media-pipeline at `http://<your-machine>.ts.net:8875/` → `http://127.0.0.1:8875`.
 Edit `~/.config/tailscale/serve.json` to add other backends on other ports, then run:

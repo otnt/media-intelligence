@@ -91,7 +91,7 @@ def wait_for_backend(proxy: str) -> None:
     if host in {"localhost", "::1"}:
         host = "127.0.0.1"
     port = parsed.port or (443 if parsed.scheme == "https" else 80)
-    attempts = int(os.environ.get("BACKEND_WAIT_ATTEMPTS", "90"))
+    attempts = int(os.environ.get("BACKEND_WAIT_ATTEMPTS", "15"))
     delay = float(os.environ.get("BACKEND_WAIT_DELAY_SEC", "2"))
     for _ in range(attempts):
         try:
@@ -161,8 +161,22 @@ def publish_route(cli: str, *, scheme: str, port: str, path: str, proxy: str, st
         raise ApplyError(detail)
 
 
+def load_json_config(config_path: Path) -> dict:
+    """Parse serve.json; allow // and /* */ comments (common when editing by hand)."""
+    text = config_path.read_text(encoding="utf-8")
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        import re
+
+        stripped = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
+        stripped = re.sub(r"(?m)^\s*//.*?$", "", stripped)
+        stripped = re.sub(r"(?m),(\s*[}\]])", r"\1", stripped)
+        return json.loads(stripped)
+
+
 def apply_config(cli: str, config_path: Path) -> None:
-    raw = json.loads(config_path.read_text(encoding="utf-8"))
+    raw = load_json_config(config_path)
     tcp = raw.get("TCP") or {}
     web = raw.get("Web") or {}
     dns_name = load_dns_name(cli)

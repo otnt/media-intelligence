@@ -28,17 +28,25 @@ sed \
   -e "s|__HOME__|$HOME|g" \
   "$SRC/com.tailscale.serve.plist.template" > "$DEST_PLIST"
 
-launchctl unload "$LEGACY_PLIST" 2>/dev/null || true
+uid="$(id -u)"
+launchctl bootout "gui/$uid" "$LEGACY_PLIST" 2>/dev/null || launchctl unload "$LEGACY_PLIST" 2>/dev/null || true
 rm -f "$LEGACY_PLIST"
-launchctl unload "$DEST_PLIST" 2>/dev/null || true
-launchctl load "$DEST_PLIST"
+launchctl bootout "gui/$uid" "$DEST_PLIST" 2>/dev/null || launchctl unload "$DEST_PLIST" 2>/dev/null || true
+launchctl bootstrap "gui/$uid" "$DEST_PLIST" 2>/dev/null || launchctl load "$DEST_PLIST"
+launchctl enable "gui/$uid/com.tailscale.serve" 2>/dev/null || true
+
+# Apply once now (short waits). Periodic StartInterval will retry later.
+BACKEND_WAIT_ATTEMPTS="${BACKEND_WAIT_ATTEMPTS:-15}" \
+TAILSCALE_WAIT_ATTEMPTS="${TAILSCALE_WAIT_ATTEMPTS:-30}" \
+  /usr/bin/python3 "$CONFIG_DIR/apply-serve.py" || true
 
 echo "Installed Tailscale Serve tooling:"
 echo "  Config:      $CONFIG_DIR/serve.json"
 echo "  Apply:       $CONFIG_DIR/apply-serve.py"
-echo "  LaunchAgent: $DEST_PLIST"
+echo "  LaunchAgent: $DEST_PLIST (RunAtLoad + every 5 minutes)"
 echo ""
 echo "Edit serve.json for all local services, then run:"
 echo "  python3 $CONFIG_DIR/apply-serve.py"
 echo ""
 echo "Tailscale app must stay signed in (login item)."
+echo "media-pipeline must bind 127.0.0.1:8875 (not 0.0.0.0) while Serve uses :8875."

@@ -10,7 +10,8 @@
       <string>-m</string>
       <string>media_pipeline</string>
       <string>serve</string>
-      <string>--lan</string>
+      <string>--host</string>
+      <string>127.0.0.1</string>
       <string>--port</string>
       <string>8875</string>
     </array>
@@ -25,6 +26,10 @@
     <true/>
     <key>KeepAlive</key>
     <true/>
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+    <key>ProcessType</key>
+    <string>Interactive</string>
     <key>StandardOutPath</key>
     <string>__HOME__/AIContent/logs/launchd.out.log</string>
     <key>StandardErrorPath</key>

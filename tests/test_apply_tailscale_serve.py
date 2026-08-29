@@ -51,6 +51,17 @@ def test_default_config_path_is_user_config_dir():
     assert mod.CONFIG_DIR.name == "tailscale"
 
 
+def test_load_json_config_allows_comments(tmp_path):
+    mod = _load_apply_module()
+    path = tmp_path / "serve.json"
+    path.write_text(
+        '{\n  // comment\n  "TCP": {"8875": {"HTTP": true}},\n  "Web": {}\n}\n',
+        encoding="utf-8",
+    )
+    raw = mod.load_json_config(path)
+    assert raw["TCP"]["8875"]["HTTP"] is True
+
+
 def test_serve_example_json_is_valid():
     raw = json.loads(EXAMPLE_CONFIG.read_text(encoding="utf-8"))
     assert raw["TCP"]["8875"]["HTTP"] is True
