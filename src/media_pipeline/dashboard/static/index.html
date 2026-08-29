@@ -113,6 +113,7 @@
     .chip { background: #222836; border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px; color: var(--muted); font-size: 12px; }
     .chip.ok { color: var(--keep); }
     .chip.bad { color: var(--drop); }
+    .chip-link { max-width: min(100%, 42rem); overflow-wrap: anywhere; }
     .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }
     .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
     .card img { width: 100%; aspect-ratio: 16/9; object-fit: cover; background: #0b0d12; display: block; }
@@ -256,6 +257,7 @@
     details.fold > summary .fold-title { flex: 1; }
     details.fold > summary .fold-copy { flex: 0 0 auto; font-weight: 600; }
     details.fold .fold-body { padding: 0 16px 16px; }
+    details.fold .fold-body .empty { padding: 8px 0 4px; }
     @media (max-width: 899px) {
       html, body { height: 100%; height: 100dvh; overflow: hidden; }
       .app {
@@ -825,17 +827,21 @@
       }
     }
 
-    function sourceLineHtml(url, error) {
+    function sourceLinkHtml(url) {
       const href = String(url || "").trim();
-      let link = esc(href);
+      if (!href) return "—";
       try {
         const parsed = new URL(href);
         if (parsed.protocol === "http:" || parsed.protocol === "https:") {
-          link = `<a class="source-link" href="${esc(href)}" target="_blank" rel="noopener noreferrer">${esc(href)}</a>`;
+          return `<a class="source-link" href="${esc(href)}" target="_blank" rel="noopener noreferrer">${esc(href)}</a>`;
         }
-      } catch (_error) {
-        link = esc(href);
-      }
+      } catch (_error) {}
+      return esc(href);
+    }
+
+    function sourceLineHtml(url, error) {
+      const href = String(url || "").trim();
+      const link = href ? sourceLinkHtml(href) : "";
       const suffix = error ? `${href ? " · " : ""}${esc(error)}` : "";
       return `${link}${suffix}`;
     }
@@ -937,9 +943,12 @@
       if (stagesEl) stagesEl.innerHTML = stagesInner(debug);
       const statusChip = document.getElementById("task-status");
       if (statusChip) statusChip.textContent = debug.status || "";
+      const sourceLink = document.getElementById("task-source-link");
+      if (sourceLink) sourceLink.innerHTML = sourceLinkHtml(debug.url);
       const errorLine = document.getElementById("task-error");
       if (errorLine) {
-        errorLine.innerHTML = sourceLineHtml(debug.url, debug.error);
+        errorLine.textContent = debug.error || "";
+        errorLine.hidden = !debug.error;
       }
       if (!rerunPanelBusy()) {
         const gallery = document.getElementById("gallery");
@@ -965,81 +974,22 @@
     function renderDetail() {
       const task = debug;
       const visual = { ...visualDefaults, ...(task.visual || {}) };
+      const stagesOpen = task.status === "completed" ? "" : " open";
       main.innerHTML = `
         <h2>${esc(task.title || task.video_id || "Untitled")}</h2>
         <div class="row">
+          <span class="chip">${esc(task.requested_at || task.created_at || "—")}</span>
+          <span class="chip">${esc(task.source_label || task.platform || "—")}</span>
           <span class="chip" id="task-status">${esc(task.status)}</span>
-          <span class="chip">${esc(task.asr_label || task.asr_model)}</span>
-          <span class="chip">${esc(task.source_label || task.platform)} ${esc(task.video_id)}</span>
-          <span class="chip">${esc(task.requested_at || task.created_at || "")}</span>
-          <span class="chip">${esc(task.media_kind === "image" ? "Images" : (task.extract_keyframes ? "Keyframes on" : "Transcript only"))}</span>
-          <span class="chip">${task.segment_count || 0} transcript segments</span>
-          <span class="chip">${task.candidate_count || 0} candidates</span>
-          <span class="chip">${task.keyframe_count || 0} keyframes</span>
-          <span class="chip">${task.selected_count || (task.debug && task.debug.selected_count) || 0} kept by Qwen</span>
+          <span class="chip chip-link" id="task-source-link">${sourceLinkHtml(task.url)}</span>
         </div>
-        <p class="source-line" id="task-error">${sourceLineHtml(task.url, task.error)}</p>
-        <div class="panel">
-          <div class="stages" id="stages">${stagesInner(task)}</div>
-        </div>
-        <div class="panel" id="rerun-panel">
-          <strong>Rerun a stage</strong>
-          <div class="fields" style="margin-top:10px">
-            ${knobField("stage", "Stage", `<select id="stage">
-                <option value="summarizing">Re-run summary</option>
-                <option value="filtering_frames">Re-run Qwen3.8 frame filter</option>
-                <option value="deduplicating_frames">Re-run deduplication</option>
-                <option value="sampling_frames">Re-run candidate generation</option>
-                <option value="detecting_scenes">Re-run scene detection</option>
-                <option value="aligning_multimodal">Rebuild multimodal alignment</option>
-                <option value="transcribing">Re-run ASR</option>
-                <option value="diarizing">Re-run diarization</option>
-                <option value="all">Full rerun</option>
-              </select>`)}
-            ${knobField("sample_interval_sec", "Sample interval (s)", `<input id="sample_interval_sec" type="number" value="${esc(visual.sample_interval_sec ?? visualKnobValue("sample_interval_sec", 12))}" />`)}
-            ${knobField("scene_threshold", "Scene threshold", `<input id="scene_threshold" type="number" value="${esc(visual.scene_threshold ?? visualKnobValue("scene_threshold", 27))}" />`)}
-            ${knobField("similarity_threshold", "Similarity threshold", `<input id="similarity_threshold" type="number" step="0.01" value="${esc(visual.similarity_threshold ?? visualKnobValue("similarity_threshold", 0.92))}" />`)}
-            ${knobField("min_scene_duration_sec", "Min scene (s)", `<input id="min_scene_duration_sec" type="number" step="0.1" value="${esc(visual.min_scene_duration_sec ?? visualKnobValue("min_scene_duration_sec", 0.8))}" />`)}
-            ${knobField("context_before_sec", "Context before (s)", `<input id="context_before_sec" type="number" value="${esc(visual.context_before_sec ?? visualKnobValue("context_before_sec", 10))}" />`)}
-            ${knobField("context_after_sec", "Context after (s)", `<input id="context_after_sec" type="number" value="${esc(visual.context_after_sec ?? visualKnobValue("context_after_sec", 20))}" />`)}
-            ${knobField("vlm_keep_threshold", "VLM keep threshold", `<input id="vlm_keep_threshold" type="number" step="0.05" min="0" max="1" value="${esc(visual.vlm_keep_threshold ?? visualKnobValue("vlm_keep_threshold", 0.45))}" />`)}
-          </div>
-          <div class="actions">
-            <button class="btn primary" id="rerun">Queue rerun</button>
-            ${task.extract_keyframes || task.media_kind === "image" ? "" : `<button class="btn" id="extract-keyframes">Extract keyframes</button>`}
-          </div>
-        </div>
-        <div class="panel" id="summary-panel">
-          <strong>Summary</strong>
-          <p class="empty" style="padding:8px 0 10px">The pipeline writes a local qwen-3.8-27B 4bit thinking xhigh briefing by default. Use the model menu to regenerate with 8bit, thinking none, Gemini, or OpenAI.</p>
-          <label class="field">Model
-            <select id="summary-model">
-              <option value="all">Compare all available</option>
-              <option value="qwen">qwen-3.8-27B 4bit thinking none</option>
-              <option value="qwen-low">qwen-3.8-27B 4bit thinking low</option>
-              <option value="qwen-medium">qwen-3.8-27B 4bit thinking medium</option>
-              <option value="qwen-xhigh" selected>qwen-3.8-27B 4bit thinking xhigh</option>
-              <option value="qwen-8bit">qwen-3.8-27B 8bit thinking none</option>
-              <option value="qwen-8bit-low">qwen-3.8-27B 8bit thinking low</option>
-              <option value="qwen-8bit-medium">qwen-3.8-27B 8bit thinking medium</option>
-              <option value="qwen-8bit-xhigh">qwen-3.8-27B 8bit thinking xhigh</option>
-              <option value="gemini">Gemini</option>
-              <option value="openai">OpenAI</option>
-            </select>
-          </label>
-          <div class="actions">
-            <button class="btn primary" id="summarize">Regenerate summary</button>
-            <span class="worker-msg" id="summary-status"></span>
-          </div>
-          <label class="field" style="margin-top:12px">Prompt
-            <textarea id="summary-prompt" class="prompt" rows="12">${esc(defaultSummaryPrompt)}</textarea>
-          </label>
-        </div>
-        <details class="fold" id="fold-frames">
-          <summary>Candidate frames</summary>
-          <div class="fold-body">
-            <div class="grid" id="gallery"></div>
-          </div>
+        <p class="source-line" id="task-error"${task.error ? "" : " hidden"}>${esc(task.error || "")}</p>
+        <details class="fold" id="fold-summary" open>
+          <summary>
+            <span class="fold-title">Summary</span>
+            <button type="button" class="btn fold-copy" id="copy-summary" disabled>Copy</button>
+          </summary>
+          <div class="fold-body summary-md" id="summary-output"></div>
         </details>
         <details class="fold" id="fold-extracted">
           <summary>
@@ -1048,12 +998,74 @@
           </summary>
           <div class="fold-body note-md" id="extracted-output"></div>
         </details>
-        <details class="fold" id="fold-summary" hidden>
-          <summary>
-            <span class="fold-title">Summary</span>
-            <button type="button" class="btn fold-copy" id="copy-summary" disabled>Copy</button>
-          </summary>
-          <div class="fold-body summary-md" id="summary-output"></div>
+        <details class="fold" id="fold-stages"${stagesOpen}>
+          <summary><span class="fold-title">Stage</span></summary>
+          <div class="fold-body">
+            <div class="stages" id="stages">${stagesInner(task)}</div>
+          </div>
+        </details>
+        <details class="fold" id="rerun-panel">
+          <summary><span class="fold-title">Rerun a stage</span></summary>
+          <div class="fold-body">
+            <div class="fields" style="margin-top:10px">
+              ${knobField("stage", "Stage", `<select id="stage">
+                  <option value="summarizing">Re-run summary</option>
+                  <option value="filtering_frames">Re-run Qwen3.8 frame filter</option>
+                  <option value="deduplicating_frames">Re-run deduplication</option>
+                  <option value="sampling_frames">Re-run candidate generation</option>
+                  <option value="detecting_scenes">Re-run scene detection</option>
+                  <option value="aligning_multimodal">Rebuild multimodal alignment</option>
+                  <option value="transcribing">Re-run ASR</option>
+                  <option value="diarizing">Re-run diarization</option>
+                  <option value="all">Full rerun</option>
+                </select>`)}
+              ${knobField("sample_interval_sec", "Sample interval (s)", `<input id="sample_interval_sec" type="number" value="${esc(visual.sample_interval_sec ?? visualKnobValue("sample_interval_sec", 12))}" />`)}
+              ${knobField("scene_threshold", "Scene threshold", `<input id="scene_threshold" type="number" value="${esc(visual.scene_threshold ?? visualKnobValue("scene_threshold", 27))}" />`)}
+              ${knobField("similarity_threshold", "Similarity threshold", `<input id="similarity_threshold" type="number" step="0.01" value="${esc(visual.similarity_threshold ?? visualKnobValue("similarity_threshold", 0.92))}" />`)}
+              ${knobField("min_scene_duration_sec", "Min scene (s)", `<input id="min_scene_duration_sec" type="number" step="0.1" value="${esc(visual.min_scene_duration_sec ?? visualKnobValue("min_scene_duration_sec", 0.8))}" />`)}
+              ${knobField("context_before_sec", "Context before (s)", `<input id="context_before_sec" type="number" value="${esc(visual.context_before_sec ?? visualKnobValue("context_before_sec", 10))}" />`)}
+              ${knobField("context_after_sec", "Context after (s)", `<input id="context_after_sec" type="number" value="${esc(visual.context_after_sec ?? visualKnobValue("context_after_sec", 20))}" />`)}
+              ${knobField("vlm_keep_threshold", "VLM keep threshold", `<input id="vlm_keep_threshold" type="number" step="0.05" min="0" max="1" value="${esc(visual.vlm_keep_threshold ?? visualKnobValue("vlm_keep_threshold", 0.45))}" />`)}
+            </div>
+            <div class="actions">
+              <button class="btn primary" id="rerun">Queue rerun</button>
+              ${task.extract_keyframes || task.media_kind === "image" ? "" : `<button class="btn" id="extract-keyframes">Extract keyframes</button>`}
+            </div>
+          </div>
+        </details>
+        <details class="fold" id="summary-panel">
+          <summary><span class="fold-title">Summary Generation</span></summary>
+          <div class="fold-body">
+            <p class="empty" style="padding:8px 0 10px">The pipeline writes a local qwen-3.8-27B 4bit thinking xhigh briefing by default. Use the model menu to regenerate with 8bit, thinking none, Gemini, or OpenAI.</p>
+            <label class="field">Model
+              <select id="summary-model">
+                <option value="all">Compare all available</option>
+                <option value="qwen">qwen-3.8-27B 4bit thinking none</option>
+                <option value="qwen-low">qwen-3.8-27B 4bit thinking low</option>
+                <option value="qwen-medium">qwen-3.8-27B 4bit thinking medium</option>
+                <option value="qwen-xhigh" selected>qwen-3.8-27B 4bit thinking xhigh</option>
+                <option value="qwen-8bit">qwen-3.8-27B 8bit thinking none</option>
+                <option value="qwen-8bit-low">qwen-3.8-27B 8bit thinking low</option>
+                <option value="qwen-8bit-medium">qwen-3.8-27B 8bit thinking medium</option>
+                <option value="qwen-8bit-xhigh">qwen-3.8-27B 8bit thinking xhigh</option>
+                <option value="gemini">Gemini</option>
+                <option value="openai">OpenAI</option>
+              </select>
+            </label>
+            <div class="actions">
+              <button class="btn primary" id="summarize">Regenerate summary</button>
+              <span class="worker-msg" id="summary-status"></span>
+            </div>
+            <label class="field" style="margin-top:12px">Prompt
+              <textarea id="summary-prompt" class="prompt" rows="12">${esc(defaultSummaryPrompt)}</textarea>
+            </label>
+          </div>
+        </details>
+        <details class="fold" id="fold-frames">
+          <summary>Candidate frames</summary>
+          <div class="fold-body">
+            <div class="grid" id="gallery"></div>
+          </div>
         </details>
       `;
       document.getElementById("rerun").onclick = rerun;
@@ -1278,7 +1290,6 @@
       const statusEl = document.getElementById("summary-status");
       const button = document.getElementById("summarize");
       const promptEl = document.getElementById("summary-prompt");
-      const fold = document.getElementById("fold-summary");
       if (!output || !statusEl || !button || !promptEl) return;
       const status = summary.status || "idle";
       const running = status === "running";
@@ -1307,19 +1318,11 @@
         });
         summaryMarkdown = markdown || copyMarkdownFromRuns(runs);
       } else {
-        output.innerHTML = renderSummaryMarkdown(markdown);
+        output.innerHTML = renderSummaryMarkdown(markdown) || `<div class="empty">No summary yet.</div>`;
         summaryMarkdown = markdown;
       }
       const copyBtn = document.getElementById("copy-summary");
       if (copyBtn) copyBtn.disabled = !String(summaryMarkdown || "").trim();
-      if (fold) {
-        const show = Boolean(runs.length || markdown);
-        fold.hidden = !show;
-        if (show && !fold.dataset.seen) {
-          fold.open = true;
-          fold.dataset.seen = "1";
-        }
-      }
       const focused = document.activeElement === promptEl;
       const storedPrompt = canonicalPrompt(summary.prompt);
       if (!keepPrompt && !summaryPromptDirty && !focused && storedPrompt) {
