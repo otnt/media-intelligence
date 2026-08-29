@@ -41,8 +41,12 @@ ALL_BACKEND_KEYS = (
     *(item[0] for item in QWEN_8BIT_THINKING),
     "gemini",
     "openai",
+    "deepseek-v4-pro",
+    "qwen3.8-max",
 )
 THINKING_MAX_TOKENS = 8192
+DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+DEFAULT_QWEN_MAX_BASE_URL = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 _KEY_ALIASES = {
     "qwen3.8": "qwen",
     "local": "qwen",
@@ -62,6 +66,14 @@ _KEY_ALIASES = {
     "qwen-8bit-thinking-low": "qwen-8bit-low",
     "qwen-8bit-thinking-medium": "qwen-8bit-medium",
     "qwen-8bit-thinking-xhigh": "qwen-8bit-xhigh",
+    "deepseek": "deepseek-v4-pro",
+    "deepseek-pro": "deepseek-v4-pro",
+    "deepseek_v4_pro": "deepseek-v4-pro",
+    "deepseek-v4": "deepseek-v4-pro",
+    "qwen-max": "qwen3.8-max",
+    "qwen_max": "qwen3.8-max",
+    "qwen3.8max": "qwen3.8-max",
+    "qwen38-max": "qwen3.8-max",
 }
 _IMAGE_TYPES = {
     ".jpg": "image/jpeg",
@@ -140,6 +152,28 @@ def catalog_summary_backends(config: AppConfig, vision: object | None = None) ->
             openai_model,
             bool(openai_key),
             "" if openai_key else "set OPENAI_API_KEY",
+        )
+    )
+    deepseek_key = _deepseek_key(config)
+    deepseek_model = _deepseek_model(config)
+    rows.append(
+        _catalog_row(
+            "deepseek-v4-pro",
+            "DeepSeek V4 Pro (reasoning high)",
+            deepseek_model,
+            bool(deepseek_key),
+            "" if deepseek_key else "set DEEPSEEK_API_KEY",
+        )
+    )
+    qwen_max_key = _qwen_max_key(config)
+    qwen_max_model = _qwen_max_model(config)
+    rows.append(
+        _catalog_row(
+            "qwen3.8-max",
+            "Qwen3.8-Max (reasoning medium)",
+            qwen_max_model,
+            bool(qwen_max_key),
+            "" if qwen_max_key else "set DASHSCOPE_API_KEY or QWEN_API_KEY",
         )
     )
     return rows
@@ -235,6 +269,58 @@ def _available_backends(
                 model_id=model,
                 generate_fn=lambda prompt, images, max_tokens, _key=openai_key, _model=model: _openai_generate(
                     _key, _model, prompt, images, max_tokens
+                ),
+            )
+        )
+    deepseek_key = _deepseek_key(config)
+    if deepseek_key:
+        model = _deepseek_model(config)
+        base_url = _deepseek_base_url(config)
+        backends.append(
+            SummaryBackend(
+                key="deepseek-v4-pro",
+                label="DeepSeek V4 Pro (reasoning high)",
+                model_id=model,
+                generate_fn=lambda prompt, images, max_tokens, _key=deepseek_key, _model=model, _base=base_url: (
+                    _openai_compatible_generate(
+                        api_key=_key,
+                        model=_model,
+                        prompt=prompt,
+                        images=None,
+                        max_tokens=max(int(max_tokens or 0), THINKING_MAX_TOKENS),
+                        base_url=_base,
+                        extra={
+                            "reasoning_effort": "high",
+                            "thinking": {"type": "enabled"},
+                        },
+                        timeout=300,
+                    )
+                ),
+            )
+        )
+    qwen_max_key = _qwen_max_key(config)
+    if qwen_max_key:
+        model = _qwen_max_model(config)
+        base_url = _qwen_max_base_url(config)
+        backends.append(
+            SummaryBackend(
+                key="qwen3.8-max",
+                label="Qwen3.8-Max (reasoning medium)",
+                model_id=model,
+                generate_fn=lambda prompt, images, max_tokens, _key=qwen_max_key, _model=model, _base=base_url: (
+                    _openai_compatible_generate(
+                        api_key=_key,
+                        model=_model,
+                        prompt=prompt,
+                        images=None,
+                        max_tokens=max(int(max_tokens or 0), THINKING_MAX_TOKENS),
+                        base_url=_base,
+                        extra={
+                            "enable_thinking": True,
+                            "reasoning_effort": "medium",
+                        },
+                        timeout=300,
+                    )
                 ),
             )
         )
@@ -367,6 +453,48 @@ def _openai_key(config: AppConfig) -> str:
     return (config.summary.openai_api_key or os.environ.get("OPENAI_API_KEY") or "").strip()
 
 
+def _deepseek_key(config: AppConfig) -> str:
+    return (config.summary.deepseek_api_key or os.environ.get("DEEPSEEK_API_KEY") or "").strip()
+
+
+def _deepseek_model(config: AppConfig) -> str:
+    return str(getattr(config.summary, "deepseek_model", "") or "deepseek-v4-pro").strip()
+
+
+def _deepseek_base_url(config: AppConfig) -> str:
+    return str(
+        getattr(config.summary, "deepseek_base_url", "") or DEFAULT_DEEPSEEK_BASE_URL
+    ).strip().rstrip("/")
+
+
+def _qwen_max_key(config: AppConfig) -> str:
+    return (
+        config.summary.qwen_api_key
+        or os.environ.get("DASHSCOPE_API_KEY")
+        or os.environ.get("QWEN_API_KEY")
+        or ""
+    ).strip()
+
+
+def _qwen_max_model(config: AppConfig) -> str:
+    return str(getattr(config.summary, "qwen_max_model", "") or "qwen3.8-max").strip()
+
+
+def _qwen_max_base_url(config: AppConfig) -> str:
+    return str(
+        getattr(config.summary, "qwen_max_base_url", "") or DEFAULT_QWEN_MAX_BASE_URL
+    ).strip().rstrip("/")
+
+
+def _chat_completions_url(base_url: str) -> str:
+    root = (base_url or "").strip().rstrip("/")
+    if root.endswith("/chat/completions"):
+        return root
+    if root.endswith("/v1"):
+        return f"{root}/chat/completions"
+    return f"{root}/v1/chat/completions"
+
+
 def _gemini_generate(
     api_key: str,
     model: str,
@@ -406,6 +534,27 @@ def _openai_generate(
     images: list[Path] | None,
     max_tokens: int | None,
 ) -> str:
+    return _openai_compatible_generate(
+        api_key=api_key,
+        model=model,
+        prompt=prompt,
+        images=images,
+        max_tokens=max_tokens,
+        base_url="https://api.openai.com",
+    )
+
+
+def _openai_compatible_generate(
+    *,
+    api_key: str,
+    model: str,
+    prompt: str,
+    images: list[Path] | None,
+    max_tokens: int | None,
+    base_url: str,
+    extra: dict[str, Any] | None = None,
+    timeout: int = 120,
+) -> str:
     content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
     for path, mime, blob in _image_blobs(images):
         content.append(
@@ -414,28 +563,36 @@ def _openai_generate(
                 "image_url": {"url": f"data:{mime};base64,{blob}"},
             }
         )
-        logger.info("OpenAI summary attached %s", path.name)
-    payload = {
+        logger.info("%s summary attached %s", _host(base_url), path.name)
+    payload: dict[str, Any] = {
         "model": model,
         "max_tokens": int(max_tokens or 2048),
         "temperature": 0.3,
         "messages": [{"role": "user", "content": content}],
     }
+    if extra:
+        payload.update(extra)
     data = _json_post(
-        "https://api.openai.com/v1/chat/completions",
+        _chat_completions_url(base_url),
         payload,
         {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         },
+        timeout=timeout,
     )
     choices = data.get("choices") or []
     if not choices:
-        raise RuntimeError(str(data.get("error") or "OpenAI returned an empty summary"))
+        raise RuntimeError(str(data.get("error") or f"{_host(base_url)} returned an empty summary"))
     message = (choices[0] or {}).get("message") or {}
     text = str(message.get("content") or "").strip()
+    reasoning = str(message.get("reasoning_content") or "").strip()
+    if reasoning and text:
+        return f"<think>\n{reasoning}\n</think>\n\n{text}"
+    if reasoning:
+        return f"<think>\n{reasoning}\n</think>\n\n"
     if not text:
-        raise RuntimeError("OpenAI returned an empty summary")
+        raise RuntimeError(f"{_host(base_url)} returned an empty summary")
     return text
 
 

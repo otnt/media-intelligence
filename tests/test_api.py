@@ -557,6 +557,10 @@ def test_dashboard_and_frame_override(tmp_path: Path):
     assert "qwen-8bit-xhigh" in home.text
     assert "qwen-3.8-27B 4bit thinking xhigh" in home.text
     assert "qwen-3.8-27B 8bit thinking none" in home.text
+    assert "deepseek-v4-pro" in home.text
+    assert "qwen3.8-max" in home.text
+    assert "DeepSeek V4 Pro (reasoning high)" in home.text
+    assert "Qwen3.8-Max (reasoning medium)" in home.text
     assert "fold-frames" in home.text
     assert "Extract keyframes" in home.text
     assert "资深分析师" in home.text
@@ -651,6 +655,8 @@ def test_summary_models_endpoint(tmp_path: Path, monkeypatch):
         "qwen-8bit-xhigh",
         "gemini",
         "openai",
+        "deepseek-v4-pro",
+        "qwen3.8-max",
     }
     assert by_key["qwen"]["label"] == "qwen-3.8-27B 4bit thinking none"
     assert by_key["qwen-xhigh"]["label"] == "qwen-3.8-27B 4bit thinking xhigh"
@@ -658,8 +664,12 @@ def test_summary_models_endpoint(tmp_path: Path, monkeypatch):
     assert by_key["qwen-8bit-xhigh"]["label"] == "qwen-3.8-27B 8bit thinking xhigh"
     assert by_key["gemini"]["available"] is False
     assert by_key["openai"]["available"] is False
+    assert by_key["deepseek-v4-pro"]["available"] is False
+    assert by_key["qwen3.8-max"]["available"] is False
     assert "GEMINI_API_KEY" in by_key["gemini"]["detail"]
     assert "OPENAI_API_KEY" in by_key["openai"]["detail"]
+    assert "DEEPSEEK_API_KEY" in by_key["deepseek-v4-pro"]["detail"]
+    assert "DASHSCOPE_API_KEY" in by_key["qwen3.8-max"]["detail"]
 
 
 def test_attachment_endpoint_serves_vault_and_video_images(tmp_path: Path):

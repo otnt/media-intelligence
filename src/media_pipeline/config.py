@@ -193,8 +193,14 @@ class SummaryConfig:
     qwen_8bit_model: str = DEFAULT_QWEN_8BIT_MODEL
     gemini_model: str = "gemini-2.5-flash"
     openai_model: str = "gpt-4.1-mini"
+    deepseek_model: str = "deepseek-v4-pro"
+    deepseek_base_url: str = "https://api.deepseek.com"
+    qwen_max_model: str = "qwen3.8-max"
+    qwen_max_base_url: str = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
     gemini_api_key: str = ""
     openai_api_key: str = ""
+    deepseek_api_key: str = ""
+    qwen_api_key: str = ""
     prompt: str = ""
 
 
@@ -335,6 +341,15 @@ def load_config(path: Path | None = None) -> AppConfig:
             qwen_8bit_model=str(summary_raw.get("qwen_8bit_model") or DEFAULT_QWEN_8BIT_MODEL),
             gemini_model=str(summary_raw.get("gemini_model") or "gemini-2.5-flash"),
             openai_model=str(summary_raw.get("openai_model") or "gpt-4.1-mini"),
+            deepseek_model=str(summary_raw.get("deepseek_model") or "deepseek-v4-pro"),
+            deepseek_base_url=str(
+                summary_raw.get("deepseek_base_url") or "https://api.deepseek.com"
+            ).rstrip("/"),
+            qwen_max_model=str(summary_raw.get("qwen_max_model") or "qwen3.8-max"),
+            qwen_max_base_url=str(
+                summary_raw.get("qwen_max_base_url")
+                or "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+            ).rstrip("/"),
             gemini_api_key=str(
                 summary_raw.get("gemini_api_key")
                 or os.environ.get("GEMINI_API_KEY")
@@ -343,6 +358,16 @@ def load_config(path: Path | None = None) -> AppConfig:
             ).strip(),
             openai_api_key=str(
                 summary_raw.get("openai_api_key") or os.environ.get("OPENAI_API_KEY") or ""
+            ).strip(),
+            deepseek_api_key=str(
+                summary_raw.get("deepseek_api_key") or os.environ.get("DEEPSEEK_API_KEY") or ""
+            ).strip(),
+            qwen_api_key=str(
+                summary_raw.get("qwen_api_key")
+                or summary_raw.get("qwen_max_api_key")
+                or os.environ.get("DASHSCOPE_API_KEY")
+                or os.environ.get("QWEN_API_KEY")
+                or ""
             ).strip(),
             prompt=str(summary_raw.get("prompt") or "").strip(),
         ),
@@ -370,6 +395,13 @@ def _summary_providers(value: Any) -> list[str]:
         names = [str(part).strip().lower() for part in value if str(part).strip()]
     else:
         names = list(DEFAULT_SUMMARY_PROVIDERS)
+    aliases = {
+        "qwen3.8": "qwen",
+        "local": "qwen",
+        "deepseek": "deepseek-v4-pro",
+        "deepseek-pro": "deepseek-v4-pro",
+        "qwen-max": "qwen3.8-max",
+    }
     known = {
         "qwen",
         "qwen-low",
@@ -381,13 +413,13 @@ def _summary_providers(value: Any) -> list[str]:
         "qwen-8bit-xhigh",
         "gemini",
         "openai",
+        "deepseek-v4-pro",
+        "qwen3.8-max",
         "all",
-        "qwen3.8",
-        "local",
     }
     cleaned: list[str] = []
     for name in names:
-        key = "qwen" if name in {"qwen3.8", "local"} else name
+        key = aliases.get(name, name)
         if key in known and key not in cleaned:
             cleaned.append(key)
     return cleaned or list(DEFAULT_SUMMARY_PROVIDERS)

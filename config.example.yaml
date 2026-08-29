@@ -57,14 +57,22 @@ analysis:
 
 summary:
   # Pipeline default is qwen-3.8-27B 4bit thinking xhigh. Use qwen for thinking none.
-  # Add gemini/openai to auto-compare every job. Dashboard can still pick 8bit Qwen or other models on one note.
+  # Add gemini/openai/deepseek-v4-pro/qwen3.8-max to auto-compare. Dashboard can still pick per note.
   providers: [qwen-xhigh]
   qwen_8bit_model: mlx-community/Qwen3.8-27B-8bit
   gemini_model: gemini-2.5-flash
   openai_model: gpt-4.1-mini
-  # Prefer env vars GEMINI_API_KEY / GOOGLE_API_KEY and OPENAI_API_KEY instead of putting keys here.
+  deepseek_model: deepseek-v4-pro
+  deepseek_base_url: https://api.deepseek.com
+  qwen_max_model: qwen3.8-max
+  # International DashScope. Mainland China often uses https://dashscope.aliyuncs.com/compatible-mode/v1
+  qwen_max_base_url: https://dashscope-intl.aliyuncs.com/compatible-mode/v1
+  # Prefer env vars instead of putting keys here:
+  # GEMINI_API_KEY / GOOGLE_API_KEY, OPENAI_API_KEY, DEEPSEEK_API_KEY, DASHSCOPE_API_KEY (or QWEN_API_KEY)
   gemini_api_key: ""
   openai_api_key: ""
+  deepseek_api_key: ""
+  qwen_api_key: ""
   # Dashboard Settings writes this. Empty uses the built-in analyst briefing prompt.
   prompt: ""
 

@@ -90,6 +90,9 @@ def test_catalog_marks_cloud_unavailable_without_keys(monkeypatch):
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
+    monkeypatch.delenv("QWEN_API_KEY", raising=False)
     rows = catalog_summary_backends(AppConfig(), FakeVision())
     by_key = {item["key"]: item for item in rows}
     assert by_key["qwen"]["available"] is True
@@ -98,6 +101,10 @@ def test_catalog_marks_cloud_unavailable_without_keys(monkeypatch):
     assert by_key["qwen-xhigh"]["available"] is True
     assert by_key["gemini"]["available"] is False
     assert by_key["openai"]["available"] is False
+    assert by_key["deepseek-v4-pro"]["available"] is False
+    assert by_key["qwen3.8-max"]["available"] is False
+    assert "DEEPSEEK_API_KEY" in by_key["deepseek-v4-pro"]["detail"]
+    assert "DASHSCOPE_API_KEY" in by_key["qwen3.8-max"]["detail"]
 
 
 def test_resolve_all_uses_only_available_backends(monkeypatch):
@@ -349,6 +356,72 @@ def test_openai_generate_reads_message(monkeypatch):
     monkeypatch.setattr("media_pipeline.summary_llm.urllib.request.urlopen", lambda *args, **kwargs: FakeResp())
     text = _openai_generate("sk-test", "gpt-4.1-mini", "hello", [], 128)
     assert text == "OpenAI briefing"
+
+
+def test_openai_compatible_packs_reasoning_content(monkeypatch):
+    from media_pipeline.summary_llm import _openai_compatible_generate
+
+    captured = {}
+
+    class FakeResp:
+        def read(self):
+            return json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "reasoning_content": "step by step",
+                                "content": "final answer",
+                            }
+                        }
+                    ]
+                }
+            ).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    def fake_open(request, timeout=0):
+        captured["url"] = request.full_url
+        captured["body"] = json.loads(request.data.decode())
+        return FakeResp()
+
+    monkeypatch.setattr("media_pipeline.summary_llm.urllib.request.urlopen", fake_open)
+    text = _openai_compatible_generate(
+        api_key="sk-test",
+        model="deepseek-v4-pro",
+        prompt="hello",
+        images=None,
+        max_tokens=128,
+        base_url="https://api.deepseek.com",
+        extra={"reasoning_effort": "high", "thinking": {"type": "enabled"}},
+    )
+    assert "<think>" in text
+    assert "step by step" in text
+    assert "final answer" in text
+    assert captured["url"] == "https://api.deepseek.com/v1/chat/completions"
+    assert captured["body"]["reasoning_effort"] == "high"
+    assert captured["body"]["thinking"] == {"type": "enabled"}
+
+
+def test_resolve_deepseek_and_qwen_max(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-secret")
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "qw-secret")
+    config = AppConfig(
+        summary=SummaryConfig(
+            deepseek_api_key="ds-secret",
+            qwen_api_key="qw-secret",
+        )
+    )
+    deepseek = resolve_summary_backends(config, None, "deepseek-v4-pro")
+    assert [item.key for item in deepseek] == ["deepseek-v4-pro"]
+    assert deepseek[0].label == "DeepSeek V4 Pro (reasoning high)"
+    qwen_max = resolve_summary_backends(config, None, "qwen3.8-max")
+    assert [item.key for item in qwen_max] == ["qwen3.8-max"]
+    assert qwen_max[0].label == "Qwen3.8-Max (reasoning medium)"
 
 
 def test_redact_secrets_strips_bearer_tokens():
