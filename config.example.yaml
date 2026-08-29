@@ -65,8 +65,12 @@ summary:
   deepseek_model: deepseek-v4-pro
   deepseek_base_url: https://api.deepseek.com
   qwen_max_model: qwen3.8-max
-  # International DashScope. Mainland China often uses https://dashscope.aliyuncs.com/compatible-mode/v1
-  qwen_max_base_url: https://dashscope-intl.aliyuncs.com/compatible-mode/v1
+  # DashScope / Model Studio keys are region-specific. Match base_url to where the key was issued:
+  # Mainland China: https://dashscope.aliyuncs.com/compatible-mode/v1
+  # Singapore intl: https://dashscope-intl.aliyuncs.com/compatible-mode/v1
+  # US (Virginia):  https://dashscope-us.aliyuncs.com/compatible-mode/v1
+  # A key from one region on another region's host returns HTTP 401 invalid_api_key.
+  qwen_max_base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
   # Prefer env vars instead of putting keys here:
   # GEMINI_API_KEY / GOOGLE_API_KEY, OPENAI_API_KEY, DEEPSEEK_API_KEY, DASHSCOPE_API_KEY (or QWEN_API_KEY)
   gemini_api_key: ""

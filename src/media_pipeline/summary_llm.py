@@ -46,7 +46,10 @@ ALL_BACKEND_KEYS = (
 )
 THINKING_MAX_TOKENS = 8192
 DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com"
-DEFAULT_QWEN_MAX_BASE_URL = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+# Mainland China DashScope default. Match key region:
+# Singapore intl: https://dashscope-intl.aliyuncs.com/compatible-mode/v1
+# US (Virginia):  https://dashscope-us.aliyuncs.com/compatible-mode/v1
+DEFAULT_QWEN_MAX_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 _KEY_ALIASES = {
     "qwen3.8": "qwen",
     "local": "qwen",

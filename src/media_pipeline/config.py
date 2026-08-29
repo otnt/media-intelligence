@@ -196,7 +196,9 @@ class SummaryConfig:
     deepseek_model: str = "deepseek-v4-pro"
     deepseek_base_url: str = "https://api.deepseek.com"
     qwen_max_model: str = "qwen3.8-max"
-    qwen_max_base_url: str = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+    # Mainland China DashScope default. Match key region:
+    # Singapore intl: dashscope-intl.aliyuncs.com; US (Virginia): dashscope-us.aliyuncs.com
+    qwen_max_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     gemini_api_key: str = ""
     openai_api_key: str = ""
     deepseek_api_key: str = ""
@@ -348,7 +350,7 @@ def load_config(path: Path | None = None) -> AppConfig:
             qwen_max_model=str(summary_raw.get("qwen_max_model") or "qwen3.8-max"),
             qwen_max_base_url=str(
                 summary_raw.get("qwen_max_base_url")
-                or "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+                or "https://dashscope.aliyuncs.com/compatible-mode/v1"
             ).rstrip("/"),
             gemini_api_key=str(
                 summary_raw.get("gemini_api_key")
