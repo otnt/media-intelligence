@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -589,6 +590,37 @@ def _enqueue_share(
     }
 
 
+_INGEST_PROXY_HEADERS = (
+    "x-forwarded-for",
+    "x-forwarded-proto",
+    "x-forwarded-host",
+    "forwarded",
+    "tailscale-user-login",
+    "tailscale-user-name",
+    "tailscale-headers-info",
+)
+
+
+def _is_direct_loopback(request: Request) -> bool:
+    """True only for a process on this Mac talking to loopback, not Tailscale Serve."""
+    host = (request.client.host if request.client else "") or ""
+    if not _is_loopback_host(host):
+        return False
+    for header in _INGEST_PROXY_HEADERS:
+        if request.headers.get(header):
+            return False
+    return True
+
+
+def _is_loopback_host(host: str) -> bool:
+    if host in {"localhost"}:
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 def _authorize_ingest(
     config: AppConfig,
     request: Request,
@@ -598,8 +630,7 @@ def _authorize_ingest(
     expected = (config.server.ingest_token or "").strip()
     if not expected:
         return
-    host = (request.client.host if request.client else "") or ""
-    if host in {"127.0.0.1", "::1", "localhost"}:
+    if _is_direct_loopback(request):
         return
     provided = (x_ingest_token or "").strip()
     if authorization and authorization.lower().startswith("bearer "):

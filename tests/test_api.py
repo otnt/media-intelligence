@@ -210,6 +210,96 @@ def test_create_task_requires_ingest_token_for_remote_clients(tmp_path: Path):
     assert allowed.status_code == 202
 
 
+def test_create_task_allows_localhost_without_ingest_token(tmp_path: Path):
+    from media_pipeline.config import ServerConfig
+
+    config = AppConfig(
+        server=ServerConfig(ingest_token="secret-token"),
+        paths=PathsConfig(
+            videos=tmp_path / "videos",
+            audio=tmp_path / "audio",
+            artifacts=tmp_path / "artifacts",
+            logs=tmp_path / "logs",
+            vault=tmp_path / "vault",
+            db=tmp_path / "tasks.sqlite3",
+        ),
+    )
+    config.ensure_directories()
+    client = TestClient(
+        create_app(config, store=TaskStore(config.paths.db), worker=DummyWorker()),
+        client=("127.0.0.1", 50000),
+    )
+    allowed = client.post("/v1/tasks", json={"url": "http://xhslink.com/o/2x5jqGA2hr6"})
+    assert allowed.status_code == 202
+
+
+def test_create_task_requires_ingest_token_for_tailscale_ip(tmp_path: Path):
+    from media_pipeline.config import ServerConfig
+
+    config = AppConfig(
+        server=ServerConfig(ingest_token="secret-token"),
+        paths=PathsConfig(
+            videos=tmp_path / "videos",
+            audio=tmp_path / "audio",
+            artifacts=tmp_path / "artifacts",
+            logs=tmp_path / "logs",
+            vault=tmp_path / "vault",
+            db=tmp_path / "tasks.sqlite3",
+        ),
+    )
+    config.ensure_directories()
+    client = TestClient(
+        create_app(config, store=TaskStore(config.paths.db), worker=DummyWorker()),
+        client=("100.64.1.8", 50000),
+    )
+    denied = client.post("/v1/tasks", json={"url": "http://xhslink.com/o/2x5jqGA2hr6"})
+    assert denied.status_code == 401
+    allowed = client.post(
+        "/v1/tasks",
+        json={"url": "http://xhslink.com/o/2x5jqGA2hr6"},
+        headers={"X-Ingest-Token": "secret-token"},
+    )
+    assert allowed.status_code == 202
+
+
+def test_create_task_requires_ingest_token_for_tailscale_serve_proxy(tmp_path: Path):
+    from media_pipeline.config import ServerConfig
+
+    config = AppConfig(
+        server=ServerConfig(ingest_token="secret-token"),
+        paths=PathsConfig(
+            videos=tmp_path / "videos",
+            audio=tmp_path / "audio",
+            artifacts=tmp_path / "artifacts",
+            logs=tmp_path / "logs",
+            vault=tmp_path / "vault",
+            db=tmp_path / "tasks.sqlite3",
+        ),
+    )
+    config.ensure_directories()
+    client = TestClient(
+        create_app(config, store=TaskStore(config.paths.db), worker=DummyWorker()),
+        client=("127.0.0.1", 50000),
+    )
+    denied = client.post(
+        "/v1/tasks",
+        json={"url": "http://xhslink.com/o/2x5jqGA2hr6"},
+        headers={"X-Forwarded-For": "100.64.1.8", "X-Forwarded-Proto": "https"},
+    )
+    assert denied.status_code == 401
+    allowed = client.post(
+        "/v1/tasks",
+        json={"url": "http://xhslink.com/o/2x5jqGA2hr6"},
+        headers={
+            "X-Forwarded-For": "100.64.1.8",
+            "X-Forwarded-Proto": "https",
+            "Tailscale-User-Login": "user@example.com",
+            "X-Ingest-Token": "secret-token",
+        },
+    )
+    assert allowed.status_code == 202
+
+
 def test_create_task_requires_ingest_token_for_tailscale_clients():
     from fastapi import HTTPException
     from starlette.requests import Request

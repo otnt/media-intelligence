@@ -114,27 +114,38 @@ def cmd_serve(
     import uvicorn
 
     from media_pipeline.api import create_app
+    from media_pipeline.config import ensure_ingest_token
 
     host = host or ("0.0.0.0" if lan else config.server.host)
     port = port or config.server.port
-    print(f"API:       http://{host}:{port}/v1/health")
-    print(f"Dashboard: http://{host}:{port}/")
-    lan_ip = _lan_ipv4() if host in {"0.0.0.0", "::"} else None
-    if lan_ip:
-        print(f"Phone:     http://{lan_ip}:{port}/v1/inbox?url=")
-        if not config.server.ingest_token:
-            print("Ingest:    set server.ingest_token before exposing the API on your LAN")
+    created_token = None
+    if lan or tailscale:
+        created_token = ensure_ingest_token(config)
+    published = None
     if tailscale:
         from media_pipeline.tailscale import publish_local_http
 
         published = publish_local_http(port)
         if not published.ok:
-            print(published.detail, file=sys.stderr)
+            print(f"Tailscale: {published.detail}", file=sys.stderr)
             return 1
-        print(f"Tailscale: {published.url}")
-        print(f"Phone:     {published.url}")
-        if not config.server.ingest_token:
-            print("Ingest:    set server.ingest_token before exposing the API on Tailscale")
+    print(f"API:       http://{host}:{port}/v1/health")
+    print(f"Dashboard: http://{host}:{port}/")
+    lan_ip = _lan_ipv4() if host in {"0.0.0.0", "::"} else None
+    if lan_ip:
+        print(f"Phone:     http://{lan_ip}:{port}/")
+        print(f"Inbox:     http://{lan_ip}:{port}/v1/inbox?url=")
+    if published and published.url:
+        print(f"Phone/Tailscale: {published.url}")
+        print(f"Inbox/Tailscale: {published.url.rstrip('/')}/v1/inbox?url=")
+    if created_token:
+        print("Ingest:    created server.ingest_token (save this for Shortcuts; shown once)")
+        print(f"           {created_token}")
+        print("           Send as X-Ingest-Token, Authorization: Bearer, or ?token= on /v1/inbox")
+    elif (lan or tailscale) and config.server.ingest_token:
+        print("Ingest:    send X-Ingest-Token (or ?token=) from Shortcuts; localhost dashboard is exempt")
+    elif lan and not config.server.ingest_token:
+        print("Ingest:    set server.ingest_token before exposing the API on your LAN")
     app = create_app(config)
     http_impl = "h11"
     try:

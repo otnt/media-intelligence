@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import secrets
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,7 @@ _WORKER_BLOCK_RE = re.compile(r"(?m)^worker:\n(?:(?:[ \t]+.*|[ \t]*)\n)*")
 _DASHBOARD_BLOCK_RE = re.compile(r"(?m)^dashboard:\n(?:(?:[ \t]+.*|[ \t]*)\n)*")
 _VISUAL_BLOCK_RE = re.compile(r"(?m)^visual:\n(?:(?:[ \t]+.*|[ \t]*)\n)*")
 _SUMMARY_BLOCK_RE = re.compile(r"(?m)^summary:\n(?:(?:[ \t]+.*|[ \t]*)\n)*")
+_SERVER_BLOCK_RE = re.compile(r"(?m)^server:\n(?:(?:[ \t]+.*|[ \t]*)\n)*")
 
 
 @dataclass
@@ -434,6 +436,35 @@ def persist_summary_prompt(config: AppConfig) -> None:
     else:
         updated = text.rstrip() + "\n\nsummary:\n" + line
     path.write_text(updated, encoding="utf-8")
+
+
+def persist_ingest_token(config: AppConfig) -> None:
+    path = config.source_path
+    if path is None or not path.exists():
+        return
+    token = str(config.server.ingest_token or "").strip()
+    line = f"  ingest_token: {yaml_quote(token)}\n"
+    text = path.read_text(encoding="utf-8")
+    match = _SERVER_BLOCK_RE.search(text)
+    if match:
+        updated = (
+            text[: match.start()]
+            + _upsert_indented_key(match.group(0), "ingest_token", line)
+            + text[match.end() :]
+        )
+    else:
+        updated = text.rstrip() + "\n\nserver:\n" + line
+    path.write_text(updated, encoding="utf-8")
+
+
+def ensure_ingest_token(config: AppConfig) -> str | None:
+    """Create and persist ingest_token if missing. Returns the new token, else None."""
+    if str(config.server.ingest_token or "").strip():
+        return None
+    token = secrets.token_urlsafe(24)
+    config.server.ingest_token = token
+    persist_ingest_token(config)
+    return token
 
 
 def _persist_named_block(config: AppConfig, pattern: re.Pattern[str], block: str) -> None:
