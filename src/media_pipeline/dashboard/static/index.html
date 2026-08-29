@@ -114,6 +114,36 @@
     .chip.ok { color: var(--keep); }
     .chip.bad { color: var(--drop); }
     .chip-link { max-width: min(100%, 42rem); overflow-wrap: anywhere; }
+    .tag-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: -6px 0 16px; }
+    .tag-chip {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: #1a2230; border: 1px solid var(--line); border-radius: 999px;
+      padding: 3px 6px 3px 10px; color: var(--text); font-size: 12px;
+    }
+    .tag-chip button {
+      border: 0; background: transparent; color: var(--muted); cursor: pointer;
+      padding: 0 4px; font-size: 14px; line-height: 1;
+    }
+    .tag-chip button:hover { color: var(--drop); }
+    .tag-add-wrap { position: relative; display: inline-flex; }
+    .tag-picker {
+      position: absolute; top: calc(100% + 6px); left: 0; z-index: 20;
+      min-width: min(280px, 80vw); max-width: 320px;
+      background: #151a24; border: 1px solid var(--line); border-radius: 10px;
+      padding: 10px; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+    }
+    .tag-picker[hidden] { display: none; }
+    .tag-picker input {
+      width: 100%; box-sizing: border-box; background: #10141c; color: var(--text);
+      border: 1px solid var(--line); border-radius: 8px; padding: 7px 8px; margin-bottom: 8px;
+    }
+    .tag-picker-list { display: flex; flex-direction: column; gap: 2px; max-height: 160px; overflow: auto; }
+    .tag-picker-list button {
+      text-align: left; border: 0; background: transparent; color: var(--text);
+      padding: 7px 8px; border-radius: 6px; cursor: pointer; font-size: 13px;
+    }
+    .tag-picker-list button:hover { background: #222836; }
+    .tag-picker-empty { color: var(--muted); font-size: 12px; padding: 4px 2px; }
     .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }
     .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
     .card img { width: 100%; aspect-ratio: 16/9; object-fit: cover; background: #0b0d12; display: block; }
@@ -433,6 +463,11 @@
               <option value="title">Title</option>
             </select>
           </label>
+          <label class="field">Tag
+            <select id="list-tag">
+              <option value="" selected>All tags</option>
+            </select>
+          </label>
         </div>
         <div class="list" id="tasks"></div>
       </aside>
@@ -493,6 +528,7 @@
     const listFilterDateWrap = document.getElementById("list-filter-date-wrap");
     const listGroupEl = document.getElementById("list-group");
     const listOrderEl = document.getElementById("list-order");
+    const listTagEl = document.getElementById("list-tag");
     const NAMED_FILTERS = new Set(["today", "yesterday", "7d", "all"]);
     const sidebarEl = document.getElementById("sidebar-drawer");
     const sidebarBackdrop = document.getElementById("sidebar-backdrop");
@@ -500,6 +536,7 @@
     const closeSidebarBtn = document.getElementById("close-sidebar");
     const mobileLayoutMq = window.matchMedia("(max-width: 899px)");
     let tasks = [];
+    let knownTags = [];
     let selectedId = new URLSearchParams(location.search).get("task");
     let debug = null;
     let summaryPromptDirty = false;
@@ -542,6 +579,7 @@
       await loadHealth();
       await loadWorker();
       await loadOrganize();
+      await loadKnownTags();
       await loadTasks();
       if (selectedId) await openTask(selectedId);
       setInterval(() => { loadTasks(); loadWorker(); refreshSelected(); }, 4000);
@@ -549,6 +587,7 @@
       if (listFilterDateEl) listFilterDateEl.onchange = saveOrganize;
       listGroupEl.onchange = saveOrganize;
       listOrderEl.onchange = saveOrganize;
+      if (listTagEl) listTagEl.onchange = () => { loadTasks(); };
       if (listFilterDateEl && !listFilterDateEl.value) listFilterDateEl.value = localStampDate();
     }
 
@@ -909,6 +948,8 @@
         group: listGroupEl.value,
         order: listOrderEl.value,
       });
+      const tag = listTagEl && listTagEl.value ? listTagEl.value : "";
+      if (tag) query.set("tag", tag);
       const data = await api(`/v1/tasks?${query}`);
       tasks = data.tasks || [];
       const groups = Array.isArray(data.groups) ? data.groups : [{ key: "all", label: "", tasks }];
@@ -921,11 +962,36 @@
           : "";
         return `<div class="task-block">${heading}${rows}</div>`;
       }).join("");
-      const empty = emptyListMessage(filter);
+      const empty = emptyListMessage(filter, tag);
       tasksEl.innerHTML = html || empty;
       tasksEl.querySelectorAll(".task").forEach((button) => {
         button.onclick = () => openTask(button.dataset.id);
       });
+    }
+
+    async function loadKnownTags() {
+      try {
+        const data = await api("/v1/tags");
+        knownTags = Array.isArray(data.tags) ? data.tags : [];
+      } catch (_error) {
+        knownTags = [];
+      }
+      fillTagFilterOptions();
+    }
+
+    function fillTagFilterOptions() {
+      if (!listTagEl) return;
+      const current = listTagEl.value || "";
+      const options = [`<option value="">All tags</option>`].concat(
+        knownTags.map((tag) => `<option value="${esc(tag)}">${esc(tag)}</option>`),
+      );
+      listTagEl.innerHTML = options.join("");
+      if (current && knownTags.some((tag) => tag.toLowerCase() === current.toLowerCase())) {
+        const match = knownTags.find((tag) => tag.toLowerCase() === current.toLowerCase());
+        listTagEl.value = match || "";
+      } else {
+        listTagEl.value = "";
+      }
     }
 
     function taskButton(task, today) {
@@ -951,7 +1017,10 @@
       return `${now.getFullYear()}-${month}-${day}`;
     }
 
-    function emptyListMessage(filter) {
+    function emptyListMessage(filter, tag) {
+      if (tag) {
+        return `<div class="empty">No extracts with tag “${esc(tag)}” for this filter. Clear the tag filter or switch date filter.</div>`;
+      }
       if (filter === "today") {
         return `<div class="empty">No extracts today. Switch filter to All to see older requests.</div>`;
       }
@@ -1018,6 +1087,12 @@
         errorLine.textContent = debug.error || "";
         errorLine.hidden = !debug.error;
       }
+      const tagsEl = document.getElementById("task-tags");
+      const pickerOpen = Boolean(document.getElementById("tag-picker") && !document.getElementById("tag-picker").hidden);
+      if (tagsEl && !pickerOpen && !tagsEl.contains(document.activeElement)) {
+        tagsEl.innerHTML = tagRowHtml(debug.tags || []);
+        bindTagControls();
+      }
       if (!rerunPanelBusy()) {
         const gallery = document.getElementById("gallery");
         const decisions = debug.decisions || [];
@@ -1039,6 +1114,103 @@
       return Boolean(panel.querySelector(".help:hover, .field:hover"));
     }
 
+    function normalizeTagClient(value) {
+      return String(value || "").replace(/\s+/g, " ").trim().slice(0, 40);
+    }
+
+    function tagRowHtml(tags) {
+      const chips = (tags || []).map((tag) => `
+        <span class="tag-chip">
+          <span>${esc(tag)}</span>
+          <button type="button" data-remove-tag="${esc(tag)}" aria-label="Remove tag ${esc(tag)}">×</button>
+        </span>`).join("");
+      return `${chips}
+        <div class="tag-add-wrap">
+          <button type="button" class="btn" id="add-tag-btn">Add tag</button>
+          <div class="tag-picker" id="tag-picker" hidden>
+            <input id="tag-input" type="text" maxlength="40" placeholder="New or existing tag" autocomplete="off" list="tag-suggestions" />
+            <datalist id="tag-suggestions"></datalist>
+            <div class="tag-picker-list" id="tag-picker-list"></div>
+          </div>
+        </div>`;
+    }
+
+    function bindTagControls() {
+      const addBtn = document.getElementById("add-tag-btn");
+      const picker = document.getElementById("tag-picker");
+      const input = document.getElementById("tag-input");
+      const list = document.getElementById("tag-picker-list");
+      const suggestions = document.getElementById("tag-suggestions");
+      if (!addBtn || !picker || !input || !list) return;
+      const current = new Set((debug && debug.tags || []).map((tag) => String(tag).toLowerCase()));
+      const prior = knownTags.filter((tag) => !current.has(String(tag).toLowerCase()));
+      if (suggestions) {
+        suggestions.innerHTML = prior.map((tag) => `<option value="${esc(tag)}"></option>`).join("");
+      }
+      list.innerHTML = prior.length
+        ? prior.map((tag) => `<button type="button" data-pick-tag="${esc(tag)}">${esc(tag)}</button>`).join("")
+        : `<div class="tag-picker-empty">No previous tags yet. Type a new one and press Enter.</div>`;
+      addBtn.onclick = () => {
+        const open = picker.hidden;
+        picker.hidden = !open;
+        if (open) {
+          input.value = "";
+          input.focus();
+        }
+      };
+      list.querySelectorAll("[data-pick-tag]").forEach((button) => {
+        button.onclick = () => addTagToTask(button.dataset.pickTag);
+      });
+      input.onkeydown = (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          addTagToTask(input.value);
+        } else if (event.key === "Escape") {
+          picker.hidden = true;
+        }
+      };
+      document.querySelectorAll("[data-remove-tag]").forEach((button) => {
+        button.onclick = () => removeTagFromTask(button.dataset.removeTag);
+      });
+    }
+
+    async function saveTaskTags(tags) {
+      if (!debug || !debug.id) return;
+      const payload = await api(`/v1/tasks/${debug.id}/tags`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tags }),
+      });
+      debug.tags = payload.tags || [];
+      const tagsEl = document.getElementById("task-tags");
+      if (tagsEl) {
+        tagsEl.innerHTML = tagRowHtml(debug.tags);
+        bindTagControls();
+      }
+      await loadKnownTags();
+      await loadTasks();
+    }
+
+    async function addTagToTask(raw) {
+      const tag = normalizeTagClient(raw);
+      if (!tag || !debug) return;
+      const next = [...(debug.tags || [])];
+      if (next.some((item) => String(item).toLowerCase() === tag.toLowerCase())) {
+        const picker = document.getElementById("tag-picker");
+        if (picker) picker.hidden = true;
+        return;
+      }
+      next.push(tag);
+      await saveTaskTags(next);
+    }
+
+    async function removeTagFromTask(raw) {
+      const tag = normalizeTagClient(raw);
+      if (!tag || !debug) return;
+      const next = (debug.tags || []).filter((item) => String(item).toLowerCase() !== tag.toLowerCase());
+      await saveTaskTags(next);
+    }
+
     function renderDetail() {
       const task = debug;
       const visual = { ...visualDefaults, ...(task.visual || {}) };
@@ -1051,6 +1223,7 @@
           <span class="chip" id="task-status">${esc(task.status)}</span>
           <span class="chip chip-link" id="task-source-link">${sourceLinkHtml(task.url)}</span>
         </div>
+        <div class="tag-row" id="task-tags">${tagRowHtml(task.tags || [])}</div>
         <p class="source-line" id="task-error"${task.error ? "" : " hidden"}>${esc(task.error || "")}</p>
         <details class="fold" id="fold-summary" open>
           <summary>
@@ -1142,6 +1315,7 @@
       const extractBtn = document.getElementById("extract-keyframes");
       if (extractBtn) extractBtn.onclick = extractKeyframes;
       document.getElementById("summarize").onclick = summarize;
+      bindTagControls();
       bindCopyButton("copy-extracted", () => extractedMarkdown);
       bindCopyButton("copy-summary", () => summaryMarkdown);
       const promptEl = document.getElementById("summary-prompt");

@@ -874,3 +874,44 @@ def test_update_visual_and_summary_settings(tmp_path: Path):
     assert invalid.status_code == 422
 
 
+def test_task_tags_api_and_list_filter(tmp_path: Path):
+    config = AppConfig(
+        paths=PathsConfig(
+            videos=tmp_path / "videos",
+            audio=tmp_path / "audio",
+            artifacts=tmp_path / "artifacts",
+            logs=tmp_path / "logs",
+            vault=tmp_path / "vault",
+            db=tmp_path / "tasks.sqlite3",
+        )
+    )
+    config.ensure_directories()
+    store = TaskStore(config.paths.db)
+    client = TestClient(create_app(config, store=store, worker=DummyWorker()))
+    first = client.post(
+        "/v1/tasks",
+        json={"url": "https://www.youtube.com/watch?v=dQw4w9wgGcQ", "asr_model": "whisper-large-v3-turbo"},
+    ).json()
+    second = client.post(
+        "/v1/tasks",
+        json={"url": "https://www.bilibili.com/video/BV181KNeuEi2", "asr_model": "whisper-large-v3-turbo"},
+    ).json()
+    tagged = client.put(f"/v1/tasks/{first['id']}/tags", json={"tags": ["research", " clip ", "research"]})
+    assert tagged.status_code == 200
+    assert tagged.json()["tags"] == ["research", "clip"]
+    stored = store.get(first["id"])
+    assert stored is not None
+    assert stored.extra["tags"] == ["research", "clip"]
+    assert client.get(f"/v1/tasks/{first['id']}").json()["tags"] == ["research", "clip"]
+    assert client.get("/v1/tags").json()["tags"] == ["clip", "research"]
+    listed = client.get("/v1/tasks", params={"filter": "all", "group": "none", "tag": "research"}).json()
+    assert [item["id"] for item in listed["tasks"]] == [first["id"]]
+    assert listed["organize"]["tag"] == "research"
+    other = client.get("/v1/tasks", params={"filter": "all", "group": "none", "tag": "missing"}).json()
+    assert other["tasks"] == []
+    assert second["id"] not in {item["id"] for item in listed["tasks"]}
+    cleared = client.put(f"/v1/tasks/{first['id']}/tags", json={"tags": []})
+    assert cleared.json()["tags"] == []
+    assert client.get("/v1/tags").json()["tags"] == []
+
+

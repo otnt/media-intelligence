@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from media_pipeline.models import SOURCE_LABELS, source_key, source_label
+from media_pipeline.tags import normalize_tag, payload_has_tag
 
 
 DASHBOARD_FILTERS = ("today", "yesterday", "7d", "all")
@@ -63,11 +64,13 @@ def organize_task_payloads(
     time_filter: str = "today",
     group: str = "source",
     order: str = "requested_desc",
+    tag: str | None = None,
     now: datetime | None = None,
 ) -> list[dict[str, Any]]:
     """Filter, sort, and group public task payloads for the dashboard sidebar."""
     current = now or datetime.now()
     filtered = _filter_payloads(payloads, normalize_dashboard_filter(time_filter), current)
+    filtered = _filter_by_tag(filtered, tag)
     sorted_payloads = _sort_payloads(filtered, normalize_dashboard_order(order))
     return _group_payloads(sorted_payloads, normalize_dashboard_group(group))
 
@@ -102,6 +105,13 @@ def _filter_payloads(payloads: list[dict[str, Any]], time_filter: str, now: date
         return [item for item in payloads if _stamp_date(item) == time_filter]
     start = (now.date() - timedelta(days=6)).isoformat()
     return [item for item in payloads if _stamp_date(item) >= start]
+
+
+def _filter_by_tag(payloads: list[dict[str, Any]], tag: str | None) -> list[dict[str, Any]]:
+    wanted = normalize_tag(tag)
+    if not wanted:
+        return payloads
+    return [item for item in payloads if payload_has_tag(item, wanted)]
 
 
 def _sort_payloads(payloads: list[dict[str, Any]], order: str) -> list[dict[str, Any]]:

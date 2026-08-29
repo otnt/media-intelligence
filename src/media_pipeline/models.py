@@ -296,6 +296,7 @@ class Task:
             "extract_keyframes": _extract_keyframes_flag(self.extra),
             "visual": dict(self.extra.get("visual") or {}),
             "rerun_stage": str(self.extra.get("rerun_stage") or ""),
+            "tags": _manual_tags(self.extra),
             "stage_timings": {
                 key: {inner: value for inner, value in entry.items() if not str(inner).startswith("_")}
                 for key, entry in dict(self.extra.get("stage_timings") or {}).items()
@@ -393,3 +394,9 @@ def _extract_keyframes_flag(extra: dict[str, Any] | None) -> bool:
     if "extract_keyframes" in payload:
         return bool(payload.get("extract_keyframes"))
     return int(payload.get("keyframe_count") or 0) > 0
+
+
+def _manual_tags(extra: dict[str, Any] | None) -> list[str]:
+    from media_pipeline.tags import tags_from_extra
+
+    return tags_from_extra(extra)

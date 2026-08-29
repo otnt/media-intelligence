@@ -42,6 +42,7 @@ from media_pipeline.summary import (
     render_summary_runs,
     strip_summary_media,
 )
+from media_pipeline.tags import collect_manual_tags, normalize_tag, set_task_tags
 from media_pipeline.worker import TaskWorker
 
 DASHBOARD_FILE = Path(__file__).resolve().parent / "dashboard" / "static" / "index.html"
@@ -95,6 +96,10 @@ class VisualSettingsRequest(BaseModel):
 
 class SummaryPromptRequest(BaseModel):
     prompt: str | None = None
+
+
+class TaskTagsRequest(BaseModel):
+    tags: list[str] = Field(default_factory=list)
 
 
 def create_app(config: AppConfig, store: TaskStore | None = None, worker: TaskWorker | None = None) -> FastAPI:
@@ -258,20 +263,36 @@ def create_app(config: AppConfig, store: TaskStore | None = None, worker: TaskWo
         filter: str | None = None,
         group: str | None = None,
         order: str | None = None,
+        tag: str | None = None,
     ) -> dict[str, Any]:
         organize = _resolve_organize(config, filter=filter, group=group, order=order)
+        tag_filter = normalize_tag(tag)
         payloads = [_enrich_task(item, config) for item in store.list_all()]
         groups = organize_task_payloads(
             payloads,
             time_filter=organize["filter"],
             group=organize["group"],
             order=organize["order"],
+            tag=tag_filter or None,
         )
         return {
             "tasks": flatten_groups(groups),
             "groups": groups,
-            "organize": organize,
+            "organize": {**organize, "tag": tag_filter},
         }
+
+    @app.get("/v1/tags")
+    def list_tags() -> dict[str, Any]:
+        return {"tags": collect_manual_tags(store.list_all())}
+
+    @app.put("/v1/tasks/{task_id}/tags")
+    def update_task_tags(task_id: str, payload: TaskTagsRequest) -> dict[str, Any]:
+        task = store.get(task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+        tags = set_task_tags(task, payload.tags)
+        store.update(task)
+        return {"ok": True, "id": task.id, "tags": tags}
 
     @app.get("/v1/tasks/{task_id}")
     def get_task(task_id: str) -> dict[str, Any]:

@@ -87,6 +87,22 @@ def test_organize_all_none_requested_asc():
     assert [item["id"] for item in groups[0]["tasks"]] == ["a", "b"]
 
 
+def test_organize_tag_filter():
+    payloads = [
+        {**_task("a", "YouTube", "2026-08-25 10:00", "A"), "tags": ["research"]},
+        {**_task("b", "YouTube", "2026-08-25 11:00", "B"), "tags": ["clip"]},
+        {**_task("c", "Bilibili", "2026-08-25 12:00", "C"), "tags": ["research", "clip"]},
+    ]
+    groups = organize_task_payloads(
+        payloads,
+        time_filter="all",
+        group="none",
+        tag="research",
+        now=datetime(2026, 8, 25),
+    )
+    assert [item["id"] for item in groups[0]["tasks"]] == ["c", "a"]
+
+
 def _task(task_id: str, platform: str, created_at: str, title: str) -> dict:
     return {
         "id": task_id,
