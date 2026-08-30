@@ -159,6 +159,16 @@ Use `--asr-model whisper-large-v3-turbo` or `whisper-large-v3` to pick Whisper i
 3. Click **Load unpacked**.
 4. Select the `extension` folder in this repository.
 
+After pulling API/port changes, click **Reload** on the unpacked extension card.
+If the popup still says the local service is not running while `curl http://127.0.0.1:8875/v1/health` works, open the extension’s service worker console and clear a stale `apiBase` with:
+
+```js
+chrome.storage.local.remove("apiBase")
+```
+
+Then reload the extension again.
+The default base URL is `http://127.0.0.1:8875`.
+
 The button appears on Bilibili, YouTube, Xiaohongshu, and RedNote (`rednote.com`) post pages, including `xhslink.com` short links.
 On the Explore feed, search, and profile grids, each post card also gets an **✨ Extract** button.
 One click queues that note; ASR model and keyframe settings come from the floating panel or the extension popup.

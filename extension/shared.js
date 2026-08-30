@@ -5,6 +5,9 @@ const MDP_FALLBACK_MODELS = [
   { id: "whisper-large-v3-turbo", label: "Whisper large-v3-turbo", runtime: "MLX Whisper", available: true, code_switching: false },
 ];
 const MDP_XHS_NOTE_ID = /^[0-9a-f]{24}$/i;
+const MDP_YT_ID_RE = /^[A-Za-z0-9_-]{11}$/;
+const MDP_BV_RE = /BV[0-9A-Za-z]+/;
+const MDP_AV_RE = /(?:av|AV)(\d+)/;
 
 function mdpHostname(urlString, base) {
   try {
@@ -24,6 +27,72 @@ function mdpIsXiaohongshuHost(urlString) {
     host === "xhslink.com" ||
     host.endsWith(".xhslink.com")
   );
+}
+
+function mdpIsYoutubeHost(urlString) {
+  const host = mdpHostname(urlString);
+  return (
+    host === "youtu.be" ||
+    host === "youtube.com" ||
+    host === "m.youtube.com" ||
+    host === "music.youtube.com" ||
+    host.endsWith(".youtube.com")
+  );
+}
+
+function mdpIsBilibiliHost(urlString) {
+  const host = mdpHostname(urlString);
+  return host === "bilibili.com" || host === "m.bilibili.com" || host.endsWith(".bilibili.com");
+}
+
+function mdpParseYoutubeVideo(urlString, base) {
+  try {
+    const url = new URL(urlString, base || "https://www.youtube.com");
+    const host = (url.hostname || "").replace(/^www\./, "").toLowerCase();
+    let videoId = "";
+    if (host === "youtu.be") {
+      videoId = url.pathname.replace(/^\//, "").split("/")[0];
+    } else if (mdpIsYoutubeHost(url.toString())) {
+      videoId = url.searchParams.get("v") || "";
+      if (!videoId) {
+        const parts = url.pathname.split("/").filter(Boolean);
+        if (parts.length >= 2 && ["shorts", "embed", "live"].includes(parts[0])) videoId = parts[1];
+      }
+    }
+    if (!videoId || !MDP_YT_ID_RE.test(videoId)) return null;
+    return { videoId, url: `https://www.youtube.com/watch?v=${videoId}` };
+  } catch (_error) {
+    return null;
+  }
+}
+
+function mdpParseBilibiliVideo(urlString, base) {
+  try {
+    const url = new URL(urlString, base || "https://www.bilibili.com");
+    if (!mdpIsBilibiliHost(url.toString())) return null;
+    let videoId = "";
+    const bvid = url.searchParams.get("bvid");
+    if (bvid) {
+      const match = String(bvid).match(MDP_BV_RE);
+      if (match) videoId = match[0];
+    }
+    if (!videoId) {
+      const pathMatch = url.pathname.match(MDP_BV_RE);
+      if (pathMatch) videoId = pathMatch[0];
+    }
+    if (!videoId) {
+      const queryMatch = String(url.search || "").match(MDP_BV_RE);
+      if (queryMatch) videoId = queryMatch[0];
+    }
+    if (!videoId) {
+      const avMatch = url.pathname.match(MDP_AV_RE) || String(url.search || "").match(MDP_AV_RE);
+      if (avMatch) videoId = `av${avMatch[1]}`;
+    }
+    if (!videoId) return null;
+    return { videoId, url: `https://www.bilibili.com/video/${videoId}` };
+  } catch (_error) {
+    return null;
+  }
 }
 
 function mdpXiaohongshuOrigin(urlString, base) {

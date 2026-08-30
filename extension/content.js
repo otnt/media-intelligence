@@ -112,8 +112,17 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 });
 
+const YT_CARD_SELECTORS =
+  "ytd-rich-item-renderer, ytd-video-renderer, ytd-grid-video-renderer, ytd-compact-video-renderer, ytd-playlist-video-renderer, ytd-reel-item-renderer";
+const BILI_CARD_SELECTORS =
+  ".bili-video-card, .video-card, .feed-card, .rank-item, .video-list-item, .small-item, .recommended-card";
+
 function onXhsSurface() {
   return mdpIsXiaohongshuHost(location.href) || Boolean(window.__MDP_TEST_FEED);
+}
+
+function onCardSurface() {
+  return onXhsSurface() || mdpIsYoutubeHost(location.href) || mdpIsBilibiliHost(location.href);
 }
 
 function init() {
@@ -131,60 +140,27 @@ function init() {
   document.addEventListener("yt-navigate-finish", () => inject(true));
   window.addEventListener("yt-navigate-finish", () => inject(true));
   setInterval(() => {
-    if (location.href !== lastUrl || (onXhsSurface() && !document.getElementById(ROOT_ID))) {
+    if (location.href !== lastUrl) {
       inject(true);
       return;
     }
-    if (onXhsSurface()) scanXhsCards();
+    if (onCardSurface()) scanVideoCards();
   }, 800);
 }
 
-function inject(force = false) {
+function inject(_force = false) {
   lastUrl = location.href;
   const existing = document.getElementById(ROOT_ID);
-  const onNote = mdpIsSupportedVideoUrl(location.href);
-  const onXhs = onXhsSurface();
-  if (!onNote && !onXhs) {
-    existing?.remove();
-    stopXhsCards();
+  // No floating panel — it blocks site UI on XHS/RedNote and elsewhere.
+  // Use card ✨ Extract on feeds or the extension popup on note pages.
+  existing?.remove();
+  if (!onCardSurface()) {
+    stopVideoCards();
     return;
   }
-  if (onXhs) {
-    injectPageBridge();
-    watchXhsCards();
-  }
-  else stopXhsCards();
-  if (existing && !force) return;
-  existing?.remove();
-  const host = document.createElement("div");
-  host.id = ROOT_ID;
-  host.classList.add("mdp-floating");
-  const shadow = host.attachShadow({ mode: "open" });
-  const startHint = onNote
-    ? "Start"
-    : "Use ✨ on a post";
-  shadow.innerHTML = `<style>${STYLE}</style>
-    <div class="wrap">
-      <button class="btn" type="button" id="toggle">✨ Save &amp; Transcribe <span class="caret">▾</span></button>
-      <div class="panel" id="panel" hidden>
-        <p class="title">✨ Save &amp; Transcribe</p>
-        <div class="section">ASR Model</div>
-        <div id="model-list"></div>
-        <div class="section">Visual</div>
-        <label class="option">
-          <input type="checkbox" id="keyframes">
-          <span>
-            <span class="label">Extract keyframes</span>
-            <div class="runtime">Optional and slow. Adds stills to the note.</div>
-          </span>
-        </label>
-        <button class="start" type="button" id="start">${startHint}</button>
-        <div class="status" id="status">${onNote ? "" : "On Explore, click ✨ Extract on a post card."}</div>
-      </div>
-    </div>`;
-  (document.body || document.documentElement).appendChild(host);
-  wire(shadow, host, onNote);
-  refreshModels(shadow);
+  if (onXhsSurface()) injectPageBridge();
+  watchVideoCards();
+  scanVideoCards();
 }
 
 function wire(shadow, host, onNote) {
@@ -261,26 +237,26 @@ async function submitTask(shadow, start, url) {
   status.textContent = `✓ Added to queue\nASR: ${response.asr_label || selectedModel}${keyframes ? "\nKeyframes: on" : ""}`;
 }
 
-function watchXhsCards() {
+function watchVideoCards() {
   bindExtractClicks();
   if (cardObserver) {
-    scanXhsCards();
+    scanVideoCards();
     return;
   }
   const schedule = () => {
     if (cardScanTimer) return;
     cardScanTimer = window.setTimeout(() => {
       cardScanTimer = 0;
-      scanXhsCards();
+      scanVideoCards();
     }, 250);
   };
   cardObserver = new MutationObserver(schedule);
   cardObserver.observe(document.documentElement, { childList: true, subtree: true });
   window.addEventListener("scroll", schedule, { passive: true });
-  scanXhsCards();
+  scanVideoCards();
 }
 
-function stopXhsCards() {
+function stopVideoCards() {
   if (cardObserver) {
     cardObserver.disconnect();
     cardObserver = null;
@@ -290,6 +266,18 @@ function stopXhsCards() {
     cardScanTimer = 0;
   }
   document.querySelectorAll(".mdp-card-extract").forEach((host) => host.remove());
+}
+
+function scanVideoCards() {
+  if (onXhsSurface()) scanXhsCards();
+  else if (mdpIsYoutubeHost(location.href)) scanYoutubeCards();
+  else if (mdpIsBilibiliHost(location.href)) scanBilibiliCards();
+}
+
+function cleanupOrphanCardButtons(cards) {
+  document.querySelectorAll(".mdp-card-extract").forEach((host) => {
+    if (!cards.has(host.parentElement)) host.remove();
+  });
 }
 
 function scanXhsCards() {
@@ -317,9 +305,73 @@ function scanXhsCards() {
   for (const [card, link] of cards) {
     mountNoteCover(card, link, tokens);
   }
-  document.querySelectorAll(".mdp-card-extract").forEach((host) => {
-    if (!cards.has(host.parentElement)) host.remove();
+  cleanupOrphanCardButtons(cards);
+}
+
+function scanYoutubeCards() {
+  if (!mdpIsYoutubeHost(location.href)) return;
+  bindExtractClicks();
+  const cards = new Map();
+  const remember = (link) => {
+    if (!link || link.closest("#mdp-root, .mdp-card-extract")) return;
+    const parsed = mdpParseYoutubeVideo(link.href, location.href);
+    if (!parsed) return;
+    const card = ytCardRoot(link);
+    if (!card) return;
+    if (!cards.has(card)) cards.set(card, link);
+  };
+  document.querySelectorAll(YT_CARD_SELECTORS).forEach((card) => {
+    card.querySelectorAll('a[href*="/watch"], a[href*="/shorts/"], a[href*="/live/"]').forEach(remember);
   });
+  document.querySelectorAll('a[href*="/watch?v="], a[href*="/shorts/"], a[href*="/live/"]').forEach((link) => {
+    if (link.querySelector("img, yt-image, ytd-thumbnail, #thumbnail")) remember(link);
+  });
+  for (const [card, link] of cards) {
+    const parsed = mdpParseYoutubeVideo(link.href, location.href);
+    if (parsed) mountCardButton(card, parsed.url, parsed.videoId);
+  }
+  cleanupOrphanCardButtons(cards);
+}
+
+function ytCardRoot(link) {
+  const named = link.closest(YT_CARD_SELECTORS);
+  if (named) return named;
+  const parent = link.parentElement;
+  if (!parent || parent === document.body || parent === document.documentElement) return link;
+  return parent;
+}
+
+function scanBilibiliCards() {
+  if (!mdpIsBilibiliHost(location.href)) return;
+  bindExtractClicks();
+  const cards = new Map();
+  const remember = (link) => {
+    if (!link || link.closest("#mdp-root, .mdp-card-extract")) return;
+    const parsed = mdpParseBilibiliVideo(link.href, location.href);
+    if (!parsed) return;
+    const card = biliCardRoot(link);
+    if (!card) return;
+    if (!cards.has(card)) cards.set(card, link);
+  };
+  document.querySelectorAll(BILI_CARD_SELECTORS).forEach((card) => {
+    card.querySelectorAll('a[href*="/video/"], a[href*="bvid="]').forEach(remember);
+  });
+  document.querySelectorAll('a[href*="/video/BV"], a[href*="/video/bv"], a[href*="/video/av"]').forEach((link) => {
+    if (link.querySelector("img, picture, .bili-video-card__image--wrap, .bili-video-card__cover")) remember(link);
+  });
+  for (const [card, link] of cards) {
+    const parsed = mdpParseBilibiliVideo(link.href, location.href);
+    if (parsed) mountCardButton(card, parsed.url, parsed.videoId);
+  }
+  cleanupOrphanCardButtons(cards);
+}
+
+function biliCardRoot(link) {
+  const named = link.closest(BILI_CARD_SELECTORS);
+  if (named) return named;
+  const parent = link.parentElement;
+  if (!parent || parent === document.body || parent === document.documentElement) return link;
+  return parent;
 }
 
 function cardRoot(link) {
@@ -341,7 +393,7 @@ function mountNoteCover(card, link, tokens) {
   const token = parsed.token || fromState.token || "";
   const source = parsed.source || fromState.source || (token ? "pc_feed" : "");
   const url = mdpXiaohongshuNoteUrl(parsed.noteId, token, source, parsed.origin || mdpXiaohongshuOrigin(location.href));
-  mountCardButton(card, url, parsed.noteId);
+  mountCardButton(card, url, parsed.noteId, { xhs: true });
   return parsed.noteId;
 }
 
@@ -443,7 +495,7 @@ function bindExtractClicks() {
   window.addEventListener("mousedown", keepClick, true);
 }
 
-function mountCardButton(card, url, noteId) {
+function mountCardButton(card, url, cardId, options = {}) {
   let host = [...card.children].find((node) => node.classList && node.classList.contains("mdp-card-extract"));
   if (!host) {
     host = document.createElement("div");
@@ -459,21 +511,26 @@ function mountCardButton(card, url, noteId) {
     if (getComputedStyle(card).position === "static") card.classList.add("mdp-extract-host");
     card.appendChild(host);
   }
-  host.dataset.mdpNoteId = noteId;
+  host.dataset.mdpCardId = cardId;
+  host.dataset.mdpNoteId = options.xhs ? cardId : "";
+  host.dataset.mdpXhs = options.xhs ? "1" : "";
   host.dataset.mdpUrl = url;
 }
 
 async function queueCard(host, button) {
-  collectXhsTokens();
-  const resolved = resolveCardUrl(host);
-  const url = resolved.url;
-  if (!resolved.token) {
-    button.className = "err";
-    button.textContent = "Retry";
-    button.title = "Missing xsec_token on this card. Scroll it fully into view and try again.";
-    return;
+  let url = host.dataset.mdpUrl || "";
+  if (host.dataset.mdpXhs === "1") {
+    collectXhsTokens();
+    const resolved = resolveCardUrl(host);
+    url = resolved.url;
+    if (!resolved.token) {
+      button.className = "err";
+      button.textContent = "Retry";
+      button.title = "Missing xsec_token on this card. Scroll it fully into view and try again.";
+      return;
+    }
   }
-  if (!url || button.disabled || host.dataset.mdpBusy === "1") return;
+  if (!url || !mdpIsSupportedVideoUrl(url) || button.disabled || host.dataset.mdpBusy === "1") return;
   host.dataset.mdpUrl = url;
   host.dataset.mdpBusy = "1";
   const idle = button.textContent;
