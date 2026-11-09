@@ -5,7 +5,7 @@ from media_pipeline.config import AppConfig
 def test_transcribe_rejects_unsupported_url(capsys):
     assert main(["transcribe", "https://example.com/watch?v=nope"]) == 2
     err = capsys.readouterr().err
-    assert "Only Bilibili, YouTube, and Xiaohongshu" in err
+    assert "No Bilibili, YouTube, or Xiaohongshu URL found" in err
 
 
 def test_transcribe_rejects_unknown_model(capsys):

@@ -785,7 +785,7 @@ def test_dashboard_organizes_tasks_by_source_and_request_time(tmp_path: Path):
     store.update(older)
     store.update(newer)
     payload = client.get("/v1/tasks", params={"filter": "all", "group": "source", "order": "requested_desc"}).json()
-    assert payload["organize"] == {"filter": "all", "group": "source", "order": "requested_desc"}
+    assert payload["organize"] == {"filter": "all", "group": "source", "order": "requested_desc", "tag": ""}
     assert [item["key"] for item in payload["groups"]] == ["rednote", "bilibili"]
     assert payload["groups"][0]["label"] == "RedNote"
     assert payload["tasks"][0]["id"] == note.json()["id"]
