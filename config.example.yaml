@@ -88,7 +88,9 @@ summary:
 agy:
   # Antigravity CLI: Gemini through your Google login, no API key. Used by asr.default: agy-gemini.
   binary: agy
-  asr_model: gemini-3.8-flash-medium
+  # Argon keeps speakers consistent; 3.8 Flash splits one person into several labels.
+  asr_model: gemini-4-argon-medium
+  summary_model: gemini-4-argon-medium
   # Audio is sent in windows; neighbours overlap so speaker labels can be matched across them.
   window_sec: 180
   overlap_sec: 45

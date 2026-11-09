@@ -121,3 +121,46 @@ def test_provider_end_to_end_with_fake_agy(tmp_path: Path, monkeypatch):
     assert [(s.speaker, s.text) for s in transcript.segments] == [("SPEAKER_00", "大家好"), ("SPEAKER_01", "Hi, 我是 Eddy")]
     assert transcript.provider == "agy"
     assert "mostly Chinese" in prompts[0] and "对话 Eddy" in prompts[0]
+
+
+def test_later_windows_get_first_window_roster_and_keep_labels(tmp_path: Path, monkeypatch):
+    audio = tmp_path / "in.wav"
+    audio.write_bytes(b"RIFF")
+    monkeypatch.setattr("media_pipeline.asr.agy._probe_duration", lambda path: 300.0)
+    monkeypatch.setattr("media_pipeline.asr.agy._cut_wav", lambda src, dst, s, e, trim: dst.write_bytes(b"RIFF"))
+    monkeypatch.setattr("media_pipeline.asr.agy.snap_to_speech", lambda pieces, path: pieces)
+    prompts = []
+
+    def run(command, **kwargs):
+        prompt = command[command.index("-p") + 1]
+        prompts.append(prompt)
+        clip = Path(kwargs["cwd"]) / "audio.wav"
+        if "Speakers already identified" not in prompt:
+            body = {"segments": [{"start": 0, "end": 100, "speaker": "SPEAKER_00", "text": "host asks"},
+                                 {"start": 100, "end": 180, "speaker": "SPEAKER_01", "text": "guest answers"}],
+                    "speakers": [{"id": "SPEAKER_00", "description": "male host"},
+                                 {"id": "SPEAKER_01", "description": "female guest Kay"}]}
+        else:
+            # Overlap holds only the guest; the host first speaks after it. Clock overruns by 10%.
+            body = {"segments": [{"start": 0, "end": 49, "speaker": "SPEAKER_01", "text": "guest answers"},
+                                 {"start": 60, "end": 198, "speaker": "SPEAKER_00", "text": "host again"}],
+                    "speakers": []}
+        return subprocess.CompletedProcess(command, 0, stdout=_stream(_tool("read_file", str(clip)), _result(json.dumps(body))), stderr="")
+
+    settings_config = type("C", (), {"agy": type("A", (), {"window_sec": 180, "overlap_sec": 45, "concurrency": 2})()})()
+    provider = AgyASRProvider(config=settings_config, runner=run)
+    transcript = provider.transcribe(audio, ASROptions())
+    assert "male host" in prompts[-1] and "female guest Kay" in prompts[-1]
+    assert {s.speaker for s in transcript.segments} == {"SPEAKER_00", "SPEAKER_01"}
+    host_again = next(s for s in transcript.segments if s.text == "host again")
+    assert host_again.speaker == "SPEAKER_00"
+    assert host_again.end <= 300.0
+
+
+def test_rescale_overflow_squeezes_proportionally():
+    from media_pipeline.asr.agy import rescale_overflow
+
+    out = rescale_overflow([Piece(0, 110, "a", "x"), Piece(110, 220, "b", "x")], 200)
+    assert out[-1].end == 200 and round(out[1].start, 3) == 100
+    same = [Piece(0, 10, "a", "x")]
+    assert rescale_overflow(same, 200) == same

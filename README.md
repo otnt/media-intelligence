@@ -51,7 +51,9 @@ How it runs:
 - Each window is copied alone into a temp folder and `agy -p` runs there with `--sandbox`, `--mode accept-edits` and `allowNonWorkspaceAccess: false`. Any tool call other than reading that one file aborts the window.
 - Gemini numbers speakers per window; the overlap is transcribed twice and votes on which label is which speaker.
 - Gemini timestamps drift by a few seconds, so segment edges are snapped to local VAD speech boundaries.
-- Known weakness: Gemini 3.8 Flash's speaker labels are not always consistent, so a two-person interview can come back as 4–6 speakers. Use `fun-asr` or pyannote when speaker tags matter.
+- Window 1 runs first and returns a speaker roster ("male host…", "female guest Kay…"); later windows run in parallel with that roster and reuse its labels.
+- Gemini's clock runs ~10% fast inside a window, so timestamps that overrun the window are rescaled before snapping.
+- Default model is `gemini-4-argon-medium`. On a 24-minute two-person interview it returned exactly 2 speakers (host asked 29/29 questions) in ~3 minutes; Gemini 3.8 Flash split the same audio into 4–6 speakers.
 
 Settings live under `agy:` in the config (`asr_model`, `window_sec`, `overlap_sec`, `concurrency`, `timeout_sec`).
 

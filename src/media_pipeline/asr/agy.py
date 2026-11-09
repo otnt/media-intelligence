@@ -30,7 +30,7 @@ from media_pipeline.models import ASROptions, Transcript, TranscriptSegment
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "gemini-3.8-flash-medium"
+DEFAULT_MODEL = "gemini-4-argon-medium"
 SEGMENT_SCHEMA = {
     "type": "object",
     "properties": {
@@ -46,9 +46,18 @@ SEGMENT_SCHEMA = {
                 },
                 "required": ["start", "end", "speaker", "text"],
             },
-        }
+        },
+        "speakers": {
+            "type": "array",
+            "description": "One entry per label used: voice, gender, role, name if said",
+            "items": {
+                "type": "object",
+                "properties": {"id": {"type": "string"}, "description": {"type": "string"}},
+                "required": ["id", "description"],
+            },
+        },
     },
-    "required": ["segments"],
+    "required": ["segments", "speakers"],
 }
 # agy hands structured (--json-schema) answers back through this tool; it touches nothing.
 _ANSWER_TOOLS = {"finish"}
@@ -185,13 +194,25 @@ class AgyASRProvider(ASRProvider):
         windows = plan_windows(duration, settings.window_sec, settings.overlap_sec)
         logger.info("agy transcribing %.0fs of audio in %s window(s) with %s", duration, len(windows), settings.model)
 
+        trim = len(windows) > 1
+        # Window 1 runs alone so its speaker roster can steer every later window onto the same labels.
+        first, roster = self._transcribe_window(audio_path, 0, *windows[0], trim, options, settings, None)
+        if roster:
+            logger.info("agy speaker roster: %s", "; ".join(f"{k}: {v}" for k, v in roster.items()))
+
         def work(item: tuple[int, tuple[float, float]]) -> list[Piece]:
             index, (start, end) = item
-            return self._transcribe_window(audio_path, index, start, end, len(windows) > 1, options, settings)
+            return self._transcribe_window(audio_path, index, start, end, trim, options, settings, roster)[0]
 
-        with ThreadPoolExecutor(max_workers=min(settings.concurrency, len(windows))) as pool:
-            results = list(pool.map(work, enumerate(windows)))
-        pieces = stitch_windows([(start, end, found) for (start, end), found in zip(windows, results)])
+        rest: list[list[Piece]] = []
+        if len(windows) > 1:
+            with ThreadPoolExecutor(max_workers=min(settings.concurrency, len(windows) - 1)) as pool:
+                rest = list(pool.map(work, list(enumerate(windows))[1:]))
+        results = [first, *rest]
+        pieces = stitch_windows(
+            [(start, end, found) for (start, end), found in zip(windows, results)],
+            shared_labels=bool(roster),
+        )
         pieces = snap_to_speech(pieces, audio_path)
         segments = [
             TranscriptSegment(start=p.start, end=p.end, text=p.text, speaker=p.speaker)
@@ -210,12 +231,13 @@ class AgyASRProvider(ASRProvider):
         trim: bool,
         options: ASROptions,
         settings: AgySettings,
-    ) -> list[Piece]:
+        roster: dict[str, str] | None,
+    ) -> tuple[list[Piece], dict[str, str]]:
         with tempfile.TemporaryDirectory(prefix="agy-asr-") as tmp:
             workspace = Path(tmp)
             clip = workspace / "audio.wav"
             _cut_wav(audio_path, clip, start, end, trim)
-            prompt = build_prompt(clip, options)
+            prompt = build_prompt(clip, options, roster)
             last_error: Exception | None = None
             for attempt in range(2):
                 try:
@@ -228,6 +250,7 @@ class AgyASRProvider(ASRProvider):
                         runner=self._runner,
                     )
                     pieces = parse_segments(text)
+                    found_roster = parse_roster(text)
                     break
                 except (AgyError, ValueError) as exc:
                     last_error = exc
@@ -235,7 +258,8 @@ class AgyASRProvider(ASRProvider):
             else:
                 raise AgyError(f"agy window {index + 1} failed: {last_error}")
         length = end - start if end > start else float("inf")
-        return [
+        pieces = rescale_overflow(pieces, length)
+        placed = [
             Piece(
                 start=start + max(0.0, min(p.start, length)),
                 end=start + max(0.0, min(max(p.end, p.start), length)),
@@ -244,9 +268,34 @@ class AgyASRProvider(ASRProvider):
             )
             for p in pieces
         ]
+        return placed, found_roster
 
 
-def build_prompt(clip: Path, options: ASROptions) -> str:
+def rescale_overflow(pieces: list[Piece], length: float) -> list[Piece]:
+    """Gemini sometimes runs its clock past the clip's end; squeeze back proportionally instead of clamping."""
+    if not pieces or length == float("inf") or length <= 0:
+        return pieces
+    last = max(p.end for p in pieces)
+    if last <= length * 1.01:
+        return pieces
+    factor = length / last
+    logger.info("agy timestamps overran the window (%.0fs > %.0fs); rescaling by %.3f", last, length, factor)
+    return [Piece(p.start * factor, p.end * factor, p.text, p.speaker) for p in pieces]
+
+
+def parse_roster(text: str) -> dict[str, str]:
+    try:
+        data = json.loads(text[text.find("{") : text.rfind("}") + 1])
+    except (json.JSONDecodeError, ValueError):
+        return {}
+    roster: dict[str, str] = {}
+    for item in data.get("speakers") or []:
+        if isinstance(item, dict) and item.get("id"):
+            roster[str(item["id"])] = " ".join(str(item.get("description") or "").split())[:200]
+    return roster
+
+
+def build_prompt(clip: Path, options: ASROptions, roster: dict[str, str] | None = None) -> str:
     language = ""
     if options.language:
         language = f" The audio is mostly {_LANGUAGE_NAMES.get(options.language, options.language)}."
@@ -256,6 +305,13 @@ def build_prompt(clip: Path, options: ASROptions) -> str:
             "\nContext about the recording (for spelling names and terms only; never copy it into the transcript):\n"
             f"{options.context.strip()[:1500]}\n"
         )
+    speakers = ""
+    if roster:
+        listing = "; ".join(f"{key} = {value}" for key, value in roster.items())
+        speakers = (
+            " This file is a later part of a longer recording. Speakers already identified earlier: "
+            f"{listing}. Reuse exactly these labels for these voices; give a new voice the next unused label."
+        )
     return (
         f"Call read_file on {clip} exactly once, then transcribe the audio you hear. "
         "Do not run any commands and do not read any other file. "
@@ -263,8 +319,9 @@ def build_prompt(clip: Path, options: ASROptions) -> str:
         "(Chinese stays Chinese in simplified characters, English stays English, code-switching stays mixed). "
         "Start a new segment at every change of speaker and at sentence ends; keep segments under about 20 seconds. "
         "Label voices SPEAKER_00, SPEAKER_01, ... in order of first appearance; the same voice keeps the same label. "
-        "start and end are seconds from the beginning of this file. Skip music and silence; "
-        f"never invent speech you cannot hear.{language}{context}"
+        "start and end are seconds from the beginning of this file. "
+        "In speakers, describe every label you used (voice, gender, role such as host or guest, name if said). "
+        f"Skip music and silence; never invent speech you cannot hear.{speakers}{language}{context}"
     )
 
 
@@ -309,7 +366,7 @@ def plan_windows(duration: float, window: float = 600.0, overlap: float = 30.0) 
         start = end - overlap
 
 
-def stitch_windows(chunks: list[tuple[float, float, list[Piece]]]) -> list[Piece]:
+def stitch_windows(chunks: list[tuple[float, float, list[Piece]]], shared_labels: bool = False) -> list[Piece]:
     """Join windows and map window-local speaker labels to global SPEAKER_NN ids."""
     if not chunks:
         return []
@@ -330,7 +387,10 @@ def stitch_windows(chunks: list[tuple[float, float, list[Piece]]]) -> list[Piece
         return out
 
     _, prev_end, first = chunks[0]
-    previous = relabel(first, {})
+    first_mapping: dict[str, str] = {}
+    previous = relabel(first, first_mapping)
+    # With a shared roster, window N's "SPEAKER_01" is meant to be window 1's "SPEAKER_01".
+    by_base = {local.split(":", 1)[-1]: global_id for local, global_id in first_mapping.items()}
     stitched: list[Piece] = []
     for start, end, pieces in chunks[1:]:
         lo, hi = start, prev_end
@@ -339,6 +399,19 @@ def stitch_windows(chunks: list[tuple[float, float, list[Piece]]]) -> list[Piece
             [p for p in previous if p.end > lo and p.start < hi],
             [p for p in pieces if p.end > lo and p.start < hi],
         )
+        if shared_labels:
+            # The roster label is the stronger signal; overlap votes only place labels the roster doesn't know.
+            voted = mapping
+            mapping = {}
+            for piece in pieces:
+                target = by_base.get(piece.speaker.split(":", 1)[-1])
+                if target:
+                    mapping[piece.speaker] = target
+            used = set(mapping.values())
+            for local, target in voted.items():
+                if local not in mapping and target not in used:
+                    mapping[local] = target
+                    used.add(target)
         stitched.extend(p for p in previous if p.start < cut)
         previous = relabel([p for p in pieces if p.start >= cut], mapping)
         prev_end = end

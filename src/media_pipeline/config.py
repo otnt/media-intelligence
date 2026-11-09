@@ -201,7 +201,7 @@ class AgyConfig:
     """Antigravity CLI (agy): Gemini through the user's Google login, no API key."""
 
     binary: str = "agy"
-    asr_model: str = "gemini-3.8-flash-medium"
+    asr_model: str = "gemini-4-argon-medium"
     # Used by the agy-gemini summary backend.
     summary_model: str = "gemini-4-argon-medium"
     # Audio windows sent per agy call; neighbours overlap so speakers can be matched.
@@ -429,7 +429,7 @@ def load_config(path: Path | None = None) -> AppConfig:
         ),
         agy=AgyConfig(
             binary=str(agy_raw.get("binary") or "agy"),
-            asr_model=str(agy_raw.get("asr_model") or "gemini-3.8-flash-medium"),
+            asr_model=str(agy_raw.get("asr_model") or "gemini-4-argon-medium"),
             summary_model=str(agy_raw.get("summary_model") or "gemini-4-argon-medium"),
             window_sec=float(agy_raw.get("window_sec") or 180),
             overlap_sec=float(agy_raw.get("overlap_sec") or 45),
