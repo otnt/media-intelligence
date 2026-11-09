@@ -21,8 +21,18 @@ def test_registry_maps_qwen_to_its_own_provider():
 
 def test_list_models_includes_v1_choices():
     ids = {item.id for item in list_models()}
-    assert ids == {"whisper-large-v3", "whisper-large-v3-turbo", "qwen3-asr-1.7b"}
+    assert ids == {"whisper-large-v3", "whisper-large-v3-turbo", "qwen3-asr-1.7b", "fun-asr"}
     by_id = {item.id: item for item in list_models()}
     assert by_id["qwen3-asr-1.7b"].code_switching is True
     assert by_id["whisper-large-v3"].code_switching is False
     assert by_id["whisper-large-v3-turbo"].code_switching is False
+    assert by_id["fun-asr"].code_switching is True
+    assert by_id["fun-asr"].runtime == "DashScope cloud"
+
+
+def test_registry_maps_fun_asr_to_dashscope():
+    from media_pipeline.asr.dashscope import DashScopeASRProvider
+
+    provider = get_provider("fun-asr")
+    assert isinstance(provider, DashScopeASRProvider)
+    assert provider.local is False

@@ -64,6 +64,9 @@ class VisionProvider:
     name = "none"
     model_id = ""
     last_used: float = 0.0
+    # False for cloud backends: they skip the local model slot and may run in parallel.
+    local = True
+    concurrency = 1
 
     @property
     def loaded(self) -> bool:
@@ -226,10 +229,49 @@ class MlxVlmProvider(VisionProvider):
         return _as_text(output)
 
 
+class DashScopeVisionProvider(VisionProvider):
+    """Cloud keyframe judge on Alibaba Cloud Model Studio (e.g. qwen3.8-flash)."""
+
+    name = "dashscope"
+    local = False
+
+    def __init__(self, client, model_id: str, max_tokens: int = 256, concurrency: int = 4) -> None:
+        self._client = client
+        self.model_id = model_id
+        self.max_tokens = max_tokens
+        self.concurrency = max(1, int(concurrency))
+
+    def judge(self, image_path: Path, prompt: str) -> str:
+        return self.generate(prompt, [image_path], self.max_tokens)
+
+    def generate(
+        self,
+        prompt: str,
+        images: list[Path] | None = None,
+        max_tokens: int | None = None,
+        enable_thinking: bool = False,
+        reasoning_effort: str | None = None,
+    ) -> str:
+        self.last_used = time.monotonic()
+        return self._client.chat(
+            self.model_id,
+            prompt,
+            images,
+            max_tokens=int(max_tokens or self.max_tokens),
+            extra={"enable_thinking": bool(enable_thinking)},
+        )
+
+
 def probe_vlm(config: AppConfig | AnalysisConfig | None = None) -> tuple[bool, str]:
     analysis = _analysis_config(config)
     if not analysis.enabled:
         return True, "disabled"
+    if getattr(analysis, "provider", "local") == "dashscope":
+        from media_pipeline.dashscope import resolve_api_key
+
+        if resolve_api_key(config if isinstance(config, AppConfig) else None):
+            return True, "dashscope"
+        return False, "set dashscope.api_key or DASHSCOPE_API_KEY"
     return probe_vlm_model(analysis.model)
 
 
@@ -249,11 +291,31 @@ def build_vision_provider(config: AppConfig | AnalysisConfig | None = None) -> V
     analysis = _analysis_config(config)
     if not analysis.enabled:
         return NullVisionProvider()
+    if getattr(analysis, "provider", "local") == "dashscope":
+        return _build_dashscope_vision(config, analysis)
     available, detail = probe_vlm(analysis)
     if not available:
         logger.warning("Vision analysis unavailable: %s", detail)
         return NullVisionProvider()
     return MlxVlmProvider(analysis.model, max_tokens=int(analysis.max_tokens))
+
+
+def _build_dashscope_vision(config: AppConfig | AnalysisConfig | None, analysis: AnalysisConfig) -> VisionProvider:
+    from media_pipeline.dashscope import DashScopeError, client_from_config
+
+    app = config if isinstance(config, AppConfig) else None
+    try:
+        client = client_from_config(app)
+    except DashScopeError as exc:
+        logger.warning("Cloud vision analysis unavailable: %s", exc)
+        return NullVisionProvider()
+    dash = getattr(app, "dashscope", None)
+    return DashScopeVisionProvider(
+        client,
+        str(getattr(dash, "vision_model", "") or "qwen3.8-flash"),
+        max_tokens=int(analysis.max_tokens),
+        concurrency=int(getattr(dash, "vision_concurrency", 4) or 4),
+    )
 
 
 def build_vision_provider_for(model_id: str, max_tokens: int = 256) -> VisionProvider:

@@ -12,7 +12,12 @@ from media_pipeline.asr.base import ASRNotAvailableError
 from media_pipeline.asr.language import format_detected_languages, resolve_provider_language
 from media_pipeline.asr.registry import require_provider
 from media_pipeline.config import AppConfig
-from media_pipeline.diarization import DiarizationProvider, NullDiarizationProvider, build_diarization_provider
+from media_pipeline.diarization import (
+    DiarizationProvider,
+    NullDiarizationProvider,
+    build_diarization_provider,
+    diarization_from_transcript,
+)
 from media_pipeline.media import (
     MediaError,
     UnsupportedURLError,
@@ -134,7 +139,7 @@ class Pipeline:
             return task
         audio_path = self._extract_audio(task, metadata, video_path, artifacts)
         transcript = self._transcribe(task, metadata, artifacts, audio_path)
-        diarization = self._diarize(task, artifacts, audio_path)
+        diarization = self._diarize(task, artifacts, audio_path, transcript)
         named = self._align(task, artifacts, transcript, diarization, metadata)
         task.extra["segment_count"] = len(named)
         self.store.update(task)
@@ -234,11 +239,15 @@ class Pipeline:
             return existing
         with self._stage(task, TaskStatus.transcribing, metadata, artifacts):
             provider = require_provider(task.asr_model)
+            bind = getattr(provider, "bind_config", None)
+            if callable(bind):
+                bind(self.config)
             context = _asr_context(metadata)
             provider_name = ASR_MODELS[task.asr_model]["provider"]
             requested_language = str(task.extra.get("language") or self.config.asr.language or "auto")
             task.extra["language"] = requested_language
-            with self._model_slot():
+            slot = self._model_slot() if getattr(provider, "local", True) else nullcontext()
+            with slot:
                 transcript = provider.transcribe(
                     audio_path,
                     ASROptions(
@@ -251,9 +260,14 @@ class Pipeline:
             artifacts.save_transcript(task.asr_model, transcript)
             return transcript
 
-    def _diarize(self, task: Task, artifacts: ArtifactStore, audio_path: Path):
+    def _diarize(self, task: Task, artifacts: ArtifactStore, audio_path: Path, transcript=None):
+        # Cloud ASR (Fun-ASR) already tagged speakers; those match this transcript exactly.
+        embedded = diarization_from_transcript(transcript)
+        if embedded is not None:
+            artifacts.save_diarization(embedded)
+            return embedded
         existing = artifacts.load_diarization()
-        if existing is not None:
+        if existing is not None and not existing.provider.startswith("asr:"):
             return existing
         with self._stage(task, TaskStatus.diarizing, artifacts=artifacts):
             try:

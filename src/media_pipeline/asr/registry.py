@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from media_pipeline.asr.base import ASRNotAvailableError, ASRProvider
+from media_pipeline.asr.dashscope import DashScopeASRProvider
 from media_pipeline.asr.language import supports_code_switching
 from media_pipeline.asr.mlx_whisper import MLXWhisperProvider
 from media_pipeline.asr.qwen3 import Qwen3ASRProvider
@@ -30,6 +31,8 @@ def get_provider(model_id: str) -> ASRProvider:
         return MLXWhisperProvider(model=backend_model)
     if provider_name == "qwen3":
         return Qwen3ASRProvider(model=backend_model)
+    if provider_name == "dashscope":
+        return DashScopeASRProvider(model=backend_model)
     raise KeyError(f"Unknown ASR provider {provider_name!r}")
 
 
@@ -54,6 +57,8 @@ def probe_model(model_id: str) -> tuple[bool, str]:
     info = ASR_MODELS.get(model_id)
     if info is None:
         return False, "unknown model"
+    if info["provider"] == "dashscope":
+        return _probe_dashscope()
     try:
         if info["provider"] == "mlx_whisper":
             import mlx_whisper  # noqa: F401
@@ -67,6 +72,20 @@ def probe_model(model_id: str) -> tuple[bool, str]:
         extra = ".[whisper]" if info["provider"] == "mlx_whisper" else ".[qwen]"
         return False, f"not installed ({exc.name}). uv pip install -e '{extra}'"
     return False, "unsupported provider"
+
+
+def _probe_dashscope() -> tuple[bool, str]:
+    from media_pipeline.dashscope import resolve_api_key
+
+    try:
+        from media_pipeline.config import load_config
+
+        config = load_config()
+    except Exception:
+        config = None
+    if resolve_api_key(config):
+        return True, "cloud"
+    return False, "set dashscope.api_key or DASHSCOPE_API_KEY"
 
 
 def require_provider(model_id: str) -> ASRProvider:

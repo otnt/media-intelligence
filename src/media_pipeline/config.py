@@ -180,8 +180,27 @@ class DashboardConfig:
 
 
 @dataclass
+class DashScopeConfig:
+    """Shared Alibaba Cloud Model Studio settings for cloud ASR, keyframe judging and Qwen-Max summaries."""
+
+    api_key: str = ""
+    # Region root. Empty reuses summary.qwen_max_base_url's host (mainland China by default).
+    base_url: str = ""
+    # Fun-ASR does ASR + speaker tags in one call. paraformer-v2 also works.
+    asr_model: str = "fun-asr"
+    # 0 lets DashScope pick the speaker count; 2-100 is a hint.
+    speaker_count: int = 0
+    # Cloud model used when analysis.provider is dashscope.
+    vision_model: str = "qwen3.8-flash"
+    # Parallel keyframe judgments against the cloud model.
+    vision_concurrency: int = 4
+
+
+@dataclass
 class AnalysisConfig:
     enabled: bool = True
+    # local = MLX Qwen on this Mac; dashscope = dashscope.vision_model in the cloud.
+    provider: str = "local"
     model: str = "mlx-community/Qwen3.8-27B-4bit"
     idle_unload_sec: float = 600.0
     max_tokens: int = 256
@@ -216,6 +235,7 @@ class AppConfig:
     visual: VisualConfig = field(default_factory=VisualConfig)
     analysis: AnalysisConfig = field(default_factory=AnalysisConfig)
     summary: SummaryConfig = field(default_factory=SummaryConfig)
+    dashscope: DashScopeConfig = field(default_factory=DashScopeConfig)
     worker: WorkerConfig = field(default_factory=WorkerConfig)
     dashboard: DashboardConfig = field(default_factory=DashboardConfig)
     source_path: Path | None = None
@@ -276,6 +296,7 @@ def load_config(path: Path | None = None) -> AppConfig:
     summary_raw = raw.get("summary") or {}
     worker_raw = raw.get("worker") or {}
     dashboard_raw = raw.get("dashboard") or {}
+    dashscope_raw = raw.get("dashscope") or {}
 
     vault_value = paths_raw.get("vault") or ""
     vault = expand_path(vault_value) if str(vault_value).strip() else detect_obsidian_vault()
@@ -334,6 +355,7 @@ def load_config(path: Path | None = None) -> AppConfig:
         ),
         analysis=AnalysisConfig(
             enabled=_as_bool(analysis_raw.get("enabled"), True),
+            provider=str(analysis_raw.get("provider") or "local").strip().lower(),
             model=str(analysis_raw.get("model") or "mlx-community/Qwen3.8-27B-4bit"),
             idle_unload_sec=float(analysis_raw.get("idle_unload_sec") or 600),
             max_tokens=int(analysis_raw.get("max_tokens") or 256),
@@ -372,6 +394,21 @@ def load_config(path: Path | None = None) -> AppConfig:
                 or ""
             ).strip(),
             prompt=str(summary_raw.get("prompt") or "").strip(),
+        ),
+        dashscope=DashScopeConfig(
+            api_key=str(
+                dashscope_raw.get("api_key")
+                or summary_raw.get("qwen_api_key")
+                or summary_raw.get("qwen_max_api_key")
+                or os.environ.get("DASHSCOPE_API_KEY")
+                or os.environ.get("QWEN_API_KEY")
+                or ""
+            ).strip(),
+            base_url=str(dashscope_raw.get("base_url") or "").strip().rstrip("/"),
+            asr_model=str(dashscope_raw.get("asr_model") or "fun-asr").strip(),
+            speaker_count=int(dashscope_raw.get("speaker_count") or 0),
+            vision_model=str(dashscope_raw.get("vision_model") or "qwen3.8-flash").strip(),
+            vision_concurrency=max(1, int(dashscope_raw.get("vision_concurrency") or 4)),
         ),
         worker=_worker_from_raw(worker_raw),
         dashboard=_dashboard_from_raw(dashboard_raw),

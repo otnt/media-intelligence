@@ -3,6 +3,7 @@ const MDP_FALLBACK_MODELS = [
   { id: "qwen3-asr-1.7b", label: "Qwen3-ASR-1.7B", runtime: "MLX Qwen3-ASR", available: true, code_switching: true },
   { id: "whisper-large-v3", label: "Whisper large-v3", runtime: "MLX Whisper", available: true, code_switching: false },
   { id: "whisper-large-v3-turbo", label: "Whisper large-v3-turbo", runtime: "MLX Whisper", available: true, code_switching: false },
+  { id: "fun-asr", label: "Fun-ASR (Alibaba Cloud, with speakers)", runtime: "DashScope cloud", available: true, code_switching: true },
 ];
 const MDP_XHS_NOTE_ID = /^[0-9a-f]{24}$/i;
 const MDP_YT_ID_RE = /^[A-Za-z0-9_-]{11}$/;

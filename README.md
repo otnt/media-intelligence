@@ -40,6 +40,34 @@ Language handling:
 - Qwen timestamps are coarse segment start/end times from VAD speech windows, not word-level forced alignment.
 - Install the Qwen extra before choosing that model: `uv pip install -e '.[qwen]'`.
 
+## Alibaba Cloud (DashScope) mode
+
+Everything heavy can run on Alibaba Cloud Model Studio (百炼) instead of this Mac:
+
+| Stage | Cloud model | Setting |
+|-------|-------------|---------|
+| ASR + speaker tags | `fun-asr` (one call, `diarization_enabled`) | `asr.default: fun-asr` or pick **Fun-ASR** in the extension |
+| Keyframe judging | `qwen3.8-flash` | `analysis.provider: dashscope` |
+| Summary | `qwen3.8-max` | `summary.providers: [qwen3.8-max]` |
+
+```yaml
+dashscope:
+  api_key: ""        # or export DASHSCOPE_API_KEY
+  base_url: ""       # empty = Beijing; https://dashscope-intl.aliyuncs.com for a Singapore key
+  speaker_count: 0   # 0 = auto
+asr:
+  default: fun-asr
+analysis:
+  provider: dashscope
+summary:
+  providers: [qwen3.8-max]
+```
+
+How Fun-ASR is called: the 16 kHz WAV is re-encoded to ~48 kbps AAC, uploaded to DashScope temporary storage (`oss://`, deleted after 48 h), transcribed asynchronously, then polled.
+Each sentence comes back with a `speaker_id`, so the pyannote stage is skipped and no Hugging Face token is needed.
+Cloud stages do not take the local `worker.model_jobs` slot, and keyframes are judged `dashscope.vision_concurrency` at a time.
+Diarization is recommended for audio under 2 hours.
+
 ## Requirements
 
 - Apple Silicon Mac

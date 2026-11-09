@@ -49,28 +49,53 @@ def filter_keyframes(
     cached = {
         item.filename: item
         for item in (artifacts.load_frame_analysis() or [])
-        if item.model == provider.model_id and item.prompt_version == PROMPT_VERSION
+        if item.model == provider.model_id
+        and item.prompt_version == PROMPT_VERSION
+        and item.decision not in {"parse_error", "unavailable"}
     }
-    lock = model_lock if model_lock is not None else nullcontext()
+    local = getattr(provider, "local", True)
+    lock = model_lock if model_lock is not None and local else nullcontext()
     verdicts: list[FrameVerdict] = []
     selected: list[Keyframe] = []
     total = len(keyframes)
-    inferred = 0
-    for index, frame in enumerate(keyframes, start=1):
-        name = Path(frame.image_path).name or frame_filename(frame.timestamp)
+    names = [Path(frame.image_path).name or frame_filename(frame.timestamp) for frame in keyframes]
+    pending = [
+        index
+        for index, name in enumerate(names)
+        if cached.get(name) is None and provider.name != "none"
+    ]
+
+    def _judge(index: int) -> str:
+        frame = keyframes[index]
+        prompt = build_prompt(metadata, segments, frame.timestamp, before_sec, after_sec)
+        logger.info("Judging frame %s/%s %s", index + 1, total, names[index])
+        if local:
+            with lock:
+                return provider.judge(artifacts.root / frame.image_path, prompt)
+        try:
+            return provider.judge(artifacts.root / frame.image_path, prompt)
+        except Exception as exc:  # one flaky cloud call should not fail the whole video
+            logger.warning("Cloud frame judgment failed for %s: %s", names[index], exc)
+            return ""
+
+    workers = max(1, int(getattr(provider, "concurrency", 1) or 1)) if not local else 1
+    if workers > 1 and len(pending) > 1:
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            texts = dict(zip(pending, pool.map(_judge, pending)))
+    else:
+        texts = {index: _judge(index) for index in pending}
+    inferred = len(texts)
+    for index, frame in enumerate(keyframes):
+        name = names[index]
         previous = cached.get(name)
         if previous is not None:
             raw = previous
         elif provider.name == "none":
             raw = _unavailable_verdict(name, frame, provider)
         else:
-            prompt = build_prompt(metadata, segments, frame.timestamp, before_sec, after_sec)
-            image_path = artifacts.root / frame.image_path
-            logger.info("Judging frame %s/%s %s", index, total, name)
-            with lock:
-                text = provider.judge(image_path, prompt)
-            inferred += 1
-            raw = parse_verdict(text, filename=name, timestamp=frame.timestamp, provider=provider)
+            raw = parse_verdict(texts[index], filename=name, timestamp=frame.timestamp, provider=provider)
         verdict = apply_threshold_and_overrides(raw, threshold, overrides)
         verdicts.append(verdict)
         if verdict.kept:

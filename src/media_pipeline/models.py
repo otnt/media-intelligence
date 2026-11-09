@@ -47,6 +47,12 @@ ASR_MODELS: dict[str, dict[str, str]] = {
         "provider": "qwen3",
         "backend_model": "qwen3-asr-1.7b",
     },
+    "fun-asr": {
+        "label": "Fun-ASR (Alibaba Cloud, with speakers)",
+        "runtime": "DashScope cloud",
+        "provider": "dashscope",
+        "backend_model": "fun-asr",
+    },
 }
 
 MLX_WHISPER_REPOS = {
@@ -86,11 +92,15 @@ class TranscriptSegment:
     end: float
     text: str
     words: list[WordSpan] | None = None
+    # Set when the ASR backend also diarizes (DashScope Fun-ASR). Normalized SPEAKER_NN ids.
+    speaker: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {"start": self.start, "end": self.end, "text": self.text}
         if self.words is not None:
             payload["words"] = [word.to_dict() for word in self.words]
+        if self.speaker is not None:
+            payload["speaker"] = self.speaker
         return payload
 
     @classmethod
@@ -101,6 +111,7 @@ class TranscriptSegment:
             end=float(data["end"]),
             text=str(data.get("text") or ""),
             words=[WordSpan.from_dict(item) for item in words] if words else None,
+            speaker=str(data["speaker"]) if data.get("speaker") is not None else None,
         )
 
 

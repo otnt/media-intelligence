@@ -14,6 +14,7 @@ paths:
   notes_folder: Transcripts
 
 asr:
+  # fun-asr = Alibaba Cloud Fun-ASR: transcript + speaker tags in one cloud call (needs dashscope.api_key).
   default: qwen3-asr-1.7b
   # auto = detect language(s). Qwen3-ASR can keep mixed Chinese/English in one transcript.
   # Whisper still detects one language for the whole file.
@@ -26,6 +27,7 @@ download:
   cookies_from_browser: chrome
 
 diarization:
+  # Skipped automatically when the ASR model already tags speakers (fun-asr).
   provider: pyannote
   model: pyannote/speaker-diarization-community-1
   hf_token: ""
@@ -50,6 +52,8 @@ dashboard:
 analysis:
   # Local Qwen3.8-27B judges each keyframe after dedup. Install with: uv pip install -e '.[analysis]'
   enabled: true
+  # local = MLX on this Mac; dashscope = dashscope.vision_model in the cloud (no 16GB weights).
+  provider: local
   model: mlx-community/Qwen3.8-27B-4bit
   # Unload the ~16GB weights after this many idle seconds. 0 keeps the model resident.
   idle_unload_sec: 600
@@ -79,6 +83,19 @@ summary:
   qwen_api_key: ""
   # Dashboard Settings writes this. Empty uses the built-in analyst briefing prompt.
   prompt: ""
+
+dashscope:
+  # Alibaba Cloud Model Studio (百炼). One key for Fun-ASR, cloud keyframe judging and qwen3.8-max summaries.
+  # Prefer DASHSCOPE_API_KEY in the environment. summary.qwen_api_key still works as a fallback.
+  api_key: ""
+  # Empty reuses summary.qwen_max_base_url's region. Keys are region-specific:
+  # https://dashscope.aliyuncs.com (Beijing), https://dashscope-intl.aliyuncs.com (Singapore)
+  base_url: ""
+  asr_model: fun-asr
+  # 0 = let Fun-ASR decide; 2-100 is a hint, not a guarantee.
+  speaker_count: 0
+  vision_model: qwen3.8-flash
+  vision_concurrency: 4
 
 visual:
   sample_interval_sec: 12

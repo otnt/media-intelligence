@@ -86,7 +86,7 @@ WHISPER_LANGUAGE_CODES = {
     "korean": "ko",
 }
 
-CODE_SWITCHING_MODELS = {"qwen3-asr-1.7b"}
+CODE_SWITCHING_MODELS = {"qwen3-asr-1.7b", "fun-asr"}
 
 
 def is_auto_language(requested: str | None) -> bool:
@@ -107,7 +107,7 @@ def resolve_provider_language(provider: str, requested: str | None) -> str | Non
         if raw in QWEN_LANGUAGE_NAMES.values():
             return raw
         return QWEN_LANGUAGE_NAMES.get(key, raw)
-    if provider == "mlx_whisper":
+    if provider in {"mlx_whisper", "dashscope"}:
         return WHISPER_LANGUAGE_CODES.get(key, key)
     return raw or None
 

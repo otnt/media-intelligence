@@ -77,7 +77,9 @@ def clean_transcript(transcript: Transcript) -> Transcript:
                 WordSpan(start=word.start, end=word.end, text=clean_text(word.text) or word.text)
                 for word in segment.words
             ]
-        segments.append(TranscriptSegment(start=segment.start, end=segment.end, text=text, words=words))
+        segments.append(
+            TranscriptSegment(start=segment.start, end=segment.end, text=text, words=words, speaker=segment.speaker)
+        )
     return Transcript(
         language=transcript.language,
         segments=segments,

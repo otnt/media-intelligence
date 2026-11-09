@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from pathlib import Path
 
-from media_pipeline.models import DiarizationResult, DiarizationSegment
+from media_pipeline.models import DiarizationResult, DiarizationSegment, Transcript
 
 
 class DiarizationProvider(ABC):
@@ -94,3 +94,16 @@ def _normalize_speaker_ids(segments: list[DiarizationSegment]) -> list[Diarizati
             DiarizationSegment(start=segment.start, end=segment.end, speaker=mapping[segment.speaker])
         )
     return normalized
+
+
+def diarization_from_transcript(transcript: Transcript | None) -> DiarizationResult | None:
+    """Speaker turns embedded by an ASR backend that diarizes itself (DashScope Fun-ASR)."""
+    if transcript is None or not transcript.segments:
+        return None
+    if any(segment.speaker is None for segment in transcript.segments):
+        return None
+    segments = [
+        DiarizationSegment(start=segment.start, end=segment.end, speaker=str(segment.speaker))
+        for segment in transcript.segments
+    ]
+    return DiarizationResult(segments=segments, provider=f"asr:{transcript.provider}:{transcript.model}")

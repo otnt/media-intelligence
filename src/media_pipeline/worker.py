@@ -445,7 +445,7 @@ def _missing_summary_model(model: str) -> str:
     if key in {"deepseek", "deepseek-pro", "deepseek-v4-pro", "deepseek_v4_pro"}:
         return "DeepSeek is not configured. Set DEEPSEEK_API_KEY."
     if key in {"qwen3.8-max", "qwen-max", "qwen_max"}:
-        return "Qwen3.8-Max is not configured. Set DASHSCOPE_API_KEY or QWEN_API_KEY."
+        return "Qwen3.8-Max is not configured. Set dashscope.api_key or DASHSCOPE_API_KEY."
     if key.startswith("qwen-8bit"):
         return "Qwen3.8 8bit weights are missing. hf download mlx-community/Qwen3.8-27B-8bit"
     if key in {"all"}:

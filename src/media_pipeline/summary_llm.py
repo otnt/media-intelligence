@@ -391,6 +391,9 @@ def _family_backends(
 ) -> list[SummaryBackend]:
     if vision is None or getattr(vision, "name", "") == "none":
         return []
+    if getattr(vision, "local", True) is False:
+        # A cloud keyframe judge is not the local Qwen3.8-27B; use qwen3.8-max for cloud summaries.
+        return []
     generate = getattr(vision, "generate", None)
     if not callable(generate):
         return []
@@ -473,6 +476,7 @@ def _deepseek_base_url(config: AppConfig) -> str:
 def _qwen_max_key(config: AppConfig) -> str:
     return (
         config.summary.qwen_api_key
+        or str(getattr(getattr(config, "dashscope", None), "api_key", "") or "")
         or os.environ.get("DASHSCOPE_API_KEY")
         or os.environ.get("QWEN_API_KEY")
         or ""
@@ -484,6 +488,10 @@ def _qwen_max_model(config: AppConfig) -> str:
 
 
 def _qwen_max_base_url(config: AppConfig) -> str:
+    dash_base = str(getattr(getattr(config, "dashscope", None), "base_url", "") or "").strip().rstrip("/")
+    if dash_base:
+        root = dash_base.split("/compatible-mode")[0].split("/api/v1")[0]
+        return f"{root}/compatible-mode/v1"
     return str(
         getattr(config.summary, "qwen_max_base_url", "") or DEFAULT_QWEN_MAX_BASE_URL
     ).strip().rstrip("/")
