@@ -197,6 +197,21 @@ class DashScopeConfig:
 
 
 @dataclass
+class AgyConfig:
+    """Antigravity CLI (agy): Gemini through the user's Google login, no API key."""
+
+    binary: str = "agy"
+    asr_model: str = "gemini-3.8-flash-medium"
+    # Used by the agy-gemini summary backend.
+    summary_model: str = "gemini-4-argon-medium"
+    # Audio windows sent per agy call; neighbours overlap so speakers can be matched.
+    window_sec: float = 180.0
+    overlap_sec: float = 45.0
+    concurrency: int = 3
+    timeout_sec: int = 900
+
+
+@dataclass
 class AnalysisConfig:
     enabled: bool = True
     # local = MLX Qwen on this Mac; dashscope = dashscope.vision_model in the cloud.
@@ -236,6 +251,7 @@ class AppConfig:
     analysis: AnalysisConfig = field(default_factory=AnalysisConfig)
     summary: SummaryConfig = field(default_factory=SummaryConfig)
     dashscope: DashScopeConfig = field(default_factory=DashScopeConfig)
+    agy: AgyConfig = field(default_factory=AgyConfig)
     worker: WorkerConfig = field(default_factory=WorkerConfig)
     dashboard: DashboardConfig = field(default_factory=DashboardConfig)
     source_path: Path | None = None
@@ -297,6 +313,7 @@ def load_config(path: Path | None = None) -> AppConfig:
     worker_raw = raw.get("worker") or {}
     dashboard_raw = raw.get("dashboard") or {}
     dashscope_raw = raw.get("dashscope") or {}
+    agy_raw = raw.get("agy") or {}
 
     vault_value = paths_raw.get("vault") or ""
     vault = expand_path(vault_value) if str(vault_value).strip() else detect_obsidian_vault()
@@ -410,6 +427,15 @@ def load_config(path: Path | None = None) -> AppConfig:
             vision_model=str(dashscope_raw.get("vision_model") or "qwen3.8-flash").strip(),
             vision_concurrency=max(1, int(dashscope_raw.get("vision_concurrency") or 4)),
         ),
+        agy=AgyConfig(
+            binary=str(agy_raw.get("binary") or "agy"),
+            asr_model=str(agy_raw.get("asr_model") or "gemini-3.8-flash-medium"),
+            summary_model=str(agy_raw.get("summary_model") or "gemini-4-argon-medium"),
+            window_sec=float(agy_raw.get("window_sec") or 180),
+            overlap_sec=float(agy_raw.get("overlap_sec") or 45),
+            concurrency=max(1, int(agy_raw.get("concurrency") or 3)),
+            timeout_sec=int(agy_raw.get("timeout_sec") or 900),
+        ),
         worker=_worker_from_raw(worker_raw),
         dashboard=_dashboard_from_raw(dashboard_raw),
         source_path=config_path if config_path.exists() else None,
@@ -440,6 +466,7 @@ def _summary_providers(value: Any) -> list[str]:
         "deepseek": "deepseek-v4-pro",
         "deepseek-pro": "deepseek-v4-pro",
         "qwen-max": "qwen3.8-max",
+        "agy": "agy-gemini",
     }
     known = {
         "qwen",

@@ -40,6 +40,21 @@ Language handling:
 - Qwen timestamps are coarse segment start/end times from VAD speech windows, not word-level forced alignment.
 - Install the Qwen extra before choosing that model: `uv pip install -e '.[qwen]'`.
 
+## Gemini via agy (no API key)
+
+If the [Antigravity CLI](https://antigravity.google) `agy` is installed and signed in, pick **Gemini via agy** (`agy-gemini`) as the ASR model.
+It transcribes and tags speakers in one pass with your own Google login, and pyannote is skipped.
+
+How it runs:
+
+- Audio is cut into 3-minute windows that overlap by 45 s; up to 3 run at once. Longer windows let Gemini's timestamps drift by 20 s or more.
+- Each window is copied alone into a temp folder and `agy -p` runs there with `--sandbox`, `--mode accept-edits` and `allowNonWorkspaceAccess: false`. Any tool call other than reading that one file aborts the window.
+- Gemini numbers speakers per window; the overlap is transcribed twice and votes on which label is which speaker.
+- Gemini timestamps drift by a few seconds, so segment edges are snapped to local VAD speech boundaries.
+- Known weakness: Gemini 3.8 Flash's speaker labels are not always consistent, so a two-person interview can come back as 4–6 speakers. Use `fun-asr` or pyannote when speaker tags matter.
+
+Settings live under `agy:` in the config (`asr_model`, `window_sec`, `overlap_sec`, `concurrency`, `timeout_sec`).
+
 ## Alibaba Cloud (DashScope) mode
 
 Everything heavy can run on Alibaba Cloud Model Studio (百炼) instead of this Mac:

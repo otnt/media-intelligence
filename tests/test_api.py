@@ -674,6 +674,7 @@ def test_summary_models_endpoint(tmp_path: Path, monkeypatch):
         "openai",
         "deepseek-v4-pro",
         "qwen3.8-max",
+        "agy-gemini",
     }
     assert by_key["qwen"]["label"] == "qwen-3.8-27B 4bit thinking none"
     assert by_key["qwen-xhigh"]["label"] == "qwen-3.8-27B 4bit thinking xhigh"

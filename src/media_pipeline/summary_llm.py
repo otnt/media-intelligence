@@ -43,6 +43,7 @@ ALL_BACKEND_KEYS = (
     "openai",
     "deepseek-v4-pro",
     "qwen3.8-max",
+    "agy-gemini",
 )
 THINKING_MAX_TOKENS = 8192
 DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com"
@@ -77,6 +78,8 @@ _KEY_ALIASES = {
     "qwen_max": "qwen3.8-max",
     "qwen3.8max": "qwen3.8-max",
     "qwen38-max": "qwen3.8-max",
+    "agy": "agy-gemini",
+    "gemini-agy": "agy-gemini",
 }
 _IMAGE_TYPES = {
     ".jpg": "image/jpeg",
@@ -177,6 +180,17 @@ def catalog_summary_backends(config: AppConfig, vision: object | None = None) ->
             qwen_max_model,
             bool(qwen_max_key),
             "" if qwen_max_key else "set DASHSCOPE_API_KEY or QWEN_API_KEY",
+        )
+    )
+    agy_model = _agy_summary_model(config)
+    agy_ok = _agy_available(config)
+    rows.append(
+        _catalog_row(
+            "agy-gemini",
+            f"Gemini via agy ({agy_model})",
+            agy_model,
+            agy_ok,
+            "" if agy_ok else "install and sign in to the agy CLI",
         )
     )
     return rows
@@ -327,7 +341,64 @@ def _available_backends(
                 ),
             )
         )
+    if _agy_available(config):
+        model = _agy_summary_model(config)
+        backends.append(
+            SummaryBackend(
+                key="agy-gemini",
+                label=f"Gemini via agy ({model})",
+                model_id=model,
+                generate_fn=lambda prompt, images, max_tokens, _config=config, _model=model: _agy_generate(
+                    _config, _model, prompt, images
+                ),
+            )
+        )
     return backends
+
+
+def _agy_summary_model(config: AppConfig) -> str:
+    return str(getattr(getattr(config, "agy", None), "summary_model", "") or "gemini-4-argon-medium")
+
+
+def _agy_available(config: AppConfig) -> bool:
+    import shutil
+
+    return bool(shutil.which(str(getattr(getattr(config, "agy", None), "binary", "") or "agy")))
+
+
+def _agy_generate(config: AppConfig, model: str, prompt: str, images: list[Path] | None) -> str:
+    """Summarize through the sandboxed agy CLI; keyframes are copied in and read with read_file."""
+    import shutil
+    import tempfile
+
+    from media_pipeline.asr.agy import agy_settings, run_agy
+
+    settings = agy_settings(config)
+    with tempfile.TemporaryDirectory(prefix="agy-summary-") as tmp:
+        workspace = Path(tmp)
+        copies: list[Path] = []
+        for index, (path, _mime, _blob) in enumerate(_image_blobs(images)):
+            target = workspace / f"frame{index:02d}{path.suffix.lower()}"
+            shutil.copyfile(path, target)
+            copies.append(target)
+        if copies:
+            listing = "\n".join(str(item) for item in copies)
+            instructions = (
+                "Before answering, call read_file on each of these keyframes from the video and use what they show. "
+                "Do not run commands or read any other file.\n" + listing
+            )
+        else:
+            instructions = "Answer directly from the text below. Do not call any tools."
+        text = run_agy(
+            f"{instructions}\n\n{prompt}",
+            workspace=workspace,
+            allowed_reads=set(copies),
+            settings=settings,
+            model=model,
+        )
+    if not text.strip():
+        raise RuntimeError("agy returned an empty summary")
+    return text.strip()
 
 
 def _probe_qwen(config: AppConfig) -> tuple[bool, str]:

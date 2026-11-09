@@ -47,6 +47,12 @@ ASR_MODELS: dict[str, dict[str, str]] = {
         "provider": "qwen3",
         "backend_model": "qwen3-asr-1.7b",
     },
+    "agy-gemini": {
+        "label": "Gemini via agy (with speakers)",
+        "runtime": "Antigravity CLI",
+        "provider": "agy",
+        "backend_model": "agy-gemini",
+    },
     "fun-asr": {
         "label": "Fun-ASR (Alibaba Cloud, with speakers)",
         "runtime": "DashScope cloud",

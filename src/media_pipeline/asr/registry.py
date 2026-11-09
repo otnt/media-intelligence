@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from media_pipeline.asr.agy import AgyASRProvider
 from media_pipeline.asr.base import ASRNotAvailableError, ASRProvider
 from media_pipeline.asr.dashscope import DashScopeASRProvider
 from media_pipeline.asr.language import supports_code_switching
@@ -33,6 +34,8 @@ def get_provider(model_id: str) -> ASRProvider:
         return Qwen3ASRProvider(model=backend_model)
     if provider_name == "dashscope":
         return DashScopeASRProvider(model=backend_model)
+    if provider_name == "agy":
+        return AgyASRProvider(model=backend_model)
     raise KeyError(f"Unknown ASR provider {provider_name!r}")
 
 
@@ -59,6 +62,10 @@ def probe_model(model_id: str) -> tuple[bool, str]:
         return False, "unknown model"
     if info["provider"] == "dashscope":
         return _probe_dashscope()
+    if info["provider"] == "agy":
+        import shutil
+
+        return (True, "agy") if shutil.which("agy") else (False, "agy is not installed or not on PATH")
     try:
         if info["provider"] == "mlx_whisper":
             import mlx_whisper  # noqa: F401

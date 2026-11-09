@@ -14,6 +14,7 @@ paths:
   notes_folder: Transcripts
 
 asr:
+  # agy-gemini = Gemini via the agy CLI (your Google login): transcript + speaker tags, no API key.
   # fun-asr = Alibaba Cloud Fun-ASR: transcript + speaker tags in one cloud call (needs dashscope.api_key).
   default: qwen3-asr-1.7b
   # auto = detect language(s). Qwen3-ASR can keep mixed Chinese/English in one transcript.
@@ -27,7 +28,7 @@ download:
   cookies_from_browser: chrome
 
 diarization:
-  # Skipped automatically when the ASR model already tags speakers (fun-asr).
+  # Skipped automatically when the ASR model already tags speakers (agy-gemini, fun-asr).
   provider: pyannote
   model: pyannote/speaker-diarization-community-1
   hf_token: ""
@@ -83,6 +84,16 @@ summary:
   qwen_api_key: ""
   # Dashboard Settings writes this. Empty uses the built-in analyst briefing prompt.
   prompt: ""
+
+agy:
+  # Antigravity CLI: Gemini through your Google login, no API key. Used by asr.default: agy-gemini.
+  binary: agy
+  asr_model: gemini-3.8-flash-medium
+  # Audio is sent in windows; neighbours overlap so speaker labels can be matched across them.
+  window_sec: 180
+  overlap_sec: 45
+  concurrency: 3
+  timeout_sec: 900
 
 dashscope:
   # Alibaba Cloud Model Studio (百炼). One key for Fun-ASR, cloud keyframe judging and qwen3.8-max summaries.
