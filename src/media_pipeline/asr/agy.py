@@ -84,6 +84,8 @@ class AgySettings:
     overlap_sec: float = 45.0
     concurrency: int = 3
     timeout_sec: int = 900
+    # Squeeze a window's timestamps when they overrun its length. bench/RESULTS.md: helps 4 of 5 samples.
+    rescale: bool = True
 
 
 def agy_settings(config: Any) -> AgySettings:
@@ -97,6 +99,7 @@ def agy_settings(config: Any) -> AgySettings:
         overlap_sec=float(getattr(raw, "overlap_sec", 0) or 45),
         concurrency=max(1, int(getattr(raw, "concurrency", 0) or 3)),
         timeout_sec=int(getattr(raw, "timeout_sec", 0) or 900),
+        rescale=bool(getattr(raw, "rescale", True)),
     )
 
 
@@ -258,7 +261,8 @@ class AgyASRProvider(ASRProvider):
             else:
                 raise AgyError(f"agy window {index + 1} failed: {last_error}")
         length = end - start if end > start else float("inf")
-        pieces = rescale_overflow(pieces, length)
+        if settings.rescale:
+            pieces = rescale_overflow(pieces, length)
         placed = [
             Piece(
                 start=start + max(0.0, min(p.start, length)),
@@ -465,7 +469,9 @@ def snap_to_speech(pieces: list[Piece], audio_path: Path, reach: float = 2.0) ->
         later = [c for c in starts if c >= floor - 0.05]
         start = nearest(max(piece.start, floor), later, limit) if later else max(piece.start, floor)
         start = max(start, floor)
-        end = nearest(piece.end, [c for c in ends if c > start] or [piece.end])
+        # Never shrink an utterance below 60% of its stated length: breaths inside a sentence are VAD ends too.
+        minimum = start + 0.6 * max(0.0, piece.end - piece.start)
+        end = nearest(piece.end, [c for c in ends if c >= minimum] or [piece.end])
         if end <= start:
             end = max(piece.end, start + 0.3)
         snapped.append(Piece(round(start, 2), round(end, 2), piece.text, piece.speaker))

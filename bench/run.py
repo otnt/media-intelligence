@@ -24,6 +24,7 @@ from media_pipeline.models import ASROptions
 SYSTEMS = {
     # name: (asr model id, config overrides)
     "agy-argon": ("agy-gemini", {"agy.asr_model": "gemini-4-argon-medium"}),
+    "agy-argon-rescale": ("agy-gemini", {"agy.asr_model": "gemini-4-argon-medium", "agy.rescale": True}),
     "agy-flash": ("agy-gemini", {"agy.asr_model": "gemini-3.8-flash-medium"}),
     "fun-asr": ("fun-asr", {}),
     "qwen3-local": ("qwen3-asr-1.7b", {}),

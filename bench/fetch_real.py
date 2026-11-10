@@ -4,8 +4,8 @@
 
 Each source has a human-made transcript where every turn carries a speaker
 name and a start time on the YouTube video's clock. We download that video's
-audio (no browser cookies), keep the first EXCERPT_SEC seconds, and write the
-turns that start inside it. Turn end = next turn's start (timing: turn_start).
+audio (no browser cookies), keep audio up to the first turn boundary at/after
+EXCERPT_SEC, and write the turns inside it. Turn end = next turn's start (timing: turn_start).
 """
 
 from __future__ import annotations
@@ -84,10 +84,12 @@ def main(out_dir: Path) -> None:
         turns = parse_lex(page) if source["format"] == "lex" else parse_bumingbai(page)
         if not turns:
             raise SystemExit(f"{source['id']}: no turns parsed")
-        kept = [turn for turn in turns if turn["start"] < EXCERPT_SEC]
-        for index, turn in enumerate(kept):
-            following = turns[turns.index(turn) + 1]["start"] if turns.index(turn) + 1 < len(turns) else EXCERPT_SEC
-            turn["end"] = float(min(following, EXCERPT_SEC))
+        # Cut on a turn boundary: the first turn starting at/after EXCERPT_SEC. Cutting mid-turn
+        # would leave reference text that the audio never reaches and inflate every system's ER.
+        cut = next((t["start"] for t in turns if t["start"] >= EXCERPT_SEC), turns[-1]["start"])
+        kept = [turn for turn in turns if turn["start"] < cut]
+        for turn, following in zip(kept, [t["start"] for t in turns[1 : len(kept) + 1]]):
+            turn["end"] = float(following)
             turn["start"] = float(turn["start"])
         full = out_dir / f"{source['id']}.full.m4a"
         if not full.exists():
@@ -98,7 +100,7 @@ def main(out_dir: Path) -> None:
             )
         wav = out_dir / f"{source['id']}.wav"
         subprocess.run(
-            ["ffmpeg", "-y", "-loglevel", "error", "-i", str(full), "-t", str(EXCERPT_SEC),
+            ["ffmpeg", "-y", "-loglevel", "error", "-i", str(full), "-t", str(cut),
              "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(wav)],
             check=True,
         )
@@ -107,7 +109,7 @@ def main(out_dir: Path) -> None:
             "id": source["id"],
             "kind": "real",
             "language": source["language"],
-            "duration": EXCERPT_SEC,
+            "duration": float(cut),
             "timing": "turn_start",
             "source": {"transcript": source["transcript"], "youtube": source["youtube"], "note": source["note"]},
             "speakers": {name: name for name in names},

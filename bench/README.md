@@ -9,11 +9,11 @@ Compares ASR systems on transcript accuracy and speaker tags. Data lives outside
 | `syn-zh` | Kokoro TTS | Chinese | ~3 min | 3 | exact text, speaker, start/end per utterance |
 | `syn-en` | Kokoro TTS | English | ~3 min | 3 | exact |
 | `syn-mix` | Kokoro TTS | Chinese–English code-switching | ~3 min | 3 | exact |
-| `real-en-lex503` | Lex Fridman Podcast #503, first 15 min | English | 15 min | 4 | human transcript, per-turn speaker + start time |
-| `real-zh-bmb232` | 不明白播客 EP-232, first 15 min | Chinese | 15 min | 2 | human-edited 文字版, per-turn speaker + start time |
+| `real-en-lex503` | Lex Fridman Podcast #503, first ~15 min | English | ~15 min | 4 | human transcript, per-turn speaker + start time |
+| `real-zh-bmb232` | 不明白播客 EP-232, first ~15 min | Chinese | ~15 min | 2 | human-edited 文字版, per-turn speaker + start time |
 
 Synthetic dialogues (`make_synthetic.py`) use different Kokoro voices per speaker, 0.15–0.7 s gaps (longer at speaker changes), short back-channels ("嗯", "Sure."), ±5% speaking rate jitter and −45 dBFS room tone.
-Real samples (`fetch_real.py`) take audio from the YouTube video whose clock the transcript timestamps use; turn end = next turn's start.
+Real samples (`fetch_real.py`) take audio from the YouTube video whose clock the transcript timestamps use; turn end = next turn's start, and the excerpt is cut on the first turn boundary after 15 min so no reference text runs past the audio.
 
 Caveats:
 

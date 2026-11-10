@@ -209,6 +209,7 @@ class AgyConfig:
     overlap_sec: float = 45.0
     concurrency: int = 3
     timeout_sec: int = 900
+    rescale: bool = True
 
 
 @dataclass
@@ -435,6 +436,7 @@ def load_config(path: Path | None = None) -> AppConfig:
             overlap_sec=float(agy_raw.get("overlap_sec") or 45),
             concurrency=max(1, int(agy_raw.get("concurrency") or 3)),
             timeout_sec=int(agy_raw.get("timeout_sec") or 900),
+            rescale=bool(agy_raw.get("rescale", True)),
         ),
         worker=_worker_from_raw(worker_raw),
         dashboard=_dashboard_from_raw(dashboard_raw),
