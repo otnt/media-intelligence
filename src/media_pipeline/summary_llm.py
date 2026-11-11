@@ -46,6 +46,9 @@ ALL_BACKEND_KEYS = (
     "agy-gemini",
 )
 THINKING_MAX_TOKENS = 8192
+# Roughly 100-250k tokens: well inside the 1M-token windows of the cloud summary models.
+CLOUD_SOURCE_CHARS = 400_000
+AGY_SOURCE_CHARS = 150_000
 DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 # Mainland China DashScope default. Match key region:
 # Singapore intl: https://dashscope-intl.aliyuncs.com/compatible-mode/v1
@@ -98,6 +101,11 @@ class SummaryBackend:
     model_id: str
     local: bool = False
     generate_fn: Callable[..., str] | None = None
+    # Whether the model actually receives attached images (DeepSeek V4 Pro is text-only).
+    accepts_images: bool = True
+    # How much transcript the backend gets. Local 27B models need the small default; the cloud models
+    # here have ~1M-token windows, and cutting at 24k chars dropped the second half of long videos.
+    max_source_chars: int = 24000
 
     def generate(self, prompt: str, images: list[Path] | None = None, max_tokens: int | None = None) -> str:
         if self.generate_fn is None:
@@ -271,6 +279,7 @@ def _available_backends(
                 key="gemini",
                 label=f"Gemini ({model})",
                 model_id=model,
+                max_source_chars=CLOUD_SOURCE_CHARS,
                 generate_fn=lambda prompt, images, max_tokens, _key=gemini_key, _model=model: _gemini_generate(
                     _key, _model, prompt, images, max_tokens
                 ),
@@ -284,6 +293,7 @@ def _available_backends(
                 key="openai",
                 label=f"OpenAI ({model})",
                 model_id=model,
+                max_source_chars=CLOUD_SOURCE_CHARS,
                 generate_fn=lambda prompt, images, max_tokens, _key=openai_key, _model=model: _openai_generate(
                     _key, _model, prompt, images, max_tokens
                 ),
@@ -298,6 +308,8 @@ def _available_backends(
                 key="deepseek-v4-pro",
                 label="DeepSeek V4 Pro (reasoning high)",
                 model_id=model,
+                accepts_images=False,
+                max_source_chars=CLOUD_SOURCE_CHARS,
                 generate_fn=lambda prompt, images, max_tokens, _key=deepseek_key, _model=model, _base=base_url: (
                     _openai_compatible_generate(
                         api_key=_key,
@@ -325,12 +337,13 @@ def _available_backends(
                 key="qwen3.8-max",
                 label="Qwen3.8-Max (reasoning medium)",
                 model_id=model,
+                max_source_chars=CLOUD_SOURCE_CHARS,
                 generate_fn=lambda prompt, images, max_tokens, _key=qwen_max_key, _model=model, _base=base_url: (
                     _openai_compatible_generate(
                         api_key=_key,
                         model=_model,
                         prompt=prompt,
-                        images=None,
+                        images=images,
                         max_tokens=max(int(max_tokens or 0), THINKING_MAX_TOKENS),
                         base_url=_base,
                         extra={
@@ -350,6 +363,7 @@ def _available_backends(
                 key="agy-gemini",
                 label=f"Gemini via agy ({model})",
                 model_id=model,
+                max_source_chars=AGY_SOURCE_CHARS,  # the prompt travels as a CLI argument (macOS ARG_MAX ~1 MB)
                 generate_fn=lambda prompt, images, max_tokens, _config=config, _model=model: _agy_generate(
                     _config, _model, prompt, images
                 ),

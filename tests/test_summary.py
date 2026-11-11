@@ -253,3 +253,39 @@ def test_load_note_moves_legacy_summary_above_metadata(tmp_path: Path):
     assert document.summary_markdown == "briefing"
     assert document.transcript_markdown.startswith("## Transcript")
     assert "## Summary" not in document.transcript_markdown
+
+
+def test_cloud_backends_get_the_whole_transcript_and_images_only_if_they_can_see_them(tmp_path):
+    from pathlib import Path
+
+    from media_pipeline.artifacts import ArtifactStore
+    from media_pipeline.models import NamedSegment, VideoMetadata
+    from media_pipeline.summary import summarize_task
+    from media_pipeline.summary_llm import CLOUD_SOURCE_CHARS, SummaryBackend
+
+    artifacts = ArtifactStore(tmp_path / "artifacts", "long1")
+    # ~60k chars of transcript: more than the old 24k cut, like a 42-minute English interview.
+    artifacts.save_named([NamedSegment(float(i), float(i) + 1, "S0", "Host", f"sentence number {i} " * 6) for i in range(500)])
+    images = tmp_path / "imgs"
+    images.mkdir()
+    (images / "01.jpg").write_bytes(b"\xff\xd8\xff" + b"0" * 100)
+    meta = VideoMetadata(url="u", title="t", platform="Xiaohongshu", author="a", video_id="long1", duration=None,
+                         published="", description="", thumbnail_url="", asr_model="x", media_kind="video")
+    seen = {}
+
+    def capture(name):
+        def run(prompt, imgs, max_tokens):
+            seen[name] = (prompt, list(imgs or []))
+            return "## 摘要\n要点"
+        return run
+
+    vision = SummaryBackend("qwen3.8-max", "Qwen", "qwen3.8-max", generate_fn=capture("qwen"), max_source_chars=CLOUD_SOURCE_CHARS)
+    text_only = SummaryBackend("deepseek-v4-pro", "DeepSeek", "deepseek", generate_fn=capture("deepseek"),
+                               accepts_images=False, max_source_chars=CLOUD_SOURCE_CHARS)
+    local = SummaryBackend("qwen", "local", "q", generate_fn=capture("local"))
+    for backend in (vision, text_only, local):
+        summarize_task(artifacts, backend, prompt="", metadata=meta, extra_image_dir=images)
+    assert "sentence number 499" in seen["qwen"][0] and "transcript truncated" not in seen["qwen"][0]
+    assert [Path(p).name for p in seen["qwen"][1]] == ["01.jpg"] and "Attached images: 1" in seen["qwen"][0]
+    assert seen["deepseek"][1] == [] and "Attached images" not in seen["deepseek"][0]
+    assert "transcript truncated" in seen["local"][0]  # local 27B keeps the small window

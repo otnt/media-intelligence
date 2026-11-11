@@ -190,11 +190,15 @@ def build_model_prompt(
     lines = [
         (user_prompt or DEFAULT_PROMPT).strip(),
         "",
-        "Use the source text and any attached images as evidence. Do not invent facts they do not support.",
+        (
+            "Use the source text and the attached images as evidence. Do not invent facts they do not support."
+            if attached
+            else "Use the source text as evidence. Do not invent facts it does not support."
+        ),
         "Match length to information density. Prefer Chinese if the source is Chinese.",
         "Plain text only. Light emoji is encouraged for scannability.",
         "Do not copy the source sentence by sentence or reproduce it as a rewritten article.",
-        "Attached images are input only. Look at them, then write text.",
+        *(["Attached images are input only. Look at them, then write text."] if attached else []),
         "Do not include images, screenshots, Obsidian wikilinks, markdown image syntax, or HTML img tags.",
         "Do not mention filenames or attachment paths. Ignore any request for illustrated or screenshot output.",
         "",
@@ -222,14 +226,19 @@ def summarize_task(
 ) -> dict:
     user_prompt = normalize_prompt(prompt)
     stills = collect_stills(artifacts, extra_image_dir)
-    attached = choose_images(stills)
+    # Never tell a text-only model about images it will not receive.
+    attached = choose_images(stills) if getattr(provider, "accepts_images", True) else []
     named = artifacts.load_named() or []
     source_text = _plain_transcript(named)
     if metadata and metadata.media_kind == "image" and metadata.description and not source_text.strip():
         source_text = metadata.description.strip()
     if not source_text.strip() and not attached:
         raise ValueError("Nothing to summarize yet. Wait until the transcript, original post, or images are ready.")
-    packed = build_model_prompt(user_prompt, metadata, _truncate(source_text), attached)
+    limit = int(getattr(provider, "max_source_chars", MAX_TRANSCRIPT_CHARS) or MAX_TRANSCRIPT_CHARS)
+    if len(source_text) > limit:
+        logger.warning("Transcript of %s is %s chars; %s gets the first %s", artifacts.video_id, len(source_text),
+                       getattr(provider, "key", "model"), limit)
+    packed = build_model_prompt(user_prompt, metadata, _truncate(source_text, limit), attached)
     logger.info("Summarizing %s with %s attached images; output is text-only", artifacts.video_id, len(attached))
     raw = provider.generate(packed, [item.path for item in attached], max_tokens)
     thinking, markdown = parse_summary_output(raw)
