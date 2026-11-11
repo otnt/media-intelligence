@@ -1,6 +1,6 @@
 const ROOT_ID = "mdp-root";
 
-let selectedModel = MDP_DEFAULT_MODEL;
+let selectedModel = ""; // empty: let the server default (asr.default) decide
 let models = MDP_FALLBACK_MODELS;
 let lastUrl = "";
 
@@ -542,7 +542,7 @@ async function queueCard(host, button) {
     const response = await mdpSend({
       type: "CREATE_TASK",
       url,
-      asr_model: stored.asrModel || selectedModel || MDP_DEFAULT_MODEL,
+      asr_model: stored.asrModel || selectedModel || undefined,
       extract_keyframes: Boolean(stored.extractKeyframes),
     });
     if (!response.ok) {
