@@ -579,7 +579,7 @@ def test_dashboard_and_frame_override(tmp_path: Path):
     assert "deepseek-v4-pro" in home.text
     assert "qwen3.8-max" in home.text
     assert "DeepSeek V4 Pro (reasoning high)" in home.text
-    assert "Qwen3.8-Max (reasoning medium)" in home.text
+    assert "Qwen3.8-Max (reasoning xhigh)" in home.text
     assert "fold-frames" in home.text
     assert "Extract keyframes" in home.text
     assert "资深分析师" in home.text

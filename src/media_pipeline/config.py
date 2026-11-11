@@ -260,6 +260,9 @@ class SummaryConfig:
     # Mainland China DashScope default. Match key region:
     # Singapore intl: dashscope-intl.aliyuncs.com; US (Virginia): dashscope-us.aliyuncs.com
     qwen_max_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    # DashScope reasoning_effort for qwen3.8-max: low (4k thinking tokens), medium (16k), xhigh (256k,
+    # the model's default), or none to answer without thinking.
+    qwen_max_reasoning: str = "xhigh"
     gemini_api_key: str = ""
     openai_api_key: str = ""
     deepseek_api_key: str = ""
@@ -416,6 +419,7 @@ def load_config(path: Path | None = None) -> AppConfig:
                 summary_raw.get("deepseek_base_url") or "https://api.deepseek.com"
             ).rstrip("/"),
             qwen_max_model=str(summary_raw.get("qwen_max_model") or "qwen3.8-max"),
+            qwen_max_reasoning=normalize_qwen_reasoning(summary_raw.get("qwen_max_reasoning")),
             qwen_max_base_url=str(
                 summary_raw.get("qwen_max_base_url")
                 or "https://dashscope.aliyuncs.com/compatible-mode/v1"
@@ -480,6 +484,14 @@ def load_config(path: Path | None = None) -> AppConfig:
         source_path=config_path if config_path.exists() else None,
     )
     return config
+
+
+def normalize_qwen_reasoning(value: Any) -> str:
+    """Map onto the three levels qwen3.8-max accepts; aliases follow Alibaba's documented mapping."""
+    effort = str(value or "").strip().lower()
+    aliases = {"high": "xhigh", "max": "xhigh", "minimal": "low", "off": "none", "false": "none"}
+    effort = aliases.get(effort, effort)
+    return effort if effort in {"low", "medium", "xhigh", "none"} else "xhigh"
 
 
 def _storage_mode(value: Any) -> str:

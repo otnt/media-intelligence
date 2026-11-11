@@ -421,7 +421,20 @@ def test_resolve_deepseek_and_qwen_max(monkeypatch):
     assert deepseek[0].label == "DeepSeek V4 Pro (reasoning high)"
     qwen_max = resolve_summary_backends(config, None, "qwen3.8-max")
     assert [item.key for item in qwen_max] == ["qwen3.8-max"]
-    assert qwen_max[0].label == "Qwen3.8-Max (reasoning medium)"
+    assert qwen_max[0].label == "Qwen3.8-Max (reasoning xhigh)"
+
+
+def test_qwen_max_reasoning_level_is_configurable_and_never_sent_with_a_budget():
+    from media_pipeline.config import AppConfig, SummaryConfig, normalize_qwen_reasoning
+    from media_pipeline.summary_llm import _qwen_max_label, _qwen_max_thinking
+
+    assert [normalize_qwen_reasoning(v) for v in ("", "medium", "high", "MAX", "minimal", "off", "bogus")] == \
+        ["xhigh", "medium", "xhigh", "xhigh", "low", "none", "xhigh"]
+    config = AppConfig(summary=SummaryConfig(qwen_max_reasoning="medium"))
+    assert _qwen_max_thinking(config) == {"enable_thinking": True, "reasoning_effort": "medium"}
+    assert _qwen_max_label(config) == "Qwen3.8-Max (reasoning medium)"
+    off = AppConfig(summary=SummaryConfig(qwen_max_reasoning="none"))
+    assert _qwen_max_thinking(off) == {"enable_thinking": False} and "thinking_budget" not in _qwen_max_thinking(config)
 
 
 def test_redact_secrets_strips_bearer_tokens():

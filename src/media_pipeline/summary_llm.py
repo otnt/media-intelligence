@@ -184,7 +184,7 @@ def catalog_summary_backends(config: AppConfig, vision: object | None = None) ->
     rows.append(
         _catalog_row(
             "qwen3.8-max",
-            "Qwen3.8-Max (reasoning medium)",
+            _qwen_max_label(config),
             qwen_max_model,
             bool(qwen_max_key),
             "" if qwen_max_key else "set DASHSCOPE_API_KEY or QWEN_API_KEY",
@@ -335,7 +335,7 @@ def _available_backends(
         backends.append(
             SummaryBackend(
                 key="qwen3.8-max",
-                label="Qwen3.8-Max (reasoning medium)",
+                label=_qwen_max_label(config),
                 model_id=model,
                 max_source_chars=CLOUD_SOURCE_CHARS,
                 generate_fn=lambda prompt, images, max_tokens, _key=qwen_max_key, _model=model, _base=base_url: (
@@ -346,10 +346,7 @@ def _available_backends(
                         images=images,
                         max_tokens=max(int(max_tokens or 0), THINKING_MAX_TOKENS),
                         base_url=_base,
-                        extra={
-                            "enable_thinking": True,
-                            "reasoning_effort": "medium",
-                        },
+                        extra=_qwen_max_thinking(config),
                         timeout=300,
                         stream=True,
                     )
@@ -558,6 +555,25 @@ def _deepseek_base_url(config: AppConfig) -> str:
     return str(
         getattr(config.summary, "deepseek_base_url", "") or DEFAULT_DEEPSEEK_BASE_URL
     ).strip().rstrip("/")
+
+
+def _qwen_max_reasoning(config: AppConfig) -> str:
+    from media_pipeline.config import normalize_qwen_reasoning
+
+    return normalize_qwen_reasoning(getattr(config.summary, "qwen_max_reasoning", "xhigh"))
+
+
+def _qwen_max_label(config: AppConfig) -> str:
+    effort = _qwen_max_reasoning(config)
+    return "Qwen3.8-Max (no thinking)" if effort == "none" else f"Qwen3.8-Max (reasoning {effort})"
+
+
+def _qwen_max_thinking(config: AppConfig) -> dict[str, Any]:
+    effort = _qwen_max_reasoning(config)
+    if effort == "none":
+        return {"enable_thinking": False}
+    # Only reasoning_effort: DashScope rejects it together with thinking_budget.
+    return {"enable_thinking": True, "reasoning_effort": effort}
 
 
 def _qwen_max_key(config: AppConfig) -> str:

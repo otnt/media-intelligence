@@ -70,6 +70,8 @@ summary:
   deepseek_model: deepseek-v4-pro
   deepseek_base_url: https://api.deepseek.com
   qwen_max_model: qwen3.8-max
+  # Thinking depth for qwen3.8-max: low (4k thinking tokens) | medium (16k) | xhigh (256k, default) | none
+  qwen_max_reasoning: xhigh
   # DashScope / Model Studio keys are region-specific. Match base_url to where the key was issued:
   # Mainland China: https://dashscope.aliyuncs.com/compatible-mode/v1
   # Singapore intl: https://dashscope-intl.aliyuncs.com/compatible-mode/v1
