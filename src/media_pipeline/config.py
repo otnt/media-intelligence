@@ -200,6 +200,16 @@ class DashScopeConfig:
 
 
 @dataclass
+class StorageConfig:
+    """What to keep on disk once a video is processed (see storage.py)."""
+
+    # Delete the downloaded video and the WAV; keep a ~22 MB/hour audio copy for re-transcribing.
+    compact_after_processing: bool = True
+    # Delete that audio copy after this many days (0 = right after processing, -1 = keep forever).
+    keep_audio_days: int = 30
+
+
+@dataclass
 class AgyConfig:
     """Antigravity CLI (agy): Gemini through the user's Google login, no API key."""
 
@@ -256,6 +266,7 @@ class AppConfig:
     summary: SummaryConfig = field(default_factory=SummaryConfig)
     dashscope: DashScopeConfig = field(default_factory=DashScopeConfig)
     agy: AgyConfig = field(default_factory=AgyConfig)
+    storage: StorageConfig = field(default_factory=StorageConfig)
     worker: WorkerConfig = field(default_factory=WorkerConfig)
     dashboard: DashboardConfig = field(default_factory=DashboardConfig)
     source_path: Path | None = None
@@ -318,6 +329,7 @@ def load_config(path: Path | None = None) -> AppConfig:
     dashboard_raw = raw.get("dashboard") or {}
     dashscope_raw = raw.get("dashscope") or {}
     agy_raw = raw.get("agy") or {}
+    storage_raw = raw.get("storage") or {}
 
     vault_value = paths_raw.get("vault") or ""
     vault = expand_path(vault_value) if str(vault_value).strip() else detect_obsidian_vault()
@@ -442,6 +454,10 @@ def load_config(path: Path | None = None) -> AppConfig:
             concurrency=max(1, int(agy_raw.get("concurrency") or 3)),
             timeout_sec=int(agy_raw.get("timeout_sec") or 900),
             rescale=bool(agy_raw.get("rescale", True)),
+        ),
+        storage=StorageConfig(
+            compact_after_processing=_as_bool(storage_raw.get("compact_after_processing"), True),
+            keep_audio_days=int(storage_raw.get("keep_audio_days", 30)),
         ),
         worker=_worker_from_raw(worker_raw),
         dashboard=_dashboard_from_raw(dashboard_raw),

@@ -19,7 +19,7 @@ from media_pipeline.visual.vlm import NullVisionProvider
 class FakeVisual:
     def run(self, video_path, artifacts, metadata, named, settings, from_stage="", progress=None):
         from media_pipeline.visual.align import align_keyframes, build_multimodal_document
-        from media_pipeline.visual.models import Keyframe, SceneSpan
+        from media_pipeline.visual.models import CandidateFrame, Keyframe, SceneSpan
 
         if progress:
             progress("detecting_scenes", {})
@@ -27,7 +27,8 @@ class FakeVisual:
             progress("deduplicating_frames", {"candidate_count": 0})
             progress("aligning_multimodal", {"keyframe_count": 1})
         artifacts.save_scenes([SceneSpan(0.0, float(metadata.duration or 0.0))])
-        artifacts.save_candidates([])
+        # Like the real extractor: sampled candidates on disk mean the video is not needed again.
+        artifacts.save_candidates([CandidateFrame(1.0, "candidate_frames/00-00-01.000.jpg", ["periodic"])])
         keyframes = [
             Keyframe(timestamp=1.0, image_path="keyframes/00-00-01.000.jpg", sources=["periodic"]),
         ]

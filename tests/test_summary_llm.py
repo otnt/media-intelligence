@@ -478,3 +478,49 @@ def test_format_prompt_instruct_disables_thinking(monkeypatch):
     _format_prompt(object(), {"model_type": "qwen3_5"}, "hi", num_images=1)
     assert seen["enable_thinking"] is False
     assert "reasoning_effort" not in seen
+
+
+def test_stream_chat_collects_content_and_reasoning_and_surfaces_errors():
+    import io
+    import json as _json
+
+    import pytest
+
+    from media_pipeline.summary_llm import _stream_chat
+
+    def sse(*events):
+        lines = [f"data: {_json.dumps(e)}\n\n".encode() for e in events] + [b"data: [DONE]\n\n"]
+
+        class Response(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def __iter__(self):
+                return iter(lines)
+
+        return Response()
+
+    seen = {}
+
+    def opener(request, timeout=None):
+        seen["body"] = _json.loads(request.data)
+        seen["timeout"] = timeout
+        return sse(
+            {"choices": [{"delta": {"reasoning_content": "think "}}]},
+            {"choices": [{"delta": {"reasoning_content": "more"}}]},
+            {"choices": [{"delta": {"content": "## 摘要"}}]},
+            {"choices": [{"delta": {"content": "\n要点"}}]},
+        )
+
+    text, reasoning = _stream_chat("https://x/v1/chat/completions", {"model": "m"}, {"Authorization": "Bearer k"}, opener=opener)
+    assert text == "## 摘要\n要点" and reasoning == "think more"
+    assert seen["body"]["stream"] is True and seen["timeout"] == 300
+
+    def failing(request, timeout=None):
+        return sse({"error": {"message": "quota"}})
+
+    with pytest.raises(RuntimeError, match="quota"):
+        _stream_chat("https://x/v1/chat/completions", {"model": "m"}, {"Authorization": "Bearer k"}, opener=failing)

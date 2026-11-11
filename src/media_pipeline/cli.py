@@ -66,6 +66,13 @@ def main(argv: list[str] | None = None) -> int:
     status.add_argument("--config", type=Path, default=None)
     status.add_argument("--limit", type=int, default=20)
 
+    clean = sub.add_parser(
+        "cleanup",
+        help="Free disk: drop downloaded videos/WAVs of finished tasks, keep a small audio copy (storage.*)",
+    )
+    clean.add_argument("--dry-run", action="store_true", help="Only report what would be removed")
+    clean.add_argument("--config", type=Path, default=None)
+
     init = sub.add_parser("init", help="Write a default config file")
     init.add_argument("--config", type=Path, default=None)
 
@@ -92,6 +99,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_retry(config, args.task_id, args.asr_model, getattr(args, "stage", None))
     if args.command == "status":
         return cmd_status(config, args.limit)
+    if args.command == "cleanup":
+        return cmd_cleanup(config, dry_run=args.dry_run)
     parser.error(f"Unknown command {args.command}")
     return 2
 
@@ -161,6 +170,15 @@ def cmd_serve(
         log_level="info",
         http=http_impl,
     )
+    return 0
+
+
+def cmd_cleanup(config: AppConfig, *, dry_run: bool) -> int:
+    from media_pipeline.storage import cleanup
+    from media_pipeline.store import TaskStore
+
+    report = cleanup(config, TaskStore(config.paths.db), dry_run=dry_run)
+    print(report.summary())
     return 0
 
 

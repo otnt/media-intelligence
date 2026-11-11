@@ -18,6 +18,7 @@ from media_pipeline.diarization import (
     build_diarization_provider,
     diarization_from_transcript,
 )
+from media_pipeline.storage import compact_audio_path
 from media_pipeline.media import (
     MediaError,
     UnsupportedURLError,
@@ -122,10 +123,13 @@ class Pipeline:
         self._persist_finished_timings(task, artifacts)
         self._create_note(task, metadata, artifacts)
 
-        video_path = self._download(task, metadata, artifacts)
         task.extra["media_kind"] = metadata.media_kind
         self.store.update(task)
+        # Media is fetched only when a stage needs it: after compaction (storage.py) the video and WAV are
+        # gone, and re-sharing a finished video must not download it again just to reuse cached results.
+        media = _Media(self, task, metadata, artifacts)
         if metadata.media_kind == "image":
+            video_path = media.video()
             self._write_image_post(task, metadata, artifacts, video_path)
             self._summarize(task, metadata, artifacts, force=from_stage == "summarizing")
             task.status = TaskStatus.completed
@@ -137,9 +141,8 @@ class Pipeline:
                 self.notes.update_progress(Path(task.note_path), task, metadata)
             logger.info("Task %s completed Xiaohongshu image post %s", task.id, metadata.video_id)
             return task
-        audio_path = self._extract_audio(task, metadata, video_path, artifacts)
-        transcript = self._transcribe(task, metadata, artifacts, audio_path)
-        diarization = self._diarize(task, artifacts, audio_path, transcript)
+        transcript = self._transcribe(task, metadata, artifacts, media)
+        diarization = self._diarize(task, artifacts, media, transcript)
         rebuilt_before = artifacts.named_source()
         named = self._align(task, artifacts, transcript, diarization, metadata)
         # A new transcript (e.g. after switching ASR model) makes the cached summary stale.
@@ -149,6 +152,7 @@ class Pipeline:
 
         visual_result: dict = {}
         if _wants_keyframes(task, from_stage):
+            video_path = media.video() if _visual_needs_video(artifacts, from_stage) else media.existing_video()
             visual_result = self._extract_visual(task, metadata, artifacts, video_path, named, from_stage)
         else:
             task.extra.setdefault("extract_keyframes", False)
@@ -163,10 +167,33 @@ class Pipeline:
         task.error_stage = ""
         task.extra.pop("rerun_stage", None)
         self.store.update(task)
+        self._compact_media(task, metadata)
         if task.note_path:
             self.notes.update_progress(Path(task.note_path), task, metadata)
         logger.info("Task %s completed with %s", task.id, asr_label(task.asr_model))
         return task
+
+    def _compact_media(self, task: Task, metadata: VideoMetadata) -> None:
+        """The note is the product: drop the video, keep a small audio copy for re-transcribing."""
+        if metadata.media_kind == "image" or not self.config.storage.compact_after_processing:
+            return
+        from media_pipeline.storage import compact_video_media
+
+        others = [
+            other for other in self.store.list_all()
+            if other.video_id == metadata.video_id and other.id != task.id
+            and other.status not in (TaskStatus.completed, TaskStatus.failed)
+        ]
+        if others:
+            return  # another task for this video is still running and may need the files
+        try:
+            result = compact_video_media(self.config, metadata.video_id)
+        except Exception:
+            logger.warning("Could not compact media for %s", metadata.video_id, exc_info=True)
+            return
+        task.video_path = ""
+        task.audio_path = str(result.audio) if result.audio else ""
+        self.store.update(task)
 
     def close(self) -> None:
         closer = getattr(self.vision, "close", None)
@@ -222,24 +249,26 @@ class Pipeline:
             task.video_path = str(path)
             return path
 
-    def _extract_audio(
-        self, task: Task, metadata: VideoMetadata, video_path: Path, artifacts: ArtifactStore
-    ) -> Path:
+    def _extract_audio(self, task: Task, metadata: VideoMetadata, media: "_Media", artifacts: ArtifactStore) -> Path:
         audio_path = self.config.paths.audio / f"{metadata.video_id}.wav"
         if audio_path.exists() and audio_path.stat().st_size > 0:
             task.audio_path = str(audio_path)
             self.store.update(task)
             return audio_path
+        compact = compact_audio_path(self.config, metadata.video_id)
         with self._stage(task, TaskStatus.extracting_audio, metadata, artifacts):
-            path = extract_audio(video_path, audio_path)
+            # Rebuilding the WAV from the compact copy takes a second; the video may not exist any more.
+            source = compact if compact.exists() and compact.stat().st_size > 0 else media.video()
+            path = extract_audio(source, audio_path)
             task.audio_path = str(path)
             return path
 
-    def _transcribe(self, task: Task, metadata: VideoMetadata, artifacts: ArtifactStore, audio_path: Path):
+    def _transcribe(self, task: Task, metadata: VideoMetadata, artifacts: ArtifactStore, media: "_Media"):
         existing = artifacts.load_transcript(task.asr_model)
         if existing and existing.segments:
             self._record_languages(task, existing.language)
             return existing
+        audio_path = media.audio()
         with self._stage(task, TaskStatus.transcribing, metadata, artifacts):
             provider = require_provider(task.asr_model)
             bind = getattr(provider, "bind_config", None)
@@ -263,7 +292,7 @@ class Pipeline:
             artifacts.save_transcript(task.asr_model, transcript)
             return transcript
 
-    def _diarize(self, task: Task, artifacts: ArtifactStore, audio_path: Path, transcript=None):
+    def _diarize(self, task: Task, artifacts: ArtifactStore, media: "_Media", transcript=None):
         # Cloud ASR (Fun-ASR) already tagged speakers; those match this transcript exactly.
         embedded = diarization_from_transcript(transcript)
         if embedded is not None:
@@ -272,6 +301,7 @@ class Pipeline:
         existing = artifacts.load_diarization()
         if existing is not None and not existing.provider.startswith("asr:"):
             return existing
+        audio_path = media.audio()
         with self._stage(task, TaskStatus.diarizing, artifacts=artifacts):
             try:
                 with self._model_slot():
@@ -565,6 +595,40 @@ class Pipeline:
         if label:
             task.extra["detected_languages"] = label
         self.store.update(task)
+
+
+class _Media:
+    """Downloads the video and extracts audio on first use, so cached stages need neither."""
+
+    def __init__(self, pipeline: "Pipeline", task: Task, metadata: VideoMetadata, artifacts: ArtifactStore) -> None:
+        self._pipeline = pipeline
+        self._task = task
+        self._metadata = metadata
+        self._artifacts = artifacts
+        self._video: Path | None = None
+        self._audio: Path | None = None
+
+    def video(self) -> Path:
+        if self._video is None:
+            self._video = self._pipeline._download(self._task, self._metadata, self._artifacts)
+        return self._video
+
+    def existing_video(self) -> Path:
+        """The downloaded file if it is still on disk, else a placeholder the visual cache never opens."""
+        found = find_media_file(self._pipeline.config.paths.videos, self._metadata.video_id)
+        return found or _media_destination(self._pipeline.config, self._metadata)
+
+    def audio(self) -> Path:
+        if self._audio is None:
+            self._audio = self._pipeline._extract_audio(self._task, self._metadata, self, self._artifacts)
+        return self._audio
+
+
+def _visual_needs_video(artifacts: ArtifactStore, from_stage: str) -> bool:
+    """Scene detection and frame sampling read the video; dedup and the VLM filter read saved stills."""
+    if from_stage in {"detecting_scenes", "sampling_frames", "all"}:
+        return True
+    return artifacts.load_scenes() is None or not artifacts.load_candidates()
 
 
 def _media_destination(config: AppConfig, metadata: VideoMetadata) -> Path:

@@ -311,6 +311,7 @@ def _available_backends(
                             "thinking": {"type": "enabled"},
                         },
                         timeout=300,
+                        stream=True,
                     )
                 ),
             )
@@ -337,6 +338,7 @@ def _available_backends(
                             "reasoning_effort": "medium",
                         },
                         timeout=300,
+                        stream=True,
                     )
                 ),
             )
@@ -636,6 +638,7 @@ def _openai_compatible_generate(
     base_url: str,
     extra: dict[str, Any] | None = None,
     timeout: int = 120,
+    stream: bool = False,
 ) -> str:
     content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
     for path, mime, blob in _image_blobs(images):
@@ -654,13 +657,20 @@ def _openai_compatible_generate(
     }
     if extra:
         payload.update(extra)
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    if stream:
+        # Reasoning models can think for several minutes on a long transcript. Streamed, the timeout
+        # bounds silence between chunks rather than the whole answer.
+        text, reasoning = _stream_chat(_chat_completions_url(base_url), payload, headers, timeout=timeout)
+        if reasoning and text:
+            return f"<think>\n{reasoning}\n</think>\n\n{text}"
+        if not text:
+            raise RuntimeError(f"{_host(base_url)} returned an empty summary")
+        return text
     data = _json_post(
         _chat_completions_url(base_url),
         payload,
-        {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
+        headers,
         timeout=timeout,
     )
     choices = data.get("choices") or []
@@ -713,6 +723,58 @@ def _json_post(url: str, payload: dict[str, Any], headers: dict[str, str], timeo
     if not isinstance(data, dict):
         raise RuntimeError(f"{_host(url)} returned a non-object JSON payload")
     return data
+
+
+def _stream_chat(
+    url: str,
+    payload: dict[str, Any],
+    headers: dict[str, str],
+    *,
+    timeout: int = 300,
+    max_total_sec: float = 3600.0,
+    opener: Callable[..., Any] = urllib.request.urlopen,
+) -> tuple[str, str]:
+    """POST an OpenAI-style chat request with stream=true and collect (content, reasoning) from SSE."""
+    import time
+
+    body = json.dumps({**payload, "stream": True}).encode("utf-8")
+    request = urllib.request.Request(url, data=body, method="POST")
+    for key, value in {**headers, "Accept": "text/event-stream"}.items():
+        request.add_header(key, value)
+    text: list[str] = []
+    reasoning: list[str] = []
+    started = time.monotonic()
+    try:
+        with opener(request, timeout=timeout) as response:
+            for raw in response:
+                line = raw.decode("utf-8", errors="replace").strip()
+                if not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(data)
+                except json.JSONDecodeError:
+                    continue
+                if chunk.get("error"):
+                    raise RuntimeError(f"{_host(url)} error: {_redact_secrets(str(chunk['error'])[:400], headers)}")
+                for choice in chunk.get("choices") or []:
+                    delta = choice.get("delta") or {}
+                    if delta.get("content"):
+                        text.append(str(delta["content"]))
+                    if delta.get("reasoning_content"):
+                        reasoning.append(str(delta["reasoning_content"]))
+                if time.monotonic() - started > max_total_sec:
+                    raise RuntimeError(f"{_host(url)} summary exceeded {max_total_sec:.0f}s")
+    except urllib.error.HTTPError as exc:
+        detail = _redact_secrets(exc.read().decode("utf-8", errors="replace")[:400], headers)
+        raise RuntimeError(f"{_host(url)} HTTP {exc.code}: {detail}") from exc
+    except RuntimeError:
+        raise
+    except Exception as exc:
+        raise RuntimeError(f"{_host(url)} request failed: {_redact_secrets(str(exc), headers)}") from exc
+    return "".join(text).strip(), "".join(reasoning).strip()
 
 
 def _host(url: str) -> str:

@@ -103,6 +103,9 @@ class TaskWorker:
         self._lock = threading.Lock()
         self._wake = threading.Event()
         self._stop = threading.Event()
+        # Disk retention (storage.py): shortly after start, then every 6 hours.
+        self._next_cleanup = time.monotonic() + 60.0
+        self._cleanup_thread: threading.Thread | None = None
         self._dispatcher: threading.Thread | None = None
         self._jobs: list[threading.Thread] = []
         self._slots = DomainSlots(config.worker)
@@ -237,8 +240,29 @@ class TaskWorker:
         while not self._stop.is_set():
             self._dispatch()
             self._maybe_unload_vision()
+            self._maybe_cleanup()
             self._wake.wait(timeout=0.2)
             self._wake.clear()
+
+    def _maybe_cleanup(self) -> None:
+        if time.monotonic() < self._next_cleanup:
+            return
+        if self._cleanup_thread is not None and self._cleanup_thread.is_alive():
+            return
+        self._next_cleanup = time.monotonic() + 6 * 3600
+
+        def run() -> None:
+            from media_pipeline.storage import cleanup
+
+            try:
+                report = cleanup(self.config, self.store)
+                if report.freed:
+                    logger.info("Storage cleanup: %s", report.summary())
+            except Exception:
+                logger.warning("Storage cleanup failed", exc_info=True)
+
+        self._cleanup_thread = threading.Thread(target=run, name="storage-cleanup", daemon=True)
+        self._cleanup_thread.start()
 
     def _dispatch(self) -> None:
         if self._stop.is_set():

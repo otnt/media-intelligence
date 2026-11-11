@@ -193,6 +193,18 @@ Check the machine:
 uv run media-pipeline doctor
 ```
 
+## Disk usage
+
+The note is the product, so media does not pile up.
+After a video is processed, its download and WAV are deleted and a mono 48 kbps audio copy (~22 MB/hour, about 10% of what was there) is kept for re-transcribing; that copy goes after `storage.keep_audio_days` (30).
+The pipeline only downloads or extracts when a stage needs media: re-sharing a finished video reuses its transcript, a different ASR model rebuilds the WAV from the audio copy, and extracting keyframes later downloads the video again.
+The worker runs the same cleanup at startup and every 6 hours; failures are kept for the same window so they can be retried.
+
+```bash
+uv run media-pipeline cleanup --dry-run   # what would be freed
+uv run media-pipeline cleanup
+```
+
 ## Command line
 
 Transcribe one Bilibili, YouTube, or Xiaohongshu URL without the browser:
