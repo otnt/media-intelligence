@@ -120,7 +120,9 @@ Keep the local service running:
 uv run media-pipeline serve
 ```
 
-The dashboard is `http://127.0.0.1:8875/`.
+The dashboard is `http://127.0.0.1:8875/`: a reader built for phones first (library → note with summary, speaker-coloured transcript with timestamps that open the video at that moment, and frames).
+On iPhone, open the Tailscale URL in Safari and use Share → Add to Home Screen for a full-screen app.
+Settings, keyframe decisions and prompt editing are in the previous dashboard at `/classic`.
 While a job is running, the detail page polls about every 4 seconds.
 After a task is `completed` (and summary is not regenerating), it stops rewriting the extracted note and summary so text selection is not cleared.
 

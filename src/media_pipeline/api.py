@@ -45,7 +45,11 @@ from media_pipeline.summary import (
 from media_pipeline.tags import collect_manual_tags, normalize_tag, set_task_tags
 from media_pipeline.worker import TaskWorker
 
-DASHBOARD_FILE = Path(__file__).resolve().parent / "dashboard" / "static" / "index.html"
+DASHBOARD_DIR = Path(__file__).resolve().parent / "dashboard" / "static"
+DASHBOARD_FILE = DASHBOARD_DIR / "index.html"
+# The previous dashboard: settings, keyframe decisions and prompt editing still live here.
+CLASSIC_DASHBOARD_FILE = DASHBOARD_DIR / "classic.html"
+STATIC_TYPES = {".png": "image/png", ".svg": "image/svg+xml", ".webmanifest": "application/manifest+json"}
 ALLOWED_FRAME_DIRS = {"candidate_frames", "keyframes"}
 
 
@@ -129,6 +133,22 @@ def create_app(config: AppConfig, store: TaskStore | None = None, worker: TaskWo
         if DASHBOARD_FILE.exists():
             return FileResponse(DASHBOARD_FILE, media_type="text/html")
         return {"service": "media-pipeline", "health": "/v1/health", "dashboard": "/"}
+
+    @app.get("/classic")
+    def classic():
+        return FileResponse(CLASSIC_DASHBOARD_FILE, media_type="text/html")
+
+    @app.get("/manifest.webmanifest")
+    def manifest():
+        return FileResponse(DASHBOARD_DIR / "manifest.webmanifest", media_type="application/manifest+json")
+
+    @app.get("/static/{filename}")
+    def static_file(filename: str):
+        path = DASHBOARD_DIR / "icons" / filename
+        media_type = STATIC_TYPES.get(Path(filename).suffix)
+        if Path(filename).name != filename or media_type is None or not path.is_file():
+            raise HTTPException(status_code=404, detail="Not found")
+        return FileResponse(path, media_type=media_type, headers={"Cache-Control": "public, max-age=86400"})
 
     @app.get("/v1/health")
     def health() -> dict[str, Any]:
@@ -301,6 +321,14 @@ def create_app(config: AppConfig, store: TaskStore | None = None, worker: TaskWo
             raise HTTPException(status_code=404, detail="Task not found")
         return _enrich_task(task, config)
 
+    @app.get("/v1/tasks/{task_id}/note")
+    def get_note(task_id: str) -> dict[str, Any]:
+        """Everything the reader needs for one note, without the debug artifacts."""
+        task = store.get(task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+        return _note_payload(task, config, worker)
+
     @app.get("/v1/tasks/{task_id}/debug")
     def debug_task(task_id: str) -> dict[str, Any]:
         task = store.get(task_id)
@@ -467,6 +495,77 @@ def _enrich_task(task: Task, config: AppConfig) -> dict[str, Any]:
     )
     stored = artifacts.load_summary() or {}
     payload["summary_status"] = str(stored.get("status") or "idle")
+    payload.update(_metadata_fields(artifacts))
+    return payload
+
+
+def _metadata_fields(artifacts: ArtifactStore) -> dict[str, Any]:
+    """Small display fields from metadata.json (author, duration, thumbnail) for list rows."""
+    try:
+        metadata = artifacts.load_metadata()
+    except Exception:
+        metadata = None
+    if metadata is None:
+        return {}
+    try:
+        duration = float(metadata.duration) if metadata.duration not in (None, "") else None
+    except (TypeError, ValueError):
+        duration = None
+    return {
+        "author": metadata.author or "",
+        "duration": duration,
+        "thumbnail_url": metadata.thumbnail_url or "",
+        "published": metadata.published or "",
+    }
+
+
+def _note_payload(task: Task, config: AppConfig, worker: object) -> dict[str, Any]:
+    payload: dict[str, Any] = {"task": _enrich_task(task, config), "transcript": [], "speakers": [], "frames": []}
+    if not task.video_id:
+        payload["summary"] = idle_summary(_configured_prompt(config))
+        return payload
+    from media_pipeline.visual.filtering import caption_for, selected_from_verdicts
+
+    artifacts = ArtifactStore(config.paths.artifacts, task.video_id)
+    metadata = artifacts.load_metadata()
+    if metadata is not None:
+        payload["task"]["description"] = (metadata.description or "")[:2000]
+    payload["summary"] = _public_summary(task, artifacts, worker, config)
+    named = artifacts.load_named() or []
+    stats: dict[str, dict[str, Any]] = {}
+    for segment in named:
+        payload["transcript"].append(
+            {
+                "start": round(segment.start, 2),
+                "end": round(segment.end, 2),
+                "speaker": segment.speaker_id,
+                "label": segment.speaker_label,
+                "text": segment.text,
+            }
+        )
+        entry = stats.setdefault(
+            segment.speaker_id, {"id": segment.speaker_id, "label": segment.speaker_label, "segments": 0, "seconds": 0.0}
+        )
+        entry["segments"] += 1
+        entry["seconds"] += max(0.0, segment.end - segment.start)
+    payload["speakers"] = sorted(
+        ({**item, "seconds": round(item["seconds"], 1)} for item in stats.values()),
+        key=lambda item: -item["seconds"],
+    )
+    keyframes = artifacts.load_keyframes() or []
+    analysis = artifacts.load_frame_analysis() or []
+    chosen = selected_from_verdicts(keyframes, analysis) if analysis else keyframes
+    for frame in chosen:
+        name = Path(frame.image_path).name
+        payload["frames"].append(
+            {
+                "timestamp": round(frame.timestamp, 2),
+                "url": f"/v1/videos/{task.video_id}/frames/keyframes/{name}",
+                "caption": caption_for(frame, analysis),
+            }
+        )
+    if payload["task"].get("media_kind") == "image":
+        payload["post_markdown"] = _extracted_markdown(task, config, artifacts)
     return payload
 
 

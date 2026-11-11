@@ -1,0 +1,1940 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Media Pipeline</title>
+  <style>
+    :root {
+      --bg: #0f1218;
+      --panel: #171b24;
+      --line: #2a3140;
+      --text: #e8edf5;
+      --muted: #8b95a8;
+      --accent: #6d7cff;
+      --keep: #3dd68c;
+      --drop: #ff6b7a;
+      --warn: #f0b429;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, sans-serif; overflow: hidden; }
+    a { color: var(--accent); }
+    button, select, input { font: inherit; }
+    .app { display: grid; grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr); height: 100%; min-width: 0; min-height: 0; }
+    .sidebar { border-right: 1px solid var(--line); display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; background: var(--bg); }
+    .mobile-chrome { display: none; }
+    .sidebar-backdrop { display: none; }
+    .sidebar-close { display: none; }
+    .workspace { display: grid; grid-template-columns: 340px 1fr; min-width: 0; min-height: 0; height: 100%; overflow: hidden; }
+    .brand { padding: 16px 18px 10px; display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+    .brand-actions { display: flex; align-items: flex-start; gap: 8px; flex: 0 0 auto; }
+    .brand-copy { min-width: 0; }
+    .brand h1 { margin: 0; font-size: 16px; letter-spacing: -0.02em; }
+    .brand p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+    .list { overflow: auto; flex: 1; }
+    .list-controls { padding: 10px 16px 12px; border-bottom: 1px solid var(--line); display: grid; gap: 8px; }
+    .list-controls h2 { margin: 0 0 2px; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+    .task-block { padding-bottom: 8px; }
+    .task-block .task { padding-left: 18px; }
+    .task-group {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin: 10px 10px 6px;
+      padding: 8px 12px;
+      font-size: 15px;
+      font-weight: 750;
+      letter-spacing: -0.02em;
+      color: var(--text);
+      background: #243044;
+      border: 1px solid #3d4b63;
+      border-left: 5px solid var(--accent);
+      border-radius: 8px;
+      position: sticky;
+      top: 6px;
+      z-index: 2;
+      box-shadow: 0 8px 18px rgba(0,0,0,0.4);
+    }
+    .task-group:first-child { margin-top: 8px; }
+    .task-group .count {
+      flex: 0 0 auto;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text);
+      background: #10141c;
+      border-radius: 999px;
+      padding: 2px 8px;
+    }
+    .task-group.source-youtube { border-left-color: #ff4d4f; background: #322028; }
+    .task-group.source-bilibili { border-left-color: #00a1d6; background: #1b2c38; }
+    .task-group.source-rednote { border-left-color: #ff2442; background: #3a1c24; }
+    .task-group.source-other { border-left-color: var(--warn); }
+    .worker-panel h2, .settings-sheet h3 { margin: 0 0 8px; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+    .settings-sheet h3 { margin: 18px 0 8px; }
+    .worker-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .worker-fields label.field input { width: 100%; }
+    .worker-panel .actions, .settings-actions { margin-top: 10px; align-items: center; }
+    .worker-msg { font-size: 12px; color: var(--muted); }
+    .occupancy { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .settings-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 80;
+      display: none;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 32px 16px 48px;
+      background: rgba(8, 10, 16, 0.72);
+      overflow: auto;
+    }
+    .settings-overlay.open { display: flex !important; }
+    .settings-sheet {
+      width: min(760px, 100%);
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 18px 20px 20px;
+      box-shadow: 0 18px 48px rgba(0,0,0,0.45);
+    }
+    .settings-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
+    .settings-head h2 { margin: 0; font-size: 20px; }
+    .settings-sheet textarea.prompt { min-height: 168px; }
+    .source-link { color: var(--accent); word-break: break-all; }
+    .source-line { color: var(--muted); padding: 0 0 12px; margin: 0; }
+    .task { display: block; width: 100%; text-align: left; border: 0; border-bottom: 1px solid var(--line); background: transparent; color: inherit; padding: 12px 16px; cursor: pointer; }
+    .task:hover, .task.active { background: #1e2430; }
+    .task .title { font-weight: 650; }
+    .task .meta { color: var(--muted); font-size: 12px; margin-top: 3px; }
+    .main { overflow: auto; padding: 20px 24px 48px; min-width: 0; min-height: 0; }
+    .empty { color: var(--muted); padding: 40px 8px; }
+    h2 { margin: 0 0 12px; font-size: 22px; }
+    .row { display: flex; gap: 12px; flex-wrap: wrap; margin: 8px 0 18px; }
+    .chip { background: #222836; border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px; color: var(--muted); font-size: 12px; }
+    .chip.ok { color: var(--keep); }
+    .chip.bad { color: var(--drop); }
+    .chip-link { max-width: min(100%, 42rem); overflow-wrap: anywhere; }
+    .tag-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: -6px 0 16px; }
+    .tag-chip {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: #1a2230; border: 1px solid var(--line); border-radius: 999px;
+      padding: 3px 6px 3px 10px; color: var(--text); font-size: 12px;
+    }
+    .tag-chip button {
+      border: 0; background: transparent; color: var(--muted); cursor: pointer;
+      padding: 0 4px; font-size: 14px; line-height: 1;
+    }
+    .tag-chip button:hover { color: var(--drop); }
+    .tag-add-wrap { position: relative; display: inline-flex; }
+    .tag-picker {
+      position: absolute; top: calc(100% + 6px); left: 0; z-index: 20;
+      min-width: min(280px, 80vw); max-width: 320px;
+      background: #151a24; border: 1px solid var(--line); border-radius: 10px;
+      padding: 10px; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+    }
+    .tag-picker[hidden] { display: none; }
+    .tag-picker input {
+      width: 100%; box-sizing: border-box; background: #10141c; color: var(--text);
+      border: 1px solid var(--line); border-radius: 8px; padding: 7px 8px; margin-bottom: 8px;
+    }
+    .tag-picker-list { display: flex; flex-direction: column; gap: 2px; max-height: 160px; overflow: auto; }
+    .tag-picker-list button {
+      text-align: left; border: 0; background: transparent; color: var(--text);
+      padding: 7px 8px; border-radius: 6px; cursor: pointer; font-size: 13px;
+    }
+    .tag-picker-list button:hover { background: #222836; }
+    .tag-picker-empty { color: var(--muted); font-size: 12px; padding: 4px 2px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }
+    .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+    .card img { width: 100%; aspect-ratio: 16/9; object-fit: cover; background: #0b0d12; display: block; }
+    .card .body { padding: 10px 12px 12px; font-size: 12px; color: var(--muted); }
+    .card .body strong { color: var(--text); display: block; margin-bottom: 4px; }
+    .actions { display: flex; gap: 8px; margin-top: 8px; }
+    .btn { border: 0; border-radius: 8px; padding: 6px 10px; cursor: pointer; color: #fff; background: #2c3344; }
+    .btn.keep { background: #1f6a45; }
+    .btn.drop { background: #8a2d38; }
+    .btn.primary { background: var(--accent); color: #0b0d12; font-weight: 700; }
+    .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin: 16px 0; }
+    label.field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); position: relative; overflow: visible; }
+    label.field input, label.field select { background: #10141c; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 7px 8px; }
+    label.field input[type="date"] { color-scheme: dark; width: 100%; min-width: 0; }
+    .fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; overflow: visible; }
+    .label-row { display: flex; align-items: center; gap: 6px; }
+    .help {
+      flex: 0 0 auto;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      border: 1px solid var(--line);
+      background: #222836;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      line-height: 16px;
+      padding: 0;
+      cursor: help;
+    }
+    .help .tip {
+      display: none;
+      position: absolute;
+      z-index: 40;
+      left: 0;
+      top: calc(100% + 8px);
+      width: 280px;
+      max-width: min(280px, 70vw);
+      background: #0b0d12;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 12px;
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 400;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      box-shadow: 0 10px 28px rgba(0,0,0,0.45);
+      text-align: left;
+    }
+    .field:hover .help .tip,
+    .help:hover .tip,
+    .help:focus .tip,
+    .help:focus-visible .tip { display: block; }
+    .panel { overflow: visible; }
+    .stages { display: grid; gap: 0; font-size: 13px; }
+    .stage-head, .stage-row {
+      display: grid;
+      grid-template-columns: minmax(7.5rem, 1.5fr) 10rem 6.5rem 4.6rem;
+      gap: 8px;
+      align-items: center;
+      border-bottom: 1px solid #222836;
+      padding: 6px 0;
+    }
+    .stage-head { color: var(--muted); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; }
+    .stage-row .chip { justify-self: end; }
+    .time { font-variant-numeric: tabular-nums; color: var(--muted); }
+    .kept { outline: 2px solid var(--keep); }
+    .dropped { opacity: 0.55; }
+    textarea.prompt {
+      width: 100%;
+      min-height: 88px;
+      background: #10141c;
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px 10px;
+      resize: vertical;
+      line-height: 1.45;
+    }
+    .summary-md, .note-md { margin-top: 4px; font-size: 14px; line-height: 1.55; }
+    .summary-md:empty, .note-md:empty { display: none; }
+    .summary-md h2, .summary-md h3, .note-md h2, .note-md h3 { margin: 14px 0 8px; }
+    .summary-md img, .note-md img { display: block; max-width: min(100%, 720px); border-radius: 8px; margin: 10px 0; background: #0b0d12; }
+    .summary-run {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px 12px 12px;
+      margin-top: 12px;
+      background: #121722;
+    }
+    .summary-run:first-child { margin-top: 0; }
+    .summary-run-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+      margin-bottom: 8px;
+    }
+    .summary-run-head .run-label { min-width: 0; }
+    .summary-run-head .fold-copy { flex: 0 0 auto; font-weight: 600; }
+    .summary-run.failed .summary-run-head { color: var(--drop); }
+    .summary-run-error { color: var(--drop); margin: 0; }
+    .summary-run-body h2, .summary-run-body h3 { margin: 10px 0 8px; }
+    .summary-thinking {
+      margin: 0 0 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #0b0d12;
+    }
+    .summary-thinking > summary {
+      cursor: pointer;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+      padding: 8px 10px;
+      list-style: none;
+    }
+    .summary-thinking > summary::-webkit-details-marker { display: none; }
+    .summary-thinking > summary::before { content: "▸ "; color: var(--muted); }
+    .summary-thinking[open] > summary::before { content: "▾ "; }
+    .summary-thinking-body {
+      padding: 0 10px 10px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    details.fold {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      margin: 16px 0;
+    }
+    details.fold > summary {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      font-weight: 650;
+      padding: 14px 16px;
+      list-style: none;
+    }
+    details.fold > summary::-webkit-details-marker { display: none; }
+    details.fold > summary::before { content: "▸ "; color: var(--muted); }
+    details.fold[open] > summary::before { content: "▾ "; }
+    details.fold > summary .fold-title { flex: 1; }
+    details.fold > summary .fold-copy { flex: 0 0 auto; font-weight: 600; }
+    details.fold .fold-body { padding: 0 16px 16px; }
+    details.fold .fold-body .empty { padding: 8px 0 4px; }
+    @media (max-width: 899px) {
+      html, body { height: 100%; height: 100dvh; overflow: hidden; }
+      .app {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        min-height: 0;
+      }
+      .mobile-chrome {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex: 0 0 auto;
+        padding: 10px 12px;
+        padding-top: max(10px, env(safe-area-inset-top));
+        padding-left: max(12px, env(safe-area-inset-left));
+        padding-right: max(12px, env(safe-area-inset-right));
+        border-bottom: 1px solid var(--line);
+        background: var(--panel);
+        z-index: 75;
+        position: relative;
+      }
+      .mobile-brand { min-width: 0; flex: 1; }
+      .mobile-brand h1 {
+        margin: 0;
+        font-size: 15px;
+        letter-spacing: -0.02em;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .mobile-chrome .btn {
+        min-height: 44px;
+        padding: 10px 14px;
+      }
+      .sidebar #open-settings { display: none; }
+      .sidebar-close {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 44px;
+        padding: 10px 14px;
+      }
+      .sidebar {
+        position: absolute;
+        top: 0;
+        left: 0;
+        bottom: 0;
+        width: min(340px, calc(100vw - 48px));
+        max-width: 100%;
+        z-index: 70;
+        transform: translateX(-100%);
+        transition: transform 0.22s ease;
+        padding-bottom: env(safe-area-inset-bottom);
+        box-shadow: none;
+      }
+      .app.sidebar-open .sidebar {
+        transform: translateX(0);
+        box-shadow: 12px 0 40px rgba(0, 0, 0, 0.45);
+      }
+      .workspace {
+        display: flex;
+        flex-direction: column;
+        flex: 1;
+        min-height: 0;
+        min-width: 0;
+        position: relative;
+      }
+      .sidebar-backdrop {
+        display: none;
+        position: absolute;
+        inset: 0;
+        z-index: 60;
+        margin: 0;
+        border: 0;
+        padding: 0;
+        background: rgba(8, 10, 16, 0.58);
+        cursor: pointer;
+      }
+      .app.sidebar-open .sidebar-backdrop { display: block; }
+      .main {
+        flex: 1;
+        min-height: 0;
+        width: 100%;
+        padding: 16px 16px max(40px, env(safe-area-inset-bottom));
+        padding-left: max(16px, env(safe-area-inset-left));
+        padding-right: max(16px, env(safe-area-inset-right));
+      }
+      .btn, .task { min-height: 44px; }
+      .task { padding: 14px 16px; }
+      label.field input, label.field select {
+        min-height: 44px;
+        padding: 10px 8px;
+      }
+      .settings-overlay {
+        padding: 12px 10px max(24px, env(safe-area-inset-bottom));
+      }
+      .settings-sheet {
+        padding: 14px 14px 16px;
+        border-radius: 12px;
+      }
+      .stages {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+      }
+      .stage-head, .stage-row {
+        grid-template-columns: minmax(6.2rem, 1.3fr) minmax(4.2rem, 0.9fr) 4.2rem 3.5rem;
+        gap: 6px;
+        font-size: 12px;
+      }
+      .help .tip {
+        width: min(280px, calc(100vw - 24px));
+        max-width: calc(100vw - 24px);
+      }
+      .empty { padding: 24px 4px; }
+      .list { overscroll-behavior: contain; }
+      .main h2 { overflow-wrap: anywhere; }
+    }
+    @media (max-width: 899px) and (prefers-reduced-motion: reduce) {
+      .sidebar { transition: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app" id="app">
+    <header class="mobile-chrome" id="mobile-chrome">
+      <button type="button" class="btn" id="open-sidebar" aria-controls="sidebar-drawer" aria-expanded="false">List</button>
+      <div class="mobile-brand">
+        <h1>Extraction dashboard</h1>
+      </div>
+      <button type="button" class="btn" id="open-settings-chrome" data-open-settings>Settings</button>
+    </header>
+    <div class="workspace">
+      <aside class="sidebar" id="sidebar-drawer">
+        <div class="brand">
+          <div class="brand-copy">
+            <h1>Extraction dashboard</h1>
+            <p id="health">Checking local backend…</p>
+          </div>
+          <div class="brand-actions">
+            <button type="button" class="btn" id="open-settings" data-open-settings>Settings</button>
+            <button type="button" class="btn sidebar-close" id="close-sidebar">Close</button>
+          </div>
+        </div>
+        <div class="list-controls">
+          <h2>List</h2>
+          <label class="field">Filter
+            <select id="list-filter">
+              <option value="today" selected>Today</option>
+              <option value="yesterday">Yesterday</option>
+              <option value="7d">Last 7 days</option>
+              <option value="all">All</option>
+              <option value="date">On date…</option>
+            </select>
+          </label>
+          <label class="field" id="list-filter-date-wrap" hidden>Date
+            <input id="list-filter-date" type="date" />
+          </label>
+          <label class="field">Grouping
+            <select id="list-group">
+              <option value="source" selected>Source</option>
+              <option value="none">None</option>
+              <option value="status">Status</option>
+              <option value="day">Day</option>
+            </select>
+          </label>
+          <label class="field">Order
+            <select id="list-order">
+              <option value="requested_desc" selected>Requested newest</option>
+              <option value="requested_asc">Requested oldest</option>
+              <option value="updated_desc">Updated newest</option>
+              <option value="title">Title</option>
+            </select>
+          </label>
+          <label class="field">Tag
+            <select id="list-tag">
+              <option value="" selected>All tags</option>
+            </select>
+          </label>
+        </div>
+        <div class="list" id="tasks"></div>
+      </aside>
+      <main class="main" id="main">
+        <div class="empty">Select a task to inspect the transcript, optional keyframes, and rerun stages.</div>
+      </main>
+      <button type="button" class="sidebar-backdrop" id="sidebar-backdrop" tabindex="-1" aria-label="Close list"></button>
+    </div>
+  </div>
+  <div class="settings-overlay" id="copy-fallback-overlay" hidden aria-hidden="true">
+    <div class="settings-sheet" role="dialog" aria-modal="true" aria-labelledby="copy-fallback-title">
+      <div class="settings-head">
+        <h2 id="copy-fallback-title">Copy failed</h2>
+        <button type="button" class="btn" id="close-copy-fallback">Close</button>
+      </div>
+      <p class="empty" style="padding:8px 0 10px">Select all, copy, then paste into ChatGPT.</p>
+      <textarea id="copy-fallback-text" class="prompt" rows="14" readonly></textarea>
+      <div class="actions settings-actions">
+        <button type="button" class="btn primary" id="copy-fallback-select">Select all</button>
+      </div>
+    </div>
+  </div>
+  <div class="settings-overlay" id="settings-overlay" hidden aria-hidden="true">
+    <div class="settings-sheet" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <div class="settings-head">
+        <h2 id="settings-title">Settings</h2>
+        <button type="button" class="btn" id="close-settings">Close</button>
+      </div>
+      <div class="worker-panel">
+        <h3>Concurrency</h3>
+        <div class="worker-fields">
+          <label class="field">YouTube max
+            <input id="yt-limit" type="number" min="0" max="64" step="1" />
+          </label>
+          <label class="field">Bilibili max
+            <input id="bili-limit" type="number" min="0" max="64" step="1" />
+          </label>
+          <label class="field">ASR / diarization
+            <input id="model-limit" type="number" min="1" max="64" step="1" />
+          </label>
+        </div>
+        <div class="occupancy" id="worker-occupancy"></div>
+      </div>
+      <h3>Visual stage defaults</h3>
+      <p class="empty" style="padding:0 0 10px">These defaults apply to new extracts and to reruns that do not override a knob. Per-task rerun still uses the values on the task page.</p>
+      <div class="fields" id="settings-visual-fields"></div>
+      <h3>Default summary prompt</h3>
+      <label class="field">Prompt
+        <textarea id="settings-summary-prompt" class="prompt" rows="12"></textarea>
+      </label>
+      <div class="actions settings-actions">
+        <button type="button" class="btn primary" id="save-settings">Save settings</button>
+        <span class="worker-msg" id="settings-msg"></span>
+      </div>
+    </div>
+  </div>
+  <script>
+    const appEl = document.getElementById("app");
+    const main = document.getElementById("main");
+    const tasksEl = document.getElementById("tasks");
+    const healthEl = document.getElementById("health");
+    const ytLimit = document.getElementById("yt-limit");
+    const biliLimit = document.getElementById("bili-limit");
+    const modelLimit = document.getElementById("model-limit");
+    const occupancyEl = document.getElementById("worker-occupancy");
+    const settingsMsg = document.getElementById("settings-msg");
+    const settingsOverlay = document.getElementById("settings-overlay");
+    const settingsPromptEl = document.getElementById("settings-summary-prompt");
+    const listFilterEl = document.getElementById("list-filter");
+    const listFilterDateEl = document.getElementById("list-filter-date");
+    const listFilterDateWrap = document.getElementById("list-filter-date-wrap");
+    const listGroupEl = document.getElementById("list-group");
+    const listOrderEl = document.getElementById("list-order");
+    const listTagEl = document.getElementById("list-tag");
+    const NAMED_FILTERS = new Set(["today", "yesterday", "7d", "all"]);
+    const sidebarEl = document.getElementById("sidebar-drawer");
+    const sidebarBackdrop = document.getElementById("sidebar-backdrop");
+    const openSidebarBtn = document.getElementById("open-sidebar");
+    const closeSidebarBtn = document.getElementById("close-sidebar");
+    const mobileLayoutMq = window.matchMedia("(max-width: 899px)");
+    let tasks = [];
+    let knownTags = [];
+    let selectedId = new URLSearchParams(location.search).get("task");
+    let debug = null;
+    let summaryPromptDirty = false;
+    let summaryModel = "qwen-xhigh";
+    let extractedMarkdown = "";
+    let summaryMarkdown = "";
+    let summaryDisplayRuns = [];
+    const CHATGPT_BUTTON_LABEL = "在 ChatGPT 继续";
+    const CHATGPT_COPIED_LABEL = "已复制，请粘贴";
+    const CHATGPT_STUB = "继续基于我粘贴的内容提问：";
+    const CHATGPT_URL = "https://chatgpt.com/";
+    let visualDefaults = {
+      sample_interval_sec: 12,
+      scene_threshold: 27,
+      similarity_threshold: 0.92,
+      min_scene_duration_sec: 0.8,
+      context_before_sec: 10,
+      context_after_sec: 20,
+      vlm_keep_threshold: 0.45,
+    };
+    let defaultSummaryPrompt = "";
+    const copyResetters = {};
+    const LEGACY_SUMMARY_PROMPTS = new Set([
+      "提取这个文章的核心思想，让我无需细读这个视频。生成一份图文输出（可以截屏）让我1分钟获得99%的信息。",
+      "提取核心思想，写成一份一分钟能读完的纯文字简报。可用少量 emoji 分点，不要复述原文，不要插入任何图片、截图或附件链接。",
+      "你是一位资深分析师，擅长快速提炼复杂内容的本质，并将其转化为结构清晰、有深度的中文简报。你的目标读者是希望快速理解核心思想、逻辑链条和关键细节的人，而不是只想知道表面事实的人。\n\n请基于以下内容，输出一份纯文字总结，要求如下：\n\n1. 先写出一句话或一小段核心结论：这份内容最重要的判断、冲突、问题或目的是什么。\n2. 提炼主要论证链条或信息结构，解释“为什么”和“如何”，而不仅仅罗列“是什么”。\n3. 保留支撑核心结论的必要事实、数据、案例或技术细节，但不要做无关堆砌。\n4. 如果内容涉及多个观点、方案、主体或步骤，请对比它们的异同或逻辑关系。\n5. 如果原内容包含风险、趋势、启示或后续值得关注的问题，请在结尾适当点明。\n6. 使用简洁的中文，可少量使用 emoji 作为分点符号，但不要复述原文，不要插入图片或链接。\n7. 篇幅控制在阅读时间约 1.5–2 分钟，信息密度要高，不要为了凑长度而重复内容。",
+    ]);
+    const DEFAULT_SUMMARY_PROMPT = `你是一位资深分析师，擅长快速提炼复杂内容的本质，并将其转化为结构清晰、有深度的中文简报。你的目标读者是希望快速理解核心思想、逻辑链条和关键细节的人，而不是只想知道表面事实的人。
+
+请基于以下内容，输出一份纯文字总结，要求如下：
+
+1. 先写出一句话或一小段核心结论：这份内容最重要的判断、冲突、问题或目的是什么。
+2. 提炼主要论证链条或信息结构，解释“为什么”和“如何”，而不仅仅罗列“是什么”。
+3. 保留支撑核心结论的必要事实、数据、条件、案例、步骤或技术细节；次要花絮、重复表述和气氛铺垫直接丢掉。
+4. 如果内容涉及多个观点、方案、主体或步骤，请对比它们的异同或逻辑关系。
+5. 如果原内容包含风险、趋势、限制条件、启示或后续值得关注的问题，请点明，不要因为篇幅而省略。
+6. 使用简洁的中文，可少量使用 emoji 作为分点符号，但不要复述原文，不要插入图片或链接。
+7. 篇幅由信息密度决定：原文短、信息少就短写；原文长、分支多或论证深，就把关键信息写完整。不要为了凑长度而重复，也不要为了写短而丢掉判断所依赖的事实。`;
+    defaultSummaryPrompt = DEFAULT_SUMMARY_PROMPT;
+
+    async function init() {
+      bindSettings();
+      bindSidebar();
+      renderSettingsVisualFields();
+      await loadHealth();
+      await loadWorker();
+      await loadOrganize();
+      await loadKnownTags();
+      await loadTasks();
+      if (selectedId) await openTask(selectedId);
+      setInterval(() => { loadTasks(); loadWorker(); refreshSelected(); }, 4000);
+      listFilterEl.onchange = onFilterSelectChange;
+      if (listFilterDateEl) listFilterDateEl.onchange = saveOrganize;
+      listGroupEl.onchange = saveOrganize;
+      listOrderEl.onchange = saveOrganize;
+      if (listTagEl) listTagEl.onchange = () => { loadTasks(); };
+      if (listFilterDateEl && !listFilterDateEl.value) listFilterDateEl.value = localStampDate();
+    }
+
+    async function loadHealth() {
+      try {
+        const data = await api("/v1/health");
+        healthEl.textContent = data.ok ? `Backend · dashboard ${data.dashboard || ""}` : "Backend not ready";
+        if (data.visual) {
+          visualDefaults = { ...visualDefaults, ...data.visual };
+          fillSettingsVisual();
+        }
+        if (data.summary_prompt) {
+          defaultSummaryPrompt = data.summary_prompt;
+          fillSettingsPrompt();
+        }
+      } catch (error) {
+        healthEl.textContent = error.message;
+      }
+    }
+
+    async function loadWorker() {
+      try {
+        const data = await api("/v1/worker");
+        renderWorker(data, { fillInputs: !settingsInputsBusy() });
+      } catch (error) {
+        occupancyEl.textContent = "";
+        if (settingsMsg) settingsMsg.textContent = error.message;
+      }
+    }
+
+    function renderWorker(data, { fillInputs = true } = {}) {
+      const youtube = data.youtube || { limit: 10, running: 0 };
+      const bilibili = data.bilibili || { limit: 10, running: 0 };
+      const model = data.model_jobs || { limit: 1, running: 0 };
+      if (fillInputs) {
+        ytLimit.value = youtube.limit;
+        biliLimit.value = bilibili.limit;
+        modelLimit.value = model.limit;
+      }
+      occupancyEl.innerHTML = [
+        chip("YouTube", youtube),
+        chip("Bilibili", bilibili),
+        chip("ASR", model),
+      ].join("");
+    }
+
+    function chip(label, slot) {
+      const running = Number(slot.running || 0);
+      const limit = Number(slot.limit || 0);
+      const busy = running > 0;
+      return `<span class="chip ${busy ? "ok" : ""}">${esc(label)} ${running}/${limit}</span>`;
+    }
+
+    async function saveWorker() {
+      const data = await api("/v1/worker", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          youtube: Number(ytLimit.value),
+          bilibili: Number(biliLimit.value),
+          model_jobs: Number(modelLimit.value),
+        }),
+      });
+      renderWorker(data.worker || data, { fillInputs: true });
+    }
+
+    function isIsoDateFilter(value) {
+      return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ""));
+    }
+
+    function effectiveFilter() {
+      if (listFilterEl.value === "date") {
+        const picked = listFilterDateEl && listFilterDateEl.value;
+        return picked || localStampDate();
+      }
+      return listFilterEl.value;
+    }
+
+    function applyFilterToControls(filter) {
+      const value = String(filter || "today");
+      if (isIsoDateFilter(value)) {
+        listFilterEl.value = "date";
+        if (listFilterDateEl) listFilterDateEl.value = value;
+        setDatePickerVisible(true);
+        return;
+      }
+      listFilterEl.value = NAMED_FILTERS.has(value) ? value : "today";
+      setDatePickerVisible(false);
+      if (listFilterDateEl && !listFilterDateEl.value) listFilterDateEl.value = localStampDate();
+    }
+
+    function setDatePickerVisible(show) {
+      if (!listFilterDateWrap) return;
+      listFilterDateWrap.hidden = !show;
+    }
+
+    function onFilterSelectChange() {
+      if (listFilterEl.value === "date") {
+        if (listFilterDateEl) {
+          if (!listFilterDateEl.value) listFilterDateEl.value = localStampDate();
+          setDatePickerVisible(true);
+          listFilterDateEl.focus();
+        } else {
+          setDatePickerVisible(true);
+        }
+      } else {
+        setDatePickerVisible(false);
+      }
+      saveOrganize();
+    }
+
+    async function loadOrganize() {
+      try {
+        const data = await api("/v1/dashboard");
+        if (data.filter) applyFilterToControls(data.filter);
+        if (data.group) listGroupEl.value = data.group;
+        if (data.order) listOrderEl.value = data.order;
+      } catch (_error) {
+        return;
+      }
+    }
+
+    async function saveOrganize() {
+      try {
+        await api("/v1/dashboard", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            filter: effectiveFilter(),
+            group: listGroupEl.value,
+            order: listOrderEl.value,
+          }),
+        });
+      } catch (_error) {
+        return;
+      } finally {
+        await loadTasks();
+      }
+    }
+
+    function settingsInputsBusy() {
+      if (!settingsOverlay || !settingsOverlay.classList.contains("open")) return false;
+      return settingsOverlay.contains(document.activeElement);
+    }
+
+    function isMobileLayout() {
+      return mobileLayoutMq.matches;
+    }
+
+    function bindSidebar() {
+      if (openSidebarBtn) openSidebarBtn.onclick = toggleSidebar;
+      if (closeSidebarBtn) closeSidebarBtn.onclick = () => closeSidebar();
+      if (sidebarBackdrop) sidebarBackdrop.onclick = () => closeSidebar();
+      const onLayoutChange = () => {
+        if (!isMobileLayout()) closeSidebar();
+        else syncSidebarChrome();
+      };
+      if (typeof mobileLayoutMq.addEventListener === "function") {
+        mobileLayoutMq.addEventListener("change", onLayoutChange);
+      } else if (typeof mobileLayoutMq.addListener === "function") {
+        mobileLayoutMq.addListener(onLayoutChange);
+      }
+      syncSidebarChrome();
+    }
+
+    function toggleSidebar() {
+      if (appEl && appEl.classList.contains("sidebar-open")) closeSidebar();
+      else openSidebar();
+    }
+
+    function openSidebar() {
+      if (!appEl) return;
+      appEl.classList.add("sidebar-open");
+      syncSidebarChrome();
+      if (closeSidebarBtn) closeSidebarBtn.focus();
+    }
+
+    function closeSidebar({ restoreFocus = true } = {}) {
+      if (!appEl) return;
+      const wasOpen = appEl.classList.contains("sidebar-open");
+      appEl.classList.remove("sidebar-open");
+      syncSidebarChrome();
+      if (restoreFocus && wasOpen && isMobileLayout() && openSidebarBtn) openSidebarBtn.focus();
+    }
+
+    function syncSidebarChrome() {
+      const mobile = isMobileLayout();
+      const open = Boolean(appEl && appEl.classList.contains("sidebar-open"));
+      if (openSidebarBtn) {
+        openSidebarBtn.setAttribute("aria-expanded", mobile && open ? "true" : "false");
+      }
+      if (sidebarEl) {
+        const hide = mobile && !open;
+        sidebarEl.setAttribute("aria-hidden", hide ? "true" : "false");
+        if (hide) sidebarEl.setAttribute("inert", "");
+        else sidebarEl.removeAttribute("inert");
+      }
+    }
+
+    function bindSettings() {
+      document.querySelectorAll("[data-open-settings]").forEach((button) => {
+        button.onclick = openSettings;
+      });
+      const closeBtn = document.getElementById("close-settings");
+      const saveBtn = document.getElementById("save-settings");
+      if (closeBtn) closeBtn.onclick = closeSettings;
+      if (saveBtn) saveBtn.onclick = saveSettings;
+      if (settingsOverlay) {
+        settingsOverlay.addEventListener("click", (event) => {
+          if (event.target === settingsOverlay) closeSettings();
+        });
+      }
+      document.addEventListener("keydown", (event) => {
+        if (event.key !== "Escape") return;
+        if (settingsOverlay && settingsOverlay.classList.contains("open")) {
+          closeSettings();
+          return;
+        }
+        if (appEl && appEl.classList.contains("sidebar-open")) closeSidebar();
+      });
+    }
+
+    function renderSettingsVisualFields() {
+      const host = document.getElementById("settings-visual-fields");
+      if (!host) return;
+      host.innerHTML = [
+        knobField("sample_interval_sec", "Sample interval (s)", `<input id="settings-sample_interval_sec" type="number" />`),
+        knobField("scene_threshold", "Scene threshold", `<input id="settings-scene_threshold" type="number" />`),
+        knobField("similarity_threshold", "Similarity threshold", `<input id="settings-similarity_threshold" type="number" step="0.01" />`),
+        knobField("min_scene_duration_sec", "Min scene (s)", `<input id="settings-min_scene_duration_sec" type="number" step="0.1" />`),
+        knobField("context_before_sec", "Context before (s)", `<input id="settings-context_before_sec" type="number" />`),
+        knobField("context_after_sec", "Context after (s)", `<input id="settings-context_after_sec" type="number" />`),
+        knobField("vlm_keep_threshold", "VLM keep threshold", `<input id="settings-vlm_keep_threshold" type="number" step="0.05" min="0" max="1" />`),
+      ].join("");
+    }
+
+    function visualKnobValue(key, fallback) {
+      const value = visualDefaults[key];
+      return value == null || value === "" ? fallback : value;
+    }
+
+    function fillSettingsVisual({ force = false } = {}) {
+      if (!force && settingsInputsBusy()) return;
+      const fields = [
+        ["settings-sample_interval_sec", "sample_interval_sec"],
+        ["settings-scene_threshold", "scene_threshold"],
+        ["settings-similarity_threshold", "similarity_threshold"],
+        ["settings-min_scene_duration_sec", "min_scene_duration_sec"],
+        ["settings-context_before_sec", "context_before_sec"],
+        ["settings-context_after_sec", "context_after_sec"],
+        ["settings-vlm_keep_threshold", "vlm_keep_threshold"],
+      ];
+      fields.forEach(([id, key]) => {
+        const node = document.getElementById(id);
+        if (!node || document.activeElement === node) return;
+        if (visualDefaults[key] != null && visualDefaults[key] !== "") node.value = visualDefaults[key];
+      });
+    }
+
+    function fillSettingsPrompt({ force = false } = {}) {
+      if (!settingsPromptEl) return;
+      if (!force && (document.activeElement === settingsPromptEl || settingsInputsBusy())) return;
+      settingsPromptEl.value = defaultSummaryPrompt;
+    }
+
+    async function openSettings() {
+      if (!settingsOverlay) return;
+      closeSidebar({ restoreFocus: false });
+      settingsOverlay.hidden = false;
+      settingsOverlay.classList.add("open");
+      settingsOverlay.setAttribute("aria-hidden", "false");
+      if (settingsMsg) settingsMsg.textContent = "";
+      await loadHealth();
+      await loadWorker();
+      fillSettingsVisual({ force: true });
+      fillSettingsPrompt({ force: true });
+    }
+
+    function closeSettings() {
+      if (!settingsOverlay) return;
+      settingsOverlay.classList.remove("open");
+      settingsOverlay.hidden = true;
+      settingsOverlay.setAttribute("aria-hidden", "true");
+    }
+
+    function readSettingsVisual() {
+      const payload = {};
+      const fields = [
+        "sample_interval_sec",
+        "scene_threshold",
+        "similarity_threshold",
+        "min_scene_duration_sec",
+        "context_before_sec",
+        "context_after_sec",
+        "vlm_keep_threshold",
+      ];
+      fields.forEach((key) => {
+        const node = document.getElementById(`settings-${key}`);
+        if (node && node.value !== "") payload[key] = Number(node.value);
+      });
+      return payload;
+    }
+
+    async function saveSettings() {
+      if (settingsMsg) settingsMsg.textContent = "Saving…";
+      try {
+        await saveWorker();
+        const visualPayload = readSettingsVisual();
+        if (Object.keys(visualPayload).length) {
+          const visual = await api("/v1/visual/config", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(visualPayload),
+          });
+          visualDefaults = { ...visualDefaults, ...(visual.visual || {}) };
+          fillSettingsVisual({ force: true });
+        }
+        const promptPayload = await api("/v1/summary/config", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt: (settingsPromptEl && settingsPromptEl.value) || "" }),
+        });
+        defaultSummaryPrompt = promptPayload.prompt || defaultSummaryPrompt;
+        fillSettingsPrompt({ force: true });
+        const promptEl = document.getElementById("summary-prompt");
+        if (promptEl && !summaryPromptDirty && document.activeElement !== promptEl) {
+          promptEl.value = defaultSummaryPrompt;
+        }
+        if (settingsMsg) settingsMsg.textContent = "Saved. Applies immediately.";
+      } catch (error) {
+        if (settingsMsg) settingsMsg.textContent = error.message;
+      }
+    }
+
+    function sourceLinkHtml(url) {
+      const href = String(url || "").trim();
+      if (!href) return "—";
+      try {
+        const parsed = new URL(href);
+        if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+          return `<a class="source-link" href="${esc(href)}" target="_blank" rel="noopener noreferrer">${esc(href)}</a>`;
+        }
+      } catch (_error) {}
+      return esc(href);
+    }
+
+    function sourceLineHtml(url, error) {
+      const href = String(url || "").trim();
+      const link = href ? sourceLinkHtml(href) : "";
+      const suffix = error ? `${href ? " · " : ""}${esc(error)}` : "";
+      return `${link}${suffix}`;
+    }
+
+    async function loadTasks() {
+      const filter = effectiveFilter();
+      const query = new URLSearchParams({
+        filter,
+        group: listGroupEl.value,
+        order: listOrderEl.value,
+      });
+      const tag = listTagEl && listTagEl.value ? listTagEl.value : "";
+      if (tag) query.set("tag", tag);
+      const data = await api(`/v1/tasks?${query}`);
+      tasks = data.tasks || [];
+      const groups = Array.isArray(data.groups) ? data.groups : [{ key: "all", label: "", tasks }];
+      const today = localStampDate();
+      const html = groups.map((group) => {
+        const rows = (group.tasks || []).map((task) => taskButton(task, today)).join("");
+        const count = (group.tasks || []).length;
+        const heading = group.label
+          ? `<div class="task-group source-${esc(String(group.key || ""))}"><span>${esc(group.label)}</span><span class="count">${count}</span></div>`
+          : "";
+        return `<div class="task-block">${heading}${rows}</div>`;
+      }).join("");
+      const empty = emptyListMessage(filter, tag);
+      tasksEl.innerHTML = html || empty;
+      tasksEl.querySelectorAll(".task").forEach((button) => {
+        button.onclick = () => openTask(button.dataset.id);
+      });
+    }
+
+    async function loadKnownTags() {
+      try {
+        const data = await api("/v1/tags");
+        knownTags = Array.isArray(data.tags) ? data.tags : [];
+      } catch (_error) {
+        knownTags = [];
+      }
+      fillTagFilterOptions();
+    }
+
+    function fillTagFilterOptions() {
+      if (!listTagEl) return;
+      const current = listTagEl.value || "";
+      const options = [`<option value="">All tags</option>`].concat(
+        knownTags.map((tag) => `<option value="${esc(tag)}">${esc(tag)}</option>`),
+      );
+      listTagEl.innerHTML = options.join("");
+      if (current && knownTags.some((tag) => tag.toLowerCase() === current.toLowerCase())) {
+        const match = knownTags.find((tag) => tag.toLowerCase() === current.toLowerCase());
+        listTagEl.value = match || "";
+      } else {
+        listTagEl.value = "";
+      }
+    }
+
+    function taskButton(task, today) {
+      const title = task.title || task.video_id || task.url;
+      const requested = task.requested_at || task.created_at || "";
+      const when = requested.startsWith(today) && requested.length > 10
+        ? requested.slice(11)
+        : requested;
+      const source = task.source_label || task.platform || "";
+      const counts = task.media_kind === "image"
+        ? `${task.image_count || 0} images`
+        : `${task.segment_count || 0} segs · ${task.extract_keyframes ? (task.keyframe_count || 0) + " keys" : "transcript"}`;
+      return `<button class="task ${task.id === selectedId ? "active" : ""}" data-id="${task.id}">
+          <div class="title">${esc(title)}</div>
+          <div class="meta">${esc(when)} · ${esc(source)} · ${esc(task.status)} · ${esc(counts)}</div>
+        </button>`;
+    }
+
+    function localStampDate() {
+      const now = new Date();
+      const month = String(now.getMonth() + 1).padStart(2, "0");
+      const day = String(now.getDate()).padStart(2, "0");
+      return `${now.getFullYear()}-${month}-${day}`;
+    }
+
+    function emptyListMessage(filter, tag) {
+      if (tag) {
+        return `<div class="empty">No extracts with tag “${esc(tag)}” for this filter. Clear the tag filter or switch date filter.</div>`;
+      }
+      if (filter === "today") {
+        return `<div class="empty">No extracts today. Switch filter to All to see older requests.</div>`;
+      }
+      if (filter === "yesterday") {
+        return `<div class="empty">No extracts yesterday. Switch filter to All to see other days.</div>`;
+      }
+      if (isIsoDateFilter(filter)) {
+        return `<div class="empty">No extracts on ${esc(filter)}. Switch filter to All to see other days.</div>`;
+      }
+      return `<div class="empty">No tasks yet. Use the browser extension to extract a video.</div>`;
+    }
+
+    async function openTask(id) {
+      selectedId = id;
+      history.replaceState(null, "", `?task=${encodeURIComponent(id)}`);
+      debug = await api(`/v1/tasks/${id}/debug`);
+      renderDetail();
+      if (isMobileLayout()) closeSidebar({ restoreFocus: false });
+      await loadTasks();
+    }
+
+    const KNOB_HELP = {
+      stage: "Which pipeline step to restart from. Artifacts produced by that step and everything after it are discarded, then the job is queued again.\n\nRe-run summary: keep the transcript, post, and stills; ask Qwen3.8 again for the one-minute text briefing.\n\nRe-run Qwen3.8 frame filter: keep existing keyframe JPEGs and re-score which ones belong in the note. Changing the VLM keep threshold reuses cached verdicts and does not reload the model.\n\nRe-run deduplication: keep existing candidate JPEGs and recompute keep/drop with the similarity threshold and your manual Keep/Drop overrides.\n\nRe-run candidate generation: recut stills from scene boundaries, the sample interval, and visual-change spikes, then dedup again.\n\nRe-run scene detection: detect cuts again with the scene threshold and min scene length, then regenerate candidates and keyframes.\n\nRebuild multimodal alignment: keep keyframes; rebuild transcript context windows in multimodal.json. The Obsidian note puts each frame above the transcript block covering that timestamp.\n\nRe-run ASR: transcribe audio again, then redo diarization and transcript alignment. Video and WAV files are reused. Visual stills are kept unless a later visual stage is also selected.\n\nRe-run diarization: refresh speaker labels and realign the transcript. Frames stay; the multimodal timeline is rebuilt.\n\nFull rerun: redo ASR through summary. Download and audio extraction run only if those files are missing.",
+      sample_interval_sec: "How often to grab a still even when the picture is not changing, in seconds. Default 12.\n\nSmaller values catch more slides, title cards, and UI states, and produce more candidate JPEGs. Periodic samples are merged with scene cuts and visual-change spikes when they land within 0.4 seconds of each other.\n\nUsed when you rerun candidate generation or an earlier visual stage.",
+      scene_threshold: "How sensitive scene-cut detection is. Default 27, in PySceneDetect ContentDetector units (about 0.30 as an ffmpeg scene score).\n\nLower values create more cuts and therefore more candidate frames. Higher values ignore small motion, zooms, and talking-head jitter.\n\nCuts shorter than Min scene are merged into the previous scene. Used when you rerun scene detection or a full visual rerun.",
+      similarity_threshold: "When two candidate frames are similar enough to drop the later one as a duplicate. Default 0.92.\n\nEach candidate is compared to kept frames in the previous 30 seconds using dHash plus color histogram. It is auto-dropped only if similarity is at least this value. Lower means more aggressive dropping of talking-head frames; higher keeps more near-duplicates.\n\nManual Keep/Drop always wins. A large OCR text change can force-keep a frame that would otherwise drop.\n\nUsed when you rerun deduplication.",
+      min_scene_duration_sec: "Shortest scene that is kept as its own span, in seconds. Default 0.8.\n\nShorter detected cuts are merged into the previous scene so a fade, blink, or flash does not emit a burst of extra frames.\n\nUsed when you rerun scene detection.",
+      context_before_sec: "How many seconds of transcript to attach before each keyframe in multimodal.json. Default 10.\n\nThis window is stored for later analysis. It does not move images in the Obsidian note. The note places each frame above the speech block whose time range covers that frame.\n\nUsed when you rebuild multimodal alignment.",
+      context_after_sec: "How many seconds of transcript to attach after each keyframe in multimodal.json. Default 20, because speakers often put a slide up and then talk about it.\n\nTogether with Context before, this is the machine-readable window on each keyframe. It does not change where frames appear in the note.\n\nUsed when you rebuild multimodal alignment.",
+      vlm_keep_threshold: "Minimum Qwen3.8 score (0-1) for a keyframe to appear in the Obsidian note. Default 0.45.\n\nThe model scores how much unique visual information the frame adds beyond the transcript. Talking-heads, transitions, and blur typically score low; slides, book covers, UI, and diagrams score high.\n\nRe-running the Qwen3.8 frame filter with a new threshold reuses cached verdicts. It does not call the model again unless a frame has no verdict yet. Manual Keep/Drop still wins.",
+    };
+
+    const STAGE_ROWS = [
+      ["fetching_metadata", "Fetch metadata", "metadata"],
+      ["downloading", "Download", "video"],
+      ["extracting_audio", "Audio", "audio"],
+      ["transcribing", "ASR / transcript", "transcript"],
+      ["diarizing", "Diarization", "diarization"],
+      ["aligning_transcript", "Transcript alignment", "named"],
+      ["detecting_scenes", "Scene detection", "scenes"],
+      ["sampling_frames", "Candidate frames", "candidates"],
+      ["deduplicating_frames", "Deduplicated keyframes", "keyframes"],
+      ["filtering_frames", "Qwen3.8 frame filter", "frame_analysis"],
+      ["aligning_multimodal", "Multimodal alignment", "multimodal"],
+      ["writing_outputs", "Writing outputs", "outputs"],
+      ["summarizing", "Summary", "summary"],
+    ];
+
+    async function refreshSelected() {
+      if (!selectedId || !document.getElementById("stages")) return;
+      try {
+        debug = await api(`/v1/tasks/${selectedId}/debug`);
+      } catch (_error) {
+        return;
+      }
+      const stagesEl = document.getElementById("stages");
+      if (stagesEl) stagesEl.innerHTML = stagesInner(debug);
+      const statusChip = document.getElementById("task-status");
+      if (statusChip) statusChip.textContent = debug.status || "";
+      const sourceLink = document.getElementById("task-source-link");
+      if (sourceLink) sourceLink.innerHTML = sourceLinkHtml(debug.url);
+      const errorLine = document.getElementById("task-error");
+      if (errorLine) {
+        errorLine.textContent = debug.error || "";
+        errorLine.hidden = !debug.error;
+      }
+      const tagsEl = document.getElementById("task-tags");
+      const pickerOpen = Boolean(document.getElementById("tag-picker") && !document.getElementById("tag-picker").hidden);
+      if (tagsEl && !pickerOpen && !tagsEl.contains(document.activeElement)) {
+        tagsEl.innerHTML = tagRowHtml(debug.tags || []);
+        bindTagControls();
+      }
+      // Completed tasks are static unless summary is regenerating.
+      // Rewriting extracted/summary via innerHTML clears the user's text selection.
+      if (!detailBodyNeedsPoll() || hasDetailTextSelection()) return;
+      if (!rerunPanelBusy()) {
+        const gallery = document.getElementById("gallery");
+        const decisions = debug.decisions || [];
+        if (gallery) {
+          gallery.innerHTML = decisions.map((item) => cardHtml(debug.video_id, item)).join("") || `<div class="empty">No candidate frames yet.</div>`;
+          gallery.querySelectorAll("[data-act]").forEach((button) => {
+            button.onclick = () => decide(button.dataset.file, button.dataset.act, button.dataset.stage);
+          });
+        }
+      }
+      paintExtracted(debug.extracted_markdown || "", debug.video_id);
+      paintSummary(debug.summary || {}, { keepPrompt: true });
+    }
+
+    function detailBodyNeedsPoll() {
+      const status = String((debug && debug.status) || "");
+      const summaryStatus = String(((debug && debug.summary) || {}).status || "");
+      if (summaryStatus === "running") return true;
+      if (status === "completed") return false;
+      return true;
+    }
+
+    function hasDetailTextSelection() {
+      const sel = window.getSelection && window.getSelection();
+      if (!sel || sel.isCollapsed || !sel.rangeCount) return false;
+      const node = sel.anchorNode;
+      if (!node || !main) return false;
+      return main.contains(node);
+    }
+
+    function rerunPanelBusy() {
+      const panel = document.getElementById("rerun-panel");
+      if (!panel) return false;
+      if (panel.contains(document.activeElement)) return true;
+      return Boolean(panel.querySelector(".help:hover, .field:hover"));
+    }
+
+    function normalizeTagClient(value) {
+      return String(value || "").replace(/\s+/g, " ").trim().slice(0, 40);
+    }
+
+    function tagRowHtml(tags) {
+      const chips = (tags || []).map((tag) => `
+        <span class="tag-chip">
+          <span>${esc(tag)}</span>
+          <button type="button" data-remove-tag="${esc(tag)}" aria-label="Remove tag ${esc(tag)}">×</button>
+        </span>`).join("");
+      return `${chips}
+        <div class="tag-add-wrap">
+          <button type="button" class="btn" id="add-tag-btn">Add tag</button>
+          <div class="tag-picker" id="tag-picker" hidden>
+            <input id="tag-input" type="text" maxlength="40" placeholder="New or existing tag" autocomplete="off" list="tag-suggestions" />
+            <datalist id="tag-suggestions"></datalist>
+            <div class="tag-picker-list" id="tag-picker-list"></div>
+          </div>
+        </div>`;
+    }
+
+    function bindTagControls() {
+      const addBtn = document.getElementById("add-tag-btn");
+      const picker = document.getElementById("tag-picker");
+      const input = document.getElementById("tag-input");
+      const list = document.getElementById("tag-picker-list");
+      const suggestions = document.getElementById("tag-suggestions");
+      if (!addBtn || !picker || !input || !list) return;
+      const current = new Set((debug && debug.tags || []).map((tag) => String(tag).toLowerCase()));
+      const prior = knownTags.filter((tag) => !current.has(String(tag).toLowerCase()));
+      if (suggestions) {
+        suggestions.innerHTML = prior.map((tag) => `<option value="${esc(tag)}"></option>`).join("");
+      }
+      list.innerHTML = prior.length
+        ? prior.map((tag) => `<button type="button" data-pick-tag="${esc(tag)}">${esc(tag)}</button>`).join("")
+        : `<div class="tag-picker-empty">No previous tags yet. Type a new one and press Enter.</div>`;
+      addBtn.onclick = () => {
+        const open = picker.hidden;
+        picker.hidden = !open;
+        if (open) {
+          input.value = "";
+          input.focus();
+        }
+      };
+      list.querySelectorAll("[data-pick-tag]").forEach((button) => {
+        button.onclick = () => addTagToTask(button.dataset.pickTag);
+      });
+      input.onkeydown = (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          addTagToTask(input.value);
+        } else if (event.key === "Escape") {
+          picker.hidden = true;
+        }
+      };
+      document.querySelectorAll("[data-remove-tag]").forEach((button) => {
+        button.onclick = () => removeTagFromTask(button.dataset.removeTag);
+      });
+    }
+
+    async function saveTaskTags(tags) {
+      if (!debug || !debug.id) return;
+      const payload = await api(`/v1/tasks/${debug.id}/tags`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tags }),
+      });
+      debug.tags = payload.tags || [];
+      const tagsEl = document.getElementById("task-tags");
+      if (tagsEl) {
+        tagsEl.innerHTML = tagRowHtml(debug.tags);
+        bindTagControls();
+      }
+      await loadKnownTags();
+      await loadTasks();
+    }
+
+    async function addTagToTask(raw) {
+      const tag = normalizeTagClient(raw);
+      if (!tag || !debug) return;
+      const next = [...(debug.tags || [])];
+      if (next.some((item) => String(item).toLowerCase() === tag.toLowerCase())) {
+        const picker = document.getElementById("tag-picker");
+        if (picker) picker.hidden = true;
+        return;
+      }
+      next.push(tag);
+      await saveTaskTags(next);
+    }
+
+    async function removeTagFromTask(raw) {
+      const tag = normalizeTagClient(raw);
+      if (!tag || !debug) return;
+      const next = (debug.tags || []).filter((item) => String(item).toLowerCase() !== tag.toLowerCase());
+      await saveTaskTags(next);
+    }
+
+    function renderDetail() {
+      const task = debug;
+      const visual = { ...visualDefaults, ...(task.visual || {}) };
+      const stagesOpen = task.status === "completed" ? "" : " open";
+      main.innerHTML = `
+        <h2>${esc(task.title || task.video_id || "Untitled")}</h2>
+        <div class="row">
+          <span class="chip">${esc(task.requested_at || task.created_at || "—")}</span>
+          <span class="chip">${esc(task.source_label || task.platform || "—")}</span>
+          <span class="chip" id="task-status">${esc(task.status)}</span>
+          <span class="chip chip-link" id="task-source-link">${sourceLinkHtml(task.url)}</span>
+        </div>
+        <div class="tag-row" id="task-tags">${tagRowHtml(task.tags || [])}</div>
+        <p class="source-line" id="task-error"${task.error ? "" : " hidden"}>${esc(task.error || "")}</p>
+        <details class="fold" id="fold-summary" open>
+          <summary>
+            <span class="fold-title">Summary</span>
+            <button type="button" class="btn fold-copy" id="chatgpt-summary" disabled>在 ChatGPT 继续</button>
+            <button type="button" class="btn fold-copy" id="copy-summary" disabled>Copy</button>
+          </summary>
+          <div class="fold-body summary-md" id="summary-output"></div>
+        </details>
+        <details class="fold" id="fold-extracted">
+          <summary>
+            <span class="fold-title">Extracted contents</span>
+            <button type="button" class="btn fold-copy" id="copy-extracted" disabled>Copy</button>
+          </summary>
+          <div class="fold-body note-md" id="extracted-output"></div>
+        </details>
+        <details class="fold" id="fold-stages"${stagesOpen}>
+          <summary><span class="fold-title">Stage</span></summary>
+          <div class="fold-body">
+            <div class="stages" id="stages">${stagesInner(task)}</div>
+          </div>
+        </details>
+        <details class="fold" id="rerun-panel">
+          <summary><span class="fold-title">Rerun a stage</span></summary>
+          <div class="fold-body">
+            <div class="fields" style="margin-top:10px">
+              ${knobField("stage", "Stage", `<select id="stage">
+                  <option value="summarizing">Re-run summary</option>
+                  <option value="filtering_frames">Re-run Qwen3.8 frame filter</option>
+                  <option value="deduplicating_frames">Re-run deduplication</option>
+                  <option value="sampling_frames">Re-run candidate generation</option>
+                  <option value="detecting_scenes">Re-run scene detection</option>
+                  <option value="aligning_multimodal">Rebuild multimodal alignment</option>
+                  <option value="transcribing">Re-run ASR</option>
+                  <option value="diarizing">Re-run diarization</option>
+                  <option value="all">Full rerun</option>
+                </select>`)}
+              ${knobField("sample_interval_sec", "Sample interval (s)", `<input id="sample_interval_sec" type="number" value="${esc(visual.sample_interval_sec ?? visualKnobValue("sample_interval_sec", 12))}" />`)}
+              ${knobField("scene_threshold", "Scene threshold", `<input id="scene_threshold" type="number" value="${esc(visual.scene_threshold ?? visualKnobValue("scene_threshold", 27))}" />`)}
+              ${knobField("similarity_threshold", "Similarity threshold", `<input id="similarity_threshold" type="number" step="0.01" value="${esc(visual.similarity_threshold ?? visualKnobValue("similarity_threshold", 0.92))}" />`)}
+              ${knobField("min_scene_duration_sec", "Min scene (s)", `<input id="min_scene_duration_sec" type="number" step="0.1" value="${esc(visual.min_scene_duration_sec ?? visualKnobValue("min_scene_duration_sec", 0.8))}" />`)}
+              ${knobField("context_before_sec", "Context before (s)", `<input id="context_before_sec" type="number" value="${esc(visual.context_before_sec ?? visualKnobValue("context_before_sec", 10))}" />`)}
+              ${knobField("context_after_sec", "Context after (s)", `<input id="context_after_sec" type="number" value="${esc(visual.context_after_sec ?? visualKnobValue("context_after_sec", 20))}" />`)}
+              ${knobField("vlm_keep_threshold", "VLM keep threshold", `<input id="vlm_keep_threshold" type="number" step="0.05" min="0" max="1" value="${esc(visual.vlm_keep_threshold ?? visualKnobValue("vlm_keep_threshold", 0.45))}" />`)}
+            </div>
+            <div class="actions">
+              <button class="btn primary" id="rerun">Queue rerun</button>
+              ${task.extract_keyframes || task.media_kind === "image" ? "" : `<button class="btn" id="extract-keyframes">Extract keyframes</button>`}
+            </div>
+          </div>
+        </details>
+        <details class="fold" id="summary-panel">
+          <summary><span class="fold-title">Summary Generation</span></summary>
+          <div class="fold-body">
+            <p class="empty" style="padding:8px 0 10px">The pipeline writes a local qwen-3.8-27B 4bit thinking xhigh briefing by default. Use the model menu to regenerate with 8bit, thinking none, Gemini, OpenAI, DeepSeek, or Qwen Max.</p>
+            <label class="field">Model
+              <select id="summary-model">
+                <option value="all">Compare all available</option>
+                <option value="qwen">qwen-3.8-27B 4bit thinking none</option>
+                <option value="qwen-low">qwen-3.8-27B 4bit thinking low</option>
+                <option value="qwen-medium">qwen-3.8-27B 4bit thinking medium</option>
+                <option value="qwen-xhigh" selected>qwen-3.8-27B 4bit thinking xhigh</option>
+                <option value="qwen-8bit">qwen-3.8-27B 8bit thinking none</option>
+                <option value="qwen-8bit-low">qwen-3.8-27B 8bit thinking low</option>
+                <option value="qwen-8bit-medium">qwen-3.8-27B 8bit thinking medium</option>
+                <option value="qwen-8bit-xhigh">qwen-3.8-27B 8bit thinking xhigh</option>
+                <option value="gemini">Gemini</option>
+                <option value="openai">OpenAI</option>
+                <option value="deepseek-v4-pro">DeepSeek V4 Pro (reasoning high)</option>
+                <option value="qwen3.8-max">Qwen3.8-Max (reasoning medium)</option>
+              </select>
+            </label>
+            <div class="actions">
+              <button class="btn primary" id="summarize">Regenerate summary</button>
+              <span class="worker-msg" id="summary-status"></span>
+            </div>
+            <label class="field" style="margin-top:12px">Prompt
+              <textarea id="summary-prompt" class="prompt" rows="12">${esc(defaultSummaryPrompt)}</textarea>
+            </label>
+          </div>
+        </details>
+        <details class="fold" id="fold-frames">
+          <summary>Candidate frames</summary>
+          <div class="fold-body">
+            <div class="grid" id="gallery"></div>
+          </div>
+        </details>
+      `;
+      document.getElementById("rerun").onclick = rerun;
+      const extractBtn = document.getElementById("extract-keyframes");
+      if (extractBtn) extractBtn.onclick = extractKeyframes;
+      document.getElementById("summarize").onclick = summarize;
+      bindTagControls();
+      bindCopyButton("copy-extracted", () => extractedMarkdown);
+      bindCopyButton("copy-summary", () => summaryMarkdown);
+      bindChatGptButton("chatgpt-summary", () => summaryMarkdown);
+      const promptEl = document.getElementById("summary-prompt");
+      summaryPromptDirty = false;
+      promptEl.addEventListener("input", () => { summaryPromptDirty = true; });
+      paintSummary(task.summary || {}, { keepPrompt: false });
+      fillSummaryModels();
+      paintExtracted(task.extracted_markdown || "", task.video_id);
+      const gallery = document.getElementById("gallery");
+      const decisions = task.decisions || [];
+      gallery.innerHTML = decisions.map((item) => cardHtml(task.video_id, item)).join("") || `<div class="empty">No candidate frames yet.</div>`;
+      gallery.querySelectorAll("[data-act]").forEach((button) => {
+        button.onclick = () => decide(button.dataset.file, button.dataset.act, button.dataset.stage);
+      });
+    }
+
+    function knobField(key, label, controlHtml) {
+      return `<label class="field">
+        <span class="label-row">${esc(label)}<button type="button" class="help" aria-label="About ${esc(label)}">?<span class="tip">${esc(KNOB_HELP[key] || "")}</span></button></span>
+        ${controlHtml}
+      </label>`;
+    }
+
+    function stagesInner(task) {
+      const d = task.debug || {};
+      const timings = task.stage_timings || {};
+      const artifactOk = {
+        metadata: Boolean(d.metadata),
+        video: Boolean(task.video_path),
+        audio: Boolean(task.audio_path),
+        transcript: Boolean(d.transcript),
+        diarization: Boolean(d.diarization),
+        named: Boolean(d.named),
+        scenes: Boolean(d.scenes),
+        candidates: Boolean(d.candidates),
+        keyframes: Boolean(d.keyframes),
+        frame_analysis: Boolean(d.frame_analysis),
+        multimodal: Boolean(d.multimodal),
+        outputs: task.status === "completed" || Boolean(timings.writing_outputs && timings.writing_outputs.status === "succeeded"),
+        summary: Boolean(d.summary && d.summary.status === "completed" && d.summary.markdown),
+      };
+      const rows = STAGE_ROWS.map(([key, label, flag]) => {
+        const timing = timings[key] || {};
+        const state = stageChip(timing, artifactOk[flag]);
+        return `<div class="stage-row">
+          <span>${esc(label)}</span>
+          <span class="time">${esc(fmtStart(timing.started_at))}</span>
+          <span class="time">${esc(fmtStageDuration(timing))}</span>
+          <span class="chip ${state.cls}">${esc(state.label)}</span>
+        </div>`;
+      }).join("");
+      return `<div class="stage-head"><span>Stage</span><span>Started</span><span>Duration</span><span>Done</span></div>${rows}`;
+    }
+
+    function stageChip(timing, ok) {
+      const status = timing.status || "";
+      if (status === "running") return { label: "running", cls: "" };
+      if (status === "failed") return { label: "failed", cls: "bad" };
+      if (status === "succeeded" || ok) return { label: "yes", cls: "ok" };
+      return { label: "—", cls: "" };
+    }
+
+    function fmtStart(iso) {
+      if (!iso) return "—";
+      const date = new Date(iso);
+      if (Number.isNaN(date.getTime())) return String(iso);
+      const time = date.toLocaleTimeString([], { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+      const now = new Date();
+      if (date.toDateString() === now.toDateString()) return time;
+      const month = String(date.getMonth() + 1).padStart(2, "0");
+      const day = String(date.getDate()).padStart(2, "0");
+      return `${date.getFullYear()}-${month}-${day} ${time}`;
+    }
+
+    function fmtStageDuration(timing) {
+      if (!timing || timing.status !== "succeeded" || timing.duration_sec == null || timing.duration_sec === "") return "—";
+      const seconds = Number(timing.duration_sec);
+      if (!Number.isFinite(seconds) || seconds < 0) return "—";
+      if (seconds < 10) return `${seconds.toFixed(1)}s`;
+      if (seconds < 60) return `${Math.round(seconds)}s`;
+      const total = Math.round(seconds);
+      const hours = Math.floor(total / 3600);
+      const minutes = Math.floor((total % 3600) / 60);
+      const secs = total % 60;
+      if (hours) return `${hours}h ${minutes}m ${secs}s`;
+      return `${minutes}m ${secs}s`;
+    }
+
+    function cardHtml(videoId, item) {
+      const name = (item.path || "").split("/").pop();
+      const vlm = item.analysis;
+      const dedupKept = Boolean(item.dedup && item.dedup.kept);
+      const kept = vlm ? Boolean(vlm.kept) : dedupKept;
+      const src = `/v1/videos/${encodeURIComponent(videoId)}/frames/candidate_frames/${encodeURIComponent(name)}`;
+      const sources = (item.sources || []).join(" + ") || "unknown";
+      const sim = item.dedup ? Number(item.dedup.similarity || 0).toFixed(2) : "—";
+      const nearest = item.dedup?.nearest_frame || "—";
+      const decision = vlm ? (vlm.decision || "vlm") : (item.dedup?.decision || "auto");
+      const score = vlm && vlm.score != null ? Number(vlm.score).toFixed(2) : "";
+      const category = vlm && vlm.category ? vlm.category : "";
+      const caption = vlm && vlm.caption ? vlm.caption : "";
+      const reason = vlm && vlm.reason ? vlm.reason : "";
+      const retryStage = vlm && dedupKept ? "filtering_frames" : "deduplicating_frames";
+      const vlmLine = vlm
+        ? `Qwen: ${esc(category || "—")} · score ${esc(score || "—")}${reason ? "<br />" + esc(reason) : ""}${caption ? "<br />" + esc(caption) : ""}<br />`
+        : "";
+      return `<article class="card ${kept ? "kept" : "dropped"}">
+        <img src="${src}" alt="${esc(name)}" />
+        <div class="body">
+          <strong>${fmt(item.timestamp)} · ${kept ? "KEEP" : "DROP"}</strong>
+          Source: ${esc(sources)}<br />
+          Nearest: ${esc(nearest)} · similarity ${esc(sim)} · ${esc(decision)}<br />
+          ${vlmLine}
+          <div class="actions">
+            <button class="btn keep" data-act="keep" data-file="${esc(name)}" data-stage="${retryStage}">Keep</button>
+            <button class="btn drop" data-act="drop" data-file="${esc(name)}" data-stage="${retryStage}">Drop</button>
+          </div>
+        </div>
+      </article>`;
+    }
+
+    async function decide(filename, decision, stage) {
+      await api(`/v1/videos/${encodeURIComponent(debug.video_id)}/frames/${encodeURIComponent(filename)}/decision`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ decision }),
+      });
+      await api(`/v1/tasks/${debug.id}/retry`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ stage: stage || "deduplicating_frames" }),
+      });
+      await openTask(debug.id);
+    }
+
+    async function extractKeyframes() {
+      await api(`/v1/tasks/${debug.id}/retry`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ stage: "detecting_scenes" }),
+      });
+      await openTask(debug.id);
+    }
+
+    async function rerun() {
+      const visual = {};
+      for (const key of ["sample_interval_sec", "scene_threshold", "similarity_threshold", "min_scene_duration_sec", "context_before_sec", "context_after_sec", "vlm_keep_threshold"]) {
+        const node = document.getElementById(key);
+        if (node && node.value !== "") visual[key] = Number(node.value);
+      }
+      await api(`/v1/tasks/${debug.id}/retry`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ stage: document.getElementById("stage").value, visual }),
+      });
+      await openTask(debug.id);
+    }
+
+    async function summarize() {
+      const promptEl = document.getElementById("summary-prompt");
+      const statusEl = document.getElementById("summary-status");
+      const button = document.getElementById("summarize");
+      const modelEl = document.getElementById("summary-model");
+      const raw = (promptEl && promptEl.value.trim()) || defaultSummaryPrompt;
+      const prompt = canonicalPrompt(raw);
+      const model = (modelEl && modelEl.value) || summaryModel || "all";
+      summaryModel = model;
+      if (button) button.disabled = true;
+      if (statusEl) statusEl.textContent = "Generating…";
+      try {
+        const payload = await api(`/v1/tasks/${debug.id}/summary`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt, model }),
+        });
+        paintSummary(payload, { keepPrompt: true });
+      } catch (error) {
+        if (statusEl) statusEl.textContent = error.message;
+        if (button) button.disabled = false;
+      }
+    }
+
+    async function fillSummaryModels() {
+      const select = document.getElementById("summary-model");
+      if (!select) return;
+      let providers = [];
+      try {
+        const data = await api("/v1/summary/models");
+        providers = data.providers || [];
+        const defaults = data.default || [];
+        if (defaults[0] && !select.dataset.userSet) {
+          summaryModel = defaults[0];
+        }
+      } catch (_error) {
+        providers = [];
+      }
+      const byKey = Object.fromEntries(providers.map((item) => [item.key, item]));
+      [...select.options].forEach((option) => {
+        if (option.value === "all") return;
+        const info = byKey[option.value];
+        if (!info) return;
+        option.disabled = !info.available;
+        option.textContent = info.available ? info.label : `${info.label} — ${info.detail}`;
+      });
+      if ([...select.options].some((item) => item.value === summaryModel && !item.disabled)) {
+        select.value = summaryModel;
+      }
+      select.onchange = () => {
+        summaryModel = select.value;
+        select.dataset.userSet = "1";
+      };
+    }
+
+    function paintSummary(summary, { keepPrompt = false } = {}) {
+      const output = document.getElementById("summary-output");
+      const statusEl = document.getElementById("summary-status");
+      const button = document.getElementById("summarize");
+      const promptEl = document.getElementById("summary-prompt");
+      if (!output || !statusEl || !button || !promptEl) return;
+      const status = summary.status || "idle";
+      const running = status === "running";
+      const runs = Array.isArray(summary.runs)
+        ? summary.runs.filter((item) => item && typeof item === "object")
+        : [];
+      const markdown = summary.markdown || "";
+      button.disabled = running;
+      if (status === "running") statusEl.textContent = "Generating…";
+      else if (status === "failed") statusEl.textContent = summary.error || "Summary failed";
+      else if (status === "completed" && runs.length > 1) statusEl.textContent = `Done · ${runs.length} summaries`;
+      else if (status === "completed") statusEl.textContent = summary.model ? `Done · ${summary.model}` : "Done";
+      else statusEl.textContent = "";
+      if (runs.length) {
+        const openThinking = {};
+        output.querySelectorAll("details.summary-thinking").forEach((el) => {
+          if (el.open && el.dataset.thinkKey) openThinking[el.dataset.thinkKey] = true;
+        });
+        summaryDisplayRuns = [...runs].reverse();
+        output.innerHTML = summaryDisplayRuns.map((item, index) => renderSummaryRun(item, index)).join("");
+        output.querySelectorAll("details.summary-thinking").forEach((el) => {
+          if (openThinking[el.dataset.thinkKey]) el.open = true;
+          const summaryEl = el.querySelector(":scope > summary");
+          if (!summaryEl) return;
+          summaryEl.addEventListener("click", (event) => event.stopPropagation());
+          summaryEl.addEventListener("pointerdown", (event) => event.stopPropagation());
+        });
+        bindSummaryRunChatGptButtons(output);
+        summaryMarkdown = markdown || copyMarkdownFromRuns(runs);
+      } else {
+        summaryDisplayRuns = [];
+        output.innerHTML = renderSummaryMarkdown(markdown) || `<div class="empty">No summary yet.</div>`;
+        summaryMarkdown = markdown;
+      }
+      const hasSummary = Boolean(String(summaryMarkdown || "").trim());
+      const copyBtn = document.getElementById("copy-summary");
+      if (copyBtn) copyBtn.disabled = !hasSummary;
+      const chatBtn = document.getElementById("chatgpt-summary");
+      if (chatBtn) chatBtn.disabled = !hasSummary;
+      const focused = document.activeElement === promptEl;
+      const storedPrompt = canonicalPrompt(summary.prompt);
+      if (!keepPrompt && !summaryPromptDirty && !focused && storedPrompt) {
+        promptEl.value = storedPrompt;
+      }
+    }
+
+    function renderSummaryRun(item, index = 0) {
+      const label = item.label || item.model || item.key || "Model";
+      const duration = formatRunDuration(item.duration_sec);
+      const head = duration ? `${label} · ${duration}` : label;
+      const thinking = String(item.thinking || "").trim();
+      const markdown = String(item.markdown || "").trim();
+      const failed = item.status === "failed" || (!markdown && !thinking);
+      const thinkKey = String(item.created_at || `${item.key || "run"}-${index}`);
+      const thinkingHtml = thinking
+        ? `<details class="summary-thinking" data-think-key="${esc(thinkKey)}"><summary>Thinking</summary><div class="summary-thinking-body">${renderSummaryMarkdown(thinking)}</div></details>`
+        : "";
+      const body = markdown
+        ? `${thinkingHtml}<div class="summary-run-body">${renderSummaryMarkdown(item.markdown)}</div>`
+        : thinkingHtml || `<p class="summary-run-error">失败：${esc(item.error || "empty")}</p>`;
+      const chatBtn = failed
+        ? ""
+        : `<button type="button" class="btn fold-copy summary-chatgpt" data-run-index="${index}">${CHATGPT_BUTTON_LABEL}</button>`;
+      return `<article class="summary-run${failed ? " failed" : ""}"><header class="summary-run-head"><span class="run-label">${esc(head)}</span>${chatBtn}</header>${body}</article>`;
+    }
+
+    function copyMarkdownFromRuns(runs) {
+      return [...runs].reverse().map((item) => runCopyMarkdown(item)).join("\n");
+    }
+
+    function runCopyMarkdown(item) {
+      const label = item.label || item.model || item.key || "Model";
+      const duration = formatRunDuration(item.duration_sec);
+      const head = duration ? `${label} · ${duration}` : label;
+      const thinking = String(item.thinking || "").trim();
+      const briefing = String(item.markdown || "").trim() || (thinking ? "" : `（失败：${item.error || "empty"}）`);
+      const thinkBlock = thinking
+        ? `<details>\n<summary>Thinking</summary>\n\n${thinking}\n\n</details>\n\n`
+        : "";
+      return `### ${head}\n\n${thinkBlock}${briefing}\n`;
+    }
+
+    function formatRunDuration(seconds) {
+      if (seconds == null || seconds === "") return "";
+      const value = Number(seconds);
+      if (!Number.isFinite(value)) return "";
+      const safe = Math.max(0, value);
+      if (safe < 10) return `${safe.toFixed(1)}s`;
+      if (safe < 60) return `${Math.round(safe)}s`;
+      const total = Math.round(safe);
+      const hours = Math.floor(total / 3600);
+      const minutes = Math.floor((total % 3600) / 60);
+      const secs = total % 60;
+      if (hours) return `${hours}h ${minutes}m ${secs}s`;
+      return `${minutes}m ${secs}s`;
+    }
+
+    function canonicalPrompt(text) {
+      const raw = String(text || "").trim();
+      if (!raw || LEGACY_SUMMARY_PROMPTS.has(raw) || raw === DEFAULT_SUMMARY_PROMPT) return defaultSummaryPrompt;
+      return raw;
+    }
+
+    function paintExtracted(markdown, videoId) {
+      const output = document.getElementById("extracted-output");
+      if (!output) return;
+      extractedMarkdown = markdown || "";
+      const copyBtn = document.getElementById("copy-extracted");
+      if (copyBtn) copyBtn.disabled = !extractedMarkdown.trim();
+      output.innerHTML = renderNoteMarkdown(markdown, videoId) || `<div class="empty">No extracted note yet.</div>`;
+    }
+
+    function bindCopyButton(id, getText) {
+      const button = document.getElementById(id);
+      if (!button) return;
+      const stop = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      };
+      button.addEventListener("pointerdown", stop);
+      button.addEventListener("click", async (event) => {
+        stop(event);
+        const text = String(getText() || "").trim();
+        if (!text) return;
+        try {
+          await copyText(text);
+          button.textContent = "Copied";
+          clearTimeout(copyResetters[id]);
+          copyResetters[id] = setTimeout(() => { button.textContent = "Copy"; }, 1600);
+        } catch (_error) {
+          button.textContent = "Copy failed";
+          clearTimeout(copyResetters[id]);
+          copyResetters[id] = setTimeout(() => { button.textContent = "Copy"; }, 1600);
+        }
+      });
+    }
+
+    function buildChatGptPayload(summaryText) {
+      const extracted = String(extractedMarkdown || "").trim();
+      const summary = String(summaryText || "").trim();
+      const parts = [];
+      if (extracted) parts.push(`## Extracted contents\n\n${extracted}`);
+      if (summary) parts.push(`## Summary\n\n${summary}`);
+      if (!parts.length) return "";
+      parts.push("请基于以上内容继续提问和讨论。");
+      return parts.join("\n\n---\n\n");
+    }
+
+    function bindChatGptButton(id, getSummaryText) {
+      const button = document.getElementById(id);
+      if (!button) return;
+      const stop = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      };
+      button.addEventListener("pointerdown", stop);
+      button.addEventListener("click", async (event) => {
+        stop(event);
+        await continueInChatGpt(getSummaryText(), button, id);
+      });
+    }
+
+    function bindSummaryRunChatGptButtons(output) {
+      output.querySelectorAll("button.summary-chatgpt").forEach((button) => {
+        const stop = (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+        };
+        button.addEventListener("pointerdown", stop);
+        button.addEventListener("click", async (event) => {
+          stop(event);
+          const index = Number(button.dataset.runIndex);
+          const item = summaryDisplayRuns[index];
+          if (!item) return;
+          const resetKey = `summary-chatgpt-${index}`;
+          await continueInChatGpt(runCopyMarkdown(item), button, resetKey);
+        });
+      });
+    }
+
+    async function continueInChatGpt(summaryText, button, resetKey) {
+      const payload = buildChatGptPayload(summaryText);
+      if (!payload) return;
+      let copied = false;
+      try {
+        // Copy during the click gesture first — Clipboard API after opening a new
+        // tab loses user-activation and fails on Safari / some Chromium builds.
+        await copyText(payload);
+        copied = true;
+        if (button) {
+          button.textContent = CHATGPT_COPIED_LABEL;
+          clearTimeout(copyResetters[resetKey]);
+          copyResetters[resetKey] = setTimeout(() => {
+            button.textContent = CHATGPT_BUTTON_LABEL;
+          }, 2200);
+        }
+      } catch (_error) {
+        showCopyFallback(payload);
+        if (button) {
+          button.textContent = "Copy failed";
+          clearTimeout(copyResetters[resetKey]);
+          copyResetters[resetKey] = setTimeout(() => {
+            button.textContent = CHATGPT_BUTTON_LABEL;
+          }, 2200);
+        }
+      }
+      const stub = encodeURIComponent(CHATGPT_STUB);
+      const opened = window.open(`${CHATGPT_URL}?q=${stub}`, "_blank", "noopener,noreferrer");
+      if (copied && !opened && button) {
+        button.textContent = "已复制；请允许弹窗或手动打开 ChatGPT";
+        clearTimeout(copyResetters[resetKey]);
+        copyResetters[resetKey] = setTimeout(() => {
+          button.textContent = CHATGPT_BUTTON_LABEL;
+        }, 4200);
+      }
+    }
+
+    function showCopyFallback(text) {
+      const overlay = document.getElementById("copy-fallback-overlay");
+      const area = document.getElementById("copy-fallback-text");
+      const selectBtn = document.getElementById("copy-fallback-select");
+      const closeBtn = document.getElementById("close-copy-fallback");
+      if (!overlay || !area) return;
+      area.value = text;
+      overlay.hidden = false;
+      overlay.classList.add("open");
+      overlay.setAttribute("aria-hidden", "false");
+      const close = () => {
+        overlay.classList.remove("open");
+        overlay.hidden = true;
+        overlay.setAttribute("aria-hidden", "true");
+      };
+      if (closeBtn) closeBtn.onclick = close;
+      if (selectBtn) {
+        selectBtn.onclick = () => {
+          area.focus();
+          area.select();
+          area.setSelectionRange(0, area.value.length);
+        };
+      }
+      overlay.onclick = (event) => {
+        if (event.target === overlay) close();
+      };
+      area.focus();
+      area.select();
+      area.setSelectionRange(0, area.value.length);
+    }
+
+    function copyTextSync(text) {
+      const area = document.createElement("textarea");
+      area.value = text;
+      area.setAttribute("readonly", "");
+      area.style.position = "fixed";
+      area.style.top = "0";
+      area.style.left = "0";
+      area.style.width = "1px";
+      area.style.height = "1px";
+      area.style.opacity = "0";
+      area.style.pointerEvents = "none";
+      document.body.appendChild(area);
+      area.focus();
+      area.select();
+      area.setSelectionRange(0, area.value.length);
+      let ok = false;
+      try {
+        ok = document.execCommand("copy");
+      } finally {
+        area.remove();
+      }
+      if (!ok) throw new Error("copy failed");
+    }
+
+    async function copyText(text) {
+      // Prefer sync execCommand while the click gesture is still active
+      // (more reliable than Clipboard API after focus moves to a new tab).
+      try {
+        copyTextSync(text);
+        return;
+      } catch (_syncError) {
+        /* fall through to Clipboard API */
+      }
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return;
+      }
+      throw new Error("copy failed");
+    }
+
+    function stripSummaryImages(text) {
+      return String(text || "")
+        .replace(/!\[\[[^\]]+\]\]/g, "")
+        .replace(/\[\[attachments\/[^\]]+\]\]/g, "")
+        .replace(/!\[[^\]]*\]\([^)]+\)/g, "")
+        .replace(/<img\b[^>]*>/gi, "")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+    }
+
+    function renderSummaryMarkdown(text) {
+      if (!text) return "";
+      let html = esc(stripSummaryImages(text));
+      html = html.replace(/^### (.+)$/gm, "<h3>$1</h3>");
+      html = html.replace(/^## (.+)$/gm, "<h2>$1</h2>");
+      html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+      html = html.replace(/\n/g, "<br />");
+      return html;
+    }
+
+    function renderNoteMarkdown(text, videoId) {
+      if (!text) return "";
+      let html = esc(text);
+      html = html.replace(/!?\[\[(?:attachments\/([^/\]]+)\/)?([^\]|]+)(?:\|[^\]]*)?\]\]/g, (_, vid, file) => {
+        return noteImage(vid || videoId, file);
+      });
+      html = html.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_, alt, file) => {
+        const name = String(file).split("/").pop();
+        return noteImage(videoId, name, alt);
+      });
+      html = html.replace(/^### (.+)$/gm, "<h3>$1</h3>");
+      html = html.replace(/^## (.+)$/gm, "<h2>$1</h2>");
+      html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+      html = html.replace(/\n/g, "<br />");
+      return html;
+    }
+
+    function noteImage(videoId, filename, alt) {
+      const name = String(filename || "").split("/").pop();
+      const label = esc(alt || name);
+      const src = `/v1/videos/${encodeURIComponent(videoId)}/attachments/${encodeURIComponent(name)}`;
+      return `<img src="${src}" alt="${label}" />`;
+    }
+
+    async function api(path, options) {
+      const response = await fetch(path, options);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || data.error || response.statusText);
+      return data;
+    }
+
+    function esc(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;");
+    }
+
+    function fmt(seconds) {
+      const total = Math.max(0, Math.floor(Number(seconds) || 0));
+      const h = String(Math.floor(total / 3600)).padStart(2, "0");
+      const m = String(Math.floor((total % 3600) / 60)).padStart(2, "0");
+      const s = String(total % 60).padStart(2, "0");
+      return `${h}:${m}:${s}`;
+    }
+
+    init();
+  </script>
+</body>
+</html>

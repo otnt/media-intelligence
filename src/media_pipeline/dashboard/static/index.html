@@ -1,1940 +1,1152 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>Media Pipeline</title>
-  <style>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="default" />
+<meta name="apple-mobile-web-app-title" content="Media" />
+<link rel="manifest" href="/manifest.webmanifest" />
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png" />
+<link rel="icon" type="image/png" href="/static/favicon.png" />
+<title>Media Intelligence</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #ffffff;
+    --bg-2: #f2f2f7;
+    --fill: rgba(118, 118, 128, 0.12);
+    --fill-2: rgba(118, 118, 128, 0.2);
+    --text: #1c1c1e;
+    --text-2: #5c5c63;
+    --text-3: #8e8e93;
+    --line: rgba(60, 60, 67, 0.16);
+    --accent: #0a66d8;
+    --accent-soft: rgba(10, 102, 216, 0.1);
+    --ok: #248a3d;
+    --warn: #b25000;
+    --err: #d70015;
+    --err-soft: rgba(215, 0, 21, 0.08);
+    --mark: rgba(255, 204, 0, 0.45);
+    --bar: rgba(255, 255, 255, 0.95);
+    --shadow: 0 8px 30px rgba(0, 0, 0, 0.12);
+    --sheet: #ffffff;
+    --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB",
+      "Microsoft YaHei", "Noto Sans CJK SC", "Helvetica Neue", sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+    --read: 17px;
+    --read-lh: 1.75;
+    --gutter: 16px;
+    --top: env(safe-area-inset-top, 0px);
+    --bottom: env(safe-area-inset-bottom, 0px);
+  }
+  @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #0f1218;
-      --panel: #171b24;
-      --line: #2a3140;
-      --text: #e8edf5;
-      --muted: #8b95a8;
-      --accent: #6d7cff;
-      --keep: #3dd68c;
-      --drop: #ff6b7a;
-      --warn: #f0b429;
+      --bg: #000000;
+      --bg-2: #1c1c1e;
+      --fill: rgba(118, 118, 128, 0.24);
+      --fill-2: rgba(118, 118, 128, 0.36);
+      --text: #f2f2f7;
+      --text-2: #aeaeb2;
+      --text-3: #7c7c82;
+      --line: rgba(84, 84, 88, 0.6);
+      --accent: #4ea1ff;
+      --accent-soft: rgba(78, 161, 255, 0.16);
+      --ok: #30d158;
+      --warn: #ff9f0a;
+      --err: #ff453a;
+      --err-soft: rgba(255, 69, 58, 0.14);
+      --mark: rgba(255, 214, 10, 0.4);
+      --bar: rgba(0, 0, 0, 0.92);
+      --shadow: 0 8px 30px rgba(0, 0, 0, 0.6);
+      --sheet: #1c1c1e;
     }
-    * { box-sizing: border-box; }
-    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, sans-serif; overflow: hidden; }
-    a { color: var(--accent); }
-    button, select, input { font: inherit; }
-    .app { display: grid; grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr); height: 100%; min-width: 0; min-height: 0; }
-    .sidebar { border-right: 1px solid var(--line); display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; background: var(--bg); }
-    .mobile-chrome { display: none; }
-    .sidebar-backdrop { display: none; }
-    .sidebar-close { display: none; }
-    .workspace { display: grid; grid-template-columns: 340px 1fr; min-width: 0; min-height: 0; height: 100%; overflow: hidden; }
-    .brand { padding: 16px 18px 10px; display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
-    .brand-actions { display: flex; align-items: flex-start; gap: 8px; flex: 0 0 auto; }
-    .brand-copy { min-width: 0; }
-    .brand h1 { margin: 0; font-size: 16px; letter-spacing: -0.02em; }
-    .brand p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
-    .list { overflow: auto; flex: 1; }
-    .list-controls { padding: 10px 16px 12px; border-bottom: 1px solid var(--line); display: grid; gap: 8px; }
-    .list-controls h2 { margin: 0 0 2px; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
-    .task-block { padding-bottom: 8px; }
-    .task-block .task { padding-left: 18px; }
-    .task-group {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 8px;
-      margin: 10px 10px 6px;
-      padding: 8px 12px;
-      font-size: 15px;
-      font-weight: 750;
-      letter-spacing: -0.02em;
-      color: var(--text);
-      background: #243044;
-      border: 1px solid #3d4b63;
-      border-left: 5px solid var(--accent);
-      border-radius: 8px;
-      position: sticky;
-      top: 6px;
-      z-index: 2;
-      box-shadow: 0 8px 18px rgba(0,0,0,0.4);
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 15px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+    -webkit-tap-highlight-color: transparent;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  button, input, textarea, select { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+  /* ------------------------------------------------------------ layout */
+  /* Phone: one screen at a time, and the page itself scrolls (no inner scroll boxes). */
+  body:not(.route-note) #note { display: none; }
+  body.route-note #library { display: none; }
+  @media (min-width: 900px) {
+    #app { display: grid; grid-template-columns: minmax(320px, 380px) 1fr; }
+    body.route-note #library, body:not(.route-note) #note { display: block; }
+    #library {
+      position: sticky; top: 0; height: 100vh; overflow-y: auto;
+      border-right: 1px solid var(--line); background: var(--bg);
     }
-    .task-group:first-child { margin-top: 8px; }
-    .task-group .count {
-      flex: 0 0 auto;
-      font-size: 12px;
-      font-weight: 700;
-      color: var(--text);
-      background: #10141c;
-      border-radius: 999px;
-      padding: 2px 8px;
-    }
-    .task-group.source-youtube { border-left-color: #ff4d4f; background: #322028; }
-    .task-group.source-bilibili { border-left-color: #00a1d6; background: #1b2c38; }
-    .task-group.source-rednote { border-left-color: #ff2442; background: #3a1c24; }
-    .task-group.source-other { border-left-color: var(--warn); }
-    .worker-panel h2, .settings-sheet h3 { margin: 0 0 8px; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
-    .settings-sheet h3 { margin: 18px 0 8px; }
-    .worker-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-    .worker-fields label.field input { width: 100%; }
-    .worker-panel .actions, .settings-actions { margin-top: 10px; align-items: center; }
-    .worker-msg { font-size: 12px; color: var(--muted); }
-    .occupancy { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-    .settings-overlay {
-      position: fixed;
-      inset: 0;
-      z-index: 80;
-      display: none;
-      align-items: flex-start;
-      justify-content: center;
-      padding: 32px 16px 48px;
-      background: rgba(8, 10, 16, 0.72);
-      overflow: auto;
-    }
-    .settings-overlay.open { display: flex !important; }
-    .settings-sheet {
-      width: min(760px, 100%);
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 14px;
-      padding: 18px 20px 20px;
-      box-shadow: 0 18px 48px rgba(0,0,0,0.45);
-    }
-    .settings-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
-    .settings-head h2 { margin: 0; font-size: 20px; }
-    .settings-sheet textarea.prompt { min-height: 168px; }
-    .source-link { color: var(--accent); word-break: break-all; }
-    .source-line { color: var(--muted); padding: 0 0 12px; margin: 0; }
-    .task { display: block; width: 100%; text-align: left; border: 0; border-bottom: 1px solid var(--line); background: transparent; color: inherit; padding: 12px 16px; cursor: pointer; }
-    .task:hover, .task.active { background: #1e2430; }
-    .task .title { font-weight: 650; }
-    .task .meta { color: var(--muted); font-size: 12px; margin-top: 3px; }
-    .main { overflow: auto; padding: 20px 24px 48px; min-width: 0; min-height: 0; }
-    .empty { color: var(--muted); padding: 40px 8px; }
-    h2 { margin: 0 0 12px; font-size: 22px; }
-    .row { display: flex; gap: 12px; flex-wrap: wrap; margin: 8px 0 18px; }
-    .chip { background: #222836; border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px; color: var(--muted); font-size: 12px; }
-    .chip.ok { color: var(--keep); }
-    .chip.bad { color: var(--drop); }
-    .chip-link { max-width: min(100%, 42rem); overflow-wrap: anywhere; }
-    .tag-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: -6px 0 16px; }
-    .tag-chip {
-      display: inline-flex; align-items: center; gap: 6px;
-      background: #1a2230; border: 1px solid var(--line); border-radius: 999px;
-      padding: 3px 6px 3px 10px; color: var(--text); font-size: 12px;
-    }
-    .tag-chip button {
-      border: 0; background: transparent; color: var(--muted); cursor: pointer;
-      padding: 0 4px; font-size: 14px; line-height: 1;
-    }
-    .tag-chip button:hover { color: var(--drop); }
-    .tag-add-wrap { position: relative; display: inline-flex; }
-    .tag-picker {
-      position: absolute; top: calc(100% + 6px); left: 0; z-index: 20;
-      min-width: min(280px, 80vw); max-width: 320px;
-      background: #151a24; border: 1px solid var(--line); border-radius: 10px;
-      padding: 10px; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
-    }
-    .tag-picker[hidden] { display: none; }
-    .tag-picker input {
-      width: 100%; box-sizing: border-box; background: #10141c; color: var(--text);
-      border: 1px solid var(--line); border-radius: 8px; padding: 7px 8px; margin-bottom: 8px;
-    }
-    .tag-picker-list { display: flex; flex-direction: column; gap: 2px; max-height: 160px; overflow: auto; }
-    .tag-picker-list button {
-      text-align: left; border: 0; background: transparent; color: var(--text);
-      padding: 7px 8px; border-radius: 6px; cursor: pointer; font-size: 13px;
-    }
-    .tag-picker-list button:hover { background: #222836; }
-    .tag-picker-empty { color: var(--muted); font-size: 12px; padding: 4px 2px; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }
-    .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
-    .card img { width: 100%; aspect-ratio: 16/9; object-fit: cover; background: #0b0d12; display: block; }
-    .card .body { padding: 10px 12px 12px; font-size: 12px; color: var(--muted); }
-    .card .body strong { color: var(--text); display: block; margin-bottom: 4px; }
-    .actions { display: flex; gap: 8px; margin-top: 8px; }
-    .btn { border: 0; border-radius: 8px; padding: 6px 10px; cursor: pointer; color: #fff; background: #2c3344; }
-    .btn.keep { background: #1f6a45; }
-    .btn.drop { background: #8a2d38; }
-    .btn.primary { background: var(--accent); color: #0b0d12; font-weight: 700; }
-    .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin: 16px 0; }
-    label.field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); position: relative; overflow: visible; }
-    label.field input, label.field select { background: #10141c; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 7px 8px; }
-    label.field input[type="date"] { color-scheme: dark; width: 100%; min-width: 0; }
-    .fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; overflow: visible; }
-    .label-row { display: flex; align-items: center; gap: 6px; }
-    .help {
-      flex: 0 0 auto;
-      width: 18px;
-      height: 18px;
-      border-radius: 50%;
-      border: 1px solid var(--line);
-      background: #222836;
-      color: var(--muted);
-      font-size: 11px;
-      font-weight: 700;
-      line-height: 16px;
-      padding: 0;
-      cursor: help;
-    }
-    .help .tip {
-      display: none;
-      position: absolute;
-      z-index: 40;
-      left: 0;
-      top: calc(100% + 8px);
-      width: 280px;
-      max-width: min(280px, 70vw);
-      background: #0b0d12;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 10px 12px;
-      color: var(--text);
-      font-size: 12px;
-      font-weight: 400;
-      line-height: 1.45;
-      white-space: pre-wrap;
-      box-shadow: 0 10px 28px rgba(0,0,0,0.45);
-      text-align: left;
-    }
-    .field:hover .help .tip,
-    .help:hover .tip,
-    .help:focus .tip,
-    .help:focus-visible .tip { display: block; }
-    .panel { overflow: visible; }
-    .stages { display: grid; gap: 0; font-size: 13px; }
-    .stage-head, .stage-row {
-      display: grid;
-      grid-template-columns: minmax(7.5rem, 1.5fr) 10rem 6.5rem 4.6rem;
-      gap: 8px;
-      align-items: center;
-      border-bottom: 1px solid #222836;
-      padding: 6px 0;
-    }
-    .stage-head { color: var(--muted); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; }
-    .stage-row .chip { justify-self: end; }
-    .time { font-variant-numeric: tabular-nums; color: var(--muted); }
-    .kept { outline: 2px solid var(--keep); }
-    .dropped { opacity: 0.55; }
-    textarea.prompt {
-      width: 100%;
-      min-height: 88px;
-      background: #10141c;
-      color: var(--text);
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 8px 10px;
-      resize: vertical;
-      line-height: 1.45;
-    }
-    .summary-md, .note-md { margin-top: 4px; font-size: 14px; line-height: 1.55; }
-    .summary-md:empty, .note-md:empty { display: none; }
-    .summary-md h2, .summary-md h3, .note-md h2, .note-md h3 { margin: 14px 0 8px; }
-    .summary-md img, .note-md img { display: block; max-width: min(100%, 720px); border-radius: 8px; margin: 10px 0; background: #0b0d12; }
-    .summary-run {
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      padding: 10px 12px 12px;
-      margin-top: 12px;
-      background: #121722;
-    }
-    .summary-run:first-child { margin-top: 0; }
-    .summary-run-head {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 8px;
-      color: var(--muted);
-      font-size: 12px;
-      font-weight: 650;
-      margin-bottom: 8px;
-    }
-    .summary-run-head .run-label { min-width: 0; }
-    .summary-run-head .fold-copy { flex: 0 0 auto; font-weight: 600; }
-    .summary-run.failed .summary-run-head { color: var(--drop); }
-    .summary-run-error { color: var(--drop); margin: 0; }
-    .summary-run-body h2, .summary-run-body h3 { margin: 10px 0 8px; }
-    .summary-thinking {
-      margin: 0 0 10px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: #0b0d12;
-    }
-    .summary-thinking > summary {
-      cursor: pointer;
-      color: var(--muted);
-      font-size: 12px;
-      font-weight: 650;
-      padding: 8px 10px;
-      list-style: none;
-    }
-    .summary-thinking > summary::-webkit-details-marker { display: none; }
-    .summary-thinking > summary::before { content: "▸ "; color: var(--muted); }
-    .summary-thinking[open] > summary::before { content: "▾ "; }
-    .summary-thinking-body {
-      padding: 0 10px 10px;
-      color: var(--muted);
-      font-size: 13px;
-    }
-    details.fold {
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 12px;
-      margin: 16px 0;
-    }
-    details.fold > summary {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      cursor: pointer;
-      font-weight: 650;
-      padding: 14px 16px;
-      list-style: none;
-    }
-    details.fold > summary::-webkit-details-marker { display: none; }
-    details.fold > summary::before { content: "▸ "; color: var(--muted); }
-    details.fold[open] > summary::before { content: "▾ "; }
-    details.fold > summary .fold-title { flex: 1; }
-    details.fold > summary .fold-copy { flex: 0 0 auto; font-weight: 600; }
-    details.fold .fold-body { padding: 0 16px 16px; }
-    details.fold .fold-body .empty { padding: 8px 0 4px; }
-    @media (max-width: 899px) {
-      html, body { height: 100%; height: 100dvh; overflow: hidden; }
-      .app {
-        display: flex;
-        flex-direction: column;
-        height: 100%;
-        min-height: 0;
-      }
-      .mobile-chrome {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        flex: 0 0 auto;
-        padding: 10px 12px;
-        padding-top: max(10px, env(safe-area-inset-top));
-        padding-left: max(12px, env(safe-area-inset-left));
-        padding-right: max(12px, env(safe-area-inset-right));
-        border-bottom: 1px solid var(--line);
-        background: var(--panel);
-        z-index: 75;
-        position: relative;
-      }
-      .mobile-brand { min-width: 0; flex: 1; }
-      .mobile-brand h1 {
-        margin: 0;
-        font-size: 15px;
-        letter-spacing: -0.02em;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-      .mobile-chrome .btn {
-        min-height: 44px;
-        padding: 10px 14px;
-      }
-      .sidebar #open-settings { display: none; }
-      .sidebar-close {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        min-height: 44px;
-        padding: 10px 14px;
-      }
-      .sidebar {
-        position: absolute;
-        top: 0;
-        left: 0;
-        bottom: 0;
-        width: min(340px, calc(100vw - 48px));
-        max-width: 100%;
-        z-index: 70;
-        transform: translateX(-100%);
-        transition: transform 0.22s ease;
-        padding-bottom: env(safe-area-inset-bottom);
-        box-shadow: none;
-      }
-      .app.sidebar-open .sidebar {
-        transform: translateX(0);
-        box-shadow: 12px 0 40px rgba(0, 0, 0, 0.45);
-      }
-      .workspace {
-        display: flex;
-        flex-direction: column;
-        flex: 1;
-        min-height: 0;
-        min-width: 0;
-        position: relative;
-      }
-      .sidebar-backdrop {
-        display: none;
-        position: absolute;
-        inset: 0;
-        z-index: 60;
-        margin: 0;
-        border: 0;
-        padding: 0;
-        background: rgba(8, 10, 16, 0.58);
-        cursor: pointer;
-      }
-      .app.sidebar-open .sidebar-backdrop { display: block; }
-      .main {
-        flex: 1;
-        min-height: 0;
-        width: 100%;
-        padding: 16px 16px max(40px, env(safe-area-inset-bottom));
-        padding-left: max(16px, env(safe-area-inset-left));
-        padding-right: max(16px, env(safe-area-inset-right));
-      }
-      .btn, .task { min-height: 44px; }
-      .task { padding: 14px 16px; }
-      label.field input, label.field select {
-        min-height: 44px;
-        padding: 10px 8px;
-      }
-      .settings-overlay {
-        padding: 12px 10px max(24px, env(safe-area-inset-bottom));
-      }
-      .settings-sheet {
-        padding: 14px 14px 16px;
-        border-radius: 12px;
-      }
-      .stages {
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
-      }
-      .stage-head, .stage-row {
-        grid-template-columns: minmax(6.2rem, 1.3fr) minmax(4.2rem, 0.9fr) 4.2rem 3.5rem;
-        gap: 6px;
-        font-size: 12px;
-      }
-      .help .tip {
-        width: min(280px, calc(100vw - 24px));
-        max-width: calc(100vw - 24px);
-      }
-      .empty { padding: 24px 4px; }
-      .list { overscroll-behavior: contain; }
-      .main h2 { overflow-wrap: anywhere; }
-    }
-    @media (max-width: 899px) and (prefers-reduced-motion: reduce) {
-      .sidebar { transition: none; }
-    }
-  </style>
+    #note { min-width: 0; }
+    .back { display: none !important; }
+  }
+
+  /* ------------------------------------------------------------ library */
+  .lib-head {
+    position: sticky; top: 0; z-index: 5;
+    padding: calc(var(--top) + 10px) var(--gutter) 8px;
+    background: var(--bar);
+    -webkit-backdrop-filter: saturate(180%) blur(20px); backdrop-filter: saturate(180%) blur(20px);
+  }
+  .lib-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .lib-top h1 { margin: 0; font-size: 30px; line-height: 1.15; letter-spacing: 0.01em; }
+  .lib-top .count { color: var(--text-3); font-size: 15px; font-weight: 400; margin-left: 6px; }
+  .icon-btn {
+    width: 36px; height: 36px; border-radius: 18px; border: 0;
+    display: inline-grid; place-items: center;
+    background: var(--fill); color: var(--accent); font-size: 22px; line-height: 1;
+  }
+  .search {
+    margin-top: 10px; display: flex; align-items: center; gap: 6px;
+    height: 38px; padding: 0 10px; border-radius: 11px; background: var(--fill); color: var(--text-3);
+  }
+  .search input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; font-size: 16px; color: var(--text); }
+  .search input::placeholder { color: var(--text-3); }
+  .chips { display: flex; gap: 8px; overflow-x: auto; padding: 10px 0 2px; scrollbar-width: none; }
+  .chips::-webkit-scrollbar { display: none; }
+  .chip {
+    flex: none; height: 30px; padding: 0 12px; border-radius: 15px; border: 0;
+    background: var(--fill); color: var(--text); font-size: 14px; white-space: nowrap;
+  }
+  .chip .n { color: var(--text-3); margin-left: 4px; font-variant-numeric: tabular-nums; }
+  .chip[aria-pressed="true"] { background: var(--text); color: var(--bg); }
+  .chip[aria-pressed="true"] .n { color: inherit; opacity: 0.7; }
+  .chip.danger:not([aria-pressed="true"]) { color: var(--err); }
+
+  .section-title {
+    margin: 18px var(--gutter) 4px; font-size: 13px; font-weight: 600; color: var(--text-3);
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .row {
+    display: flex; gap: 12px; align-items: flex-start;
+    padding: 10px var(--gutter); color: var(--text); position: relative;
+  }
+  .row + .row::before {
+    content: ""; position: absolute; top: 0; right: 0; left: calc(var(--gutter) + 124px);
+    border-top: 1px solid var(--line);
+  }
+  .row:active { background: var(--fill); }
+  .row[aria-current="true"] { background: var(--accent-soft); }
+  .thumb {
+    flex: none; width: 112px; height: 63px; border-radius: 8px; overflow: hidden; position: relative;
+    background: var(--fill) center / cover no-repeat;
+  }
+  .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .thumb .dur {
+    position: absolute; right: 4px; bottom: 4px; padding: 1px 5px; border-radius: 4px;
+    background: rgba(0, 0, 0, 0.72); color: #fff; font-size: 11px; font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .thumb .glyph { position: absolute; inset: 0; display: grid; place-items: center; font-size: 24px; color: var(--text-3); }
+  .row-body { min-width: 0; flex: 1; }
+  .row-title {
+    font-size: 15.5px; font-weight: 600; line-height: 1.35;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .row-meta { margin-top: 3px; font-size: 13px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row-state { margin-top: 5px; font-size: 12.5px; display: flex; align-items: center; gap: 6px; color: var(--text-2); }
+  .row-state.err { color: var(--err); }
+  .bar { flex: 1; max-width: 120px; height: 4px; border-radius: 2px; background: var(--fill-2); overflow: hidden; }
+  .bar i { display: block; height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.4s; }
+  .tagline { display: inline-flex; gap: 4px; margin-left: 6px; }
+  .tag { font-size: 12px; color: var(--accent); }
+  .empty { padding: 48px var(--gutter); text-align: center; color: var(--text-3); line-height: 1.7; }
+  .lib-foot { padding: 24px var(--gutter) calc(var(--bottom) + 28px); text-align: center; font-size: 13px; color: var(--text-3); }
+  .lib-foot a { color: var(--text-3); text-decoration: underline; text-underline-offset: 3px; }
+
+  /* ------------------------------------------------------------ note */
+  .note-bar {
+    position: sticky; top: 0; z-index: 6; display: flex; align-items: center; gap: 8px;
+    height: calc(var(--top) + 48px); padding: var(--top) 8px 0;
+    background: var(--bar);
+    -webkit-backdrop-filter: saturate(180%) blur(20px); backdrop-filter: saturate(180%) blur(20px);
+    border-bottom: 1px solid transparent; transition: border-color 0.2s;
+  }
+  .note-bar.scrolled { border-bottom-color: var(--line); }
+  .back { display: inline-flex; align-items: center; gap: 2px; padding: 8px; font-size: 17px; border-radius: 10px; }
+  .back svg { width: 12px; height: 20px; }
+  .bar-title {
+    flex: 1; min-width: 0; font-size: 15px; font-weight: 600; text-align: center;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: 0; transition: opacity 0.2s;
+  }
+  .note-bar.scrolled .bar-title { opacity: 1; }
+  .bar-btn { border: 0; background: transparent; color: var(--accent); font-size: 22px; padding: 6px 10px; border-radius: 10px; line-height: 1; }
+  .note-wrap { max-width: 760px; margin: 0 auto; padding: 0 var(--gutter) calc(var(--bottom) + 48px); }
+  .note-head { padding: 8px 0 4px; }
+  .src-line { font-size: 13px; color: var(--text-3); display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; }
+  .src-badge { font-weight: 600; color: var(--text-2); }
+  .note-title { margin: 6px 0 0; font-size: 22px; line-height: 1.32; font-weight: 700; letter-spacing: 0.005em; }
+  .note-title.clamped { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; cursor: pointer; }
+  .head-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; align-items: center; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 5px; height: 32px; padding: 0 13px; border-radius: 16px;
+    border: 0; background: var(--fill); color: var(--text); font-size: 14px; white-space: nowrap;
+  }
+  .pill.primary { background: var(--accent); color: #fff; }
+  .pill.danger { color: var(--err); }
+
+  .tabs {
+    position: sticky; top: calc(var(--top) + 48px); z-index: 4;
+    margin: 14px calc(-1 * var(--gutter)) 0; padding: 8px var(--gutter);
+    background: var(--bar);
+    -webkit-backdrop-filter: saturate(180%) blur(20px); backdrop-filter: saturate(180%) blur(20px);
+  }
+  .seg { display: flex; padding: 2px; border-radius: 9px; background: var(--fill); }
+  .seg button {
+    flex: 1; height: 30px; border: 0; border-radius: 7px; background: transparent; font-size: 14px; font-weight: 500; color: var(--text);
+  }
+  .seg button .n { color: var(--text-3); font-weight: 400; margin-left: 3px; font-variant-numeric: tabular-nums; }
+  .seg button[aria-selected="true"] { background: var(--bg); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); font-weight: 600; }
+  @media (prefers-color-scheme: dark) { .seg button[aria-selected="true"] { background: #636366; } }
+
+  .card { margin-top: 14px; padding: 14px 16px; border-radius: 14px; background: var(--bg-2); }
+  .card.err { background: var(--err-soft); }
+  .card h3 { margin: 0 0 6px; font-size: 15px; }
+  .card p { margin: 4px 0; color: var(--text-2); font-size: 14px; overflow-wrap: anywhere; }
+  .steps { display: flex; gap: 4px; margin: 10px 0 4px; }
+  .steps i { flex: 1; height: 4px; border-radius: 2px; background: var(--fill-2); }
+  .steps i.done { background: var(--accent); }
+  .steps i.now { background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: 0.35; } }
+  .spinner {
+    display: inline-block; width: 14px; height: 14px; border-radius: 50%;
+    border: 2px solid var(--fill-2); border-top-color: var(--accent); animation: spin 0.8s linear infinite; vertical-align: -2px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .spinner, .steps i.now { animation: none; } }
+
+  /* Reading typography */
+  .prose { font-size: var(--read); line-height: var(--read-lh); padding-top: 6px; overflow-wrap: anywhere; }
+  .prose > :first-child { margin-top: 10px; }
+  .prose p { margin: 0 0 0.85em; }
+  .prose h1, .prose h2, .prose h3, .prose h4 { line-height: 1.4; margin: 1.5em 0 0.5em; }
+  .prose h1 { font-size: 1.3em; } .prose h2 { font-size: 1.2em; } .prose h3 { font-size: 1.1em; } .prose h4 { font-size: 1em; }
+  .prose ul, .prose ol { margin: 0 0 0.9em; padding-left: 1.35em; }
+  .prose li { margin: 0.3em 0; }
+  .prose li > ul, .prose li > ol { margin: 0.3em 0 0; }
+  .prose strong { font-weight: 650; }
+  .prose blockquote { margin: 0 0 0.9em; padding: 2px 0 2px 14px; border-left: 3px solid var(--fill-2); color: var(--text-2); }
+  .prose code { font-family: var(--mono); font-size: 0.86em; padding: 1px 5px; border-radius: 5px; background: var(--fill); }
+  .prose pre { overflow-x: auto; padding: 12px; border-radius: 10px; background: var(--bg-2); font-size: 14px; line-height: 1.5; }
+  .prose pre code { padding: 0; background: none; }
+  .prose hr { border: 0; border-top: 1px solid var(--line); margin: 1.6em 0; }
+  .prose img { max-width: 100%; border-radius: 10px; display: block; margin: 0.6em 0; }
+  .table-wrap { overflow-x: auto; margin: 0 calc(-1 * var(--gutter)) 1em; padding: 0 var(--gutter); }
+  .prose table { border-collapse: collapse; font-size: 15px; line-height: 1.5; min-width: 100%; }
+  .prose th, .prose td { border-bottom: 1px solid var(--line); padding: 8px 10px; text-align: left; vertical-align: top; min-width: 6.5em; }
+  .prose th { font-weight: 650; background: var(--bg-2); }
+  .sum-runs { display: flex; gap: 8px; overflow-x: auto; padding-top: 14px; scrollbar-width: none; }
+  .sum-foot { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--line); font-size: 13px; color: var(--text-3); display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+  .sum-foot button { border: 0; background: none; color: var(--accent); font-size: 13px; padding: 0; }
+  details.fold { margin-top: 14px; border-radius: 12px; background: var(--bg-2); }
+  details.fold > summary { list-style: none; padding: 12px 16px; font-size: 14px; font-weight: 600; color: var(--text-2); cursor: pointer; }
+  details.fold > summary::-webkit-details-marker { display: none; }
+  details.fold > summary::after { content: "›"; float: right; transform: rotate(90deg); transition: transform 0.2s; color: var(--text-3); }
+  details.fold[open] > summary::after { transform: rotate(-90deg); }
+  details.fold .fold-body { padding: 0 16px 14px; font-size: 14px; color: var(--text-2); line-height: 1.65; }
+  .thinking { white-space: pre-wrap; }
+  dl.kv { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0; }
+  dl.kv dt { color: var(--text-3); white-space: nowrap; }
+  dl.kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+
+  /* Transcript */
+  .t-tools { position: sticky; top: calc(var(--top) + 98px); z-index: 3; padding: 0 0 8px; background: var(--bar);
+    -webkit-backdrop-filter: saturate(180%) blur(20px); backdrop-filter: saturate(180%) blur(20px);
+    margin: 0 calc(-1 * var(--gutter)); padding-left: var(--gutter); padding-right: var(--gutter); }
+  .t-tools .search { margin-top: 0; height: 36px; }
+  .t-tools .chips { padding-top: 8px; }
+  .chip .dot { display: inline-block; width: 8px; height: 8px; border-radius: 4px; margin-right: 6px; background: var(--spk); vertical-align: 1px; }
+  .t-count { font-size: 13px; color: var(--text-3); padding: 6px 0 0; }
+  .blk { padding: 6px 0; }
+  .blk-head { display: flex; align-items: baseline; gap: 8px; margin-top: 10px; font-size: 13.5px; }
+  .blk.cont .blk-head { margin-top: 0; }
+  .who { font-weight: 650; color: var(--spk); }
+  .ts { font-family: var(--mono); font-size: 12.5px; color: var(--text-3); font-variant-numeric: tabular-nums; padding: 2px 0; }
+  .ts:active { color: var(--accent); }
+  .blk p { margin: 2px 0 0; font-size: 16.5px; line-height: 1.72; }
+  mark { background: var(--mark); color: inherit; border-radius: 3px; padding: 0 1px; }
+
+  /* Frames */
+  .frames { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding-top: 14px; }
+  @media (min-width: 700px) { .frames { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  .frame { margin: 0; }
+  .frame a.img { display: block; position: relative; border-radius: 10px; overflow: hidden; background: var(--fill); aspect-ratio: 16 / 9; }
+  .frame img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .frame figcaption { font-size: 12.5px; color: var(--text-2); margin-top: 5px; line-height: 1.45; }
+
+  .note-empty { display: grid; place-items: center; min-height: 70vh; color: var(--text-3); text-align: center; padding: 24px; }
+
+  /* Sheets & toast */
+  dialog.sheet {
+    border: 0; padding: 0; width: min(560px, 100%); max-width: 100%; margin: auto auto 0;
+    border-radius: 18px 18px 0 0; background: var(--sheet); color: var(--text); box-shadow: var(--shadow);
+  }
+  @media (min-width: 900px) { dialog.sheet { margin: auto; border-radius: 18px; } }
+  dialog.sheet::backdrop { background: rgba(0, 0, 0, 0.45); }
+  .sheet-body { padding: 18px var(--gutter) calc(var(--bottom) + 18px); }
+  .sheet h2 { margin: 0 0 12px; font-size: 18px; }
+  .sheet textarea { width: 100%; min-height: 96px; resize: vertical; border: 0; outline: 0; border-radius: 12px; padding: 12px; background: var(--fill); font-size: 16px; }
+  .sheet label.check { display: flex; align-items: center; gap: 8px; margin: 12px 0; font-size: 15px; color: var(--text-2); }
+  .sheet .actions { justify-content: flex-end; }
+  .menu button {
+    display: block; width: 100%; text-align: left; border: 0; background: transparent; padding: 14px 4px;
+    font-size: 16.5px; color: var(--text); border-bottom: 1px solid var(--line);
+  }
+  .menu button:last-child { border-bottom: 0; }
+  .menu button.danger { color: var(--err); }
+  .menu select { width: 100%; height: 40px; border-radius: 10px; border: 0; background: var(--fill); padding: 0 10px; font-size: 15px; margin-top: 6px; }
+  #toast {
+    position: fixed; left: 50%; bottom: calc(var(--bottom) + 24px); transform: translate(-50%, 20px);
+    padding: 10px 16px; border-radius: 20px; background: rgba(30, 30, 32, 0.92); color: #fff; font-size: 14px;
+    opacity: 0; pointer-events: none; transition: opacity 0.2s, transform 0.2s; z-index: 50; max-width: calc(100% - 32px);
+  }
+  #toast.show { opacity: 1; transform: translate(-50%, 0); }
+</style>
 </head>
 <body>
-  <div class="app" id="app">
-    <header class="mobile-chrome" id="mobile-chrome">
-      <button type="button" class="btn" id="open-sidebar" aria-controls="sidebar-drawer" aria-expanded="false">List</button>
-      <div class="mobile-brand">
-        <h1>Extraction dashboard</h1>
+<div id="app">
+  <section id="library" aria-label="笔记列表">
+    <header class="lib-head">
+      <div class="lib-top">
+        <h1>笔记<span class="count" id="lib-count"></span></h1>
+        <button class="icon-btn" id="add-btn" type="button" aria-label="添加视频">＋</button>
       </div>
-      <button type="button" class="btn" id="open-settings-chrome" data-open-settings>Settings</button>
-    </header>
-    <div class="workspace">
-      <aside class="sidebar" id="sidebar-drawer">
-        <div class="brand">
-          <div class="brand-copy">
-            <h1>Extraction dashboard</h1>
-            <p id="health">Checking local backend…</p>
-          </div>
-          <div class="brand-actions">
-            <button type="button" class="btn" id="open-settings" data-open-settings>Settings</button>
-            <button type="button" class="btn sidebar-close" id="close-sidebar">Close</button>
-          </div>
-        </div>
-        <div class="list-controls">
-          <h2>List</h2>
-          <label class="field">Filter
-            <select id="list-filter">
-              <option value="today" selected>Today</option>
-              <option value="yesterday">Yesterday</option>
-              <option value="7d">Last 7 days</option>
-              <option value="all">All</option>
-              <option value="date">On date…</option>
-            </select>
-          </label>
-          <label class="field" id="list-filter-date-wrap" hidden>Date
-            <input id="list-filter-date" type="date" />
-          </label>
-          <label class="field">Grouping
-            <select id="list-group">
-              <option value="source" selected>Source</option>
-              <option value="none">None</option>
-              <option value="status">Status</option>
-              <option value="day">Day</option>
-            </select>
-          </label>
-          <label class="field">Order
-            <select id="list-order">
-              <option value="requested_desc" selected>Requested newest</option>
-              <option value="requested_asc">Requested oldest</option>
-              <option value="updated_desc">Updated newest</option>
-              <option value="title">Title</option>
-            </select>
-          </label>
-          <label class="field">Tag
-            <select id="list-tag">
-              <option value="" selected>All tags</option>
-            </select>
-          </label>
-        </div>
-        <div class="list" id="tasks"></div>
-      </aside>
-      <main class="main" id="main">
-        <div class="empty">Select a task to inspect the transcript, optional keyframes, and rerun stages.</div>
-      </main>
-      <button type="button" class="sidebar-backdrop" id="sidebar-backdrop" tabindex="-1" aria-label="Close list"></button>
-    </div>
-  </div>
-  <div class="settings-overlay" id="copy-fallback-overlay" hidden aria-hidden="true">
-    <div class="settings-sheet" role="dialog" aria-modal="true" aria-labelledby="copy-fallback-title">
-      <div class="settings-head">
-        <h2 id="copy-fallback-title">Copy failed</h2>
-        <button type="button" class="btn" id="close-copy-fallback">Close</button>
-      </div>
-      <p class="empty" style="padding:8px 0 10px">Select all, copy, then paste into ChatGPT.</p>
-      <textarea id="copy-fallback-text" class="prompt" rows="14" readonly></textarea>
-      <div class="actions settings-actions">
-        <button type="button" class="btn primary" id="copy-fallback-select">Select all</button>
-      </div>
-    </div>
-  </div>
-  <div class="settings-overlay" id="settings-overlay" hidden aria-hidden="true">
-    <div class="settings-sheet" role="dialog" aria-modal="true" aria-labelledby="settings-title">
-      <div class="settings-head">
-        <h2 id="settings-title">Settings</h2>
-        <button type="button" class="btn" id="close-settings">Close</button>
-      </div>
-      <div class="worker-panel">
-        <h3>Concurrency</h3>
-        <div class="worker-fields">
-          <label class="field">YouTube max
-            <input id="yt-limit" type="number" min="0" max="64" step="1" />
-          </label>
-          <label class="field">Bilibili max
-            <input id="bili-limit" type="number" min="0" max="64" step="1" />
-          </label>
-          <label class="field">ASR / diarization
-            <input id="model-limit" type="number" min="1" max="64" step="1" />
-          </label>
-        </div>
-        <div class="occupancy" id="worker-occupancy"></div>
-      </div>
-      <h3>Visual stage defaults</h3>
-      <p class="empty" style="padding:0 0 10px">These defaults apply to new extracts and to reruns that do not override a knob. Per-task rerun still uses the values on the task page.</p>
-      <div class="fields" id="settings-visual-fields"></div>
-      <h3>Default summary prompt</h3>
-      <label class="field">Prompt
-        <textarea id="settings-summary-prompt" class="prompt" rows="12"></textarea>
+      <label class="search">
+        <svg width="15" height="15" viewBox="0 0 20 20" aria-hidden="true"><path fill="currentColor" d="M8.5 2a6.5 6.5 0 0 1 5.18 10.43l4.45 4.44-1.42 1.42-4.44-4.45A6.5 6.5 0 1 1 8.5 2Zm0 2a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9Z"/></svg>
+        <span class="sr-only">搜索</span>
+        <input id="q" type="search" placeholder="搜索标题、作者、标签" autocomplete="off" enterkeyhint="search" />
       </label>
-      <div class="actions settings-actions">
-        <button type="button" class="btn primary" id="save-settings">Save settings</button>
-        <span class="worker-msg" id="settings-msg"></span>
-      </div>
+      <nav class="chips" id="chips" aria-label="筛选"></nav>
+    </header>
+    <div id="list"><div class="empty">加载中…</div></div>
+    <footer class="lib-foot"><span id="health"></span> · <a href="/classic">旧版控制台与设置</a></footer>
+  </section>
+  <main id="note"><div class="note-empty">选择左侧的一条笔记</div></main>
+</div>
+
+<dialog class="sheet" id="add-sheet">
+  <form class="sheet-body" method="dialog" id="add-form">
+    <h2>添加视频</h2>
+    <textarea id="add-url" placeholder="粘贴 YouTube、B 站、小红书链接或分享文字" required></textarea>
+    <label class="check"><input type="checkbox" id="add-frames" /> 提取关键帧（较慢）</label>
+    <div class="actions">
+      <button class="pill" type="button" id="add-cancel">取消</button>
+      <button class="pill primary" type="submit" id="add-submit">提交</button>
     </div>
-  </div>
-  <script>
-    const appEl = document.getElementById("app");
-    const main = document.getElementById("main");
-    const tasksEl = document.getElementById("tasks");
-    const healthEl = document.getElementById("health");
-    const ytLimit = document.getElementById("yt-limit");
-    const biliLimit = document.getElementById("bili-limit");
-    const modelLimit = document.getElementById("model-limit");
-    const occupancyEl = document.getElementById("worker-occupancy");
-    const settingsMsg = document.getElementById("settings-msg");
-    const settingsOverlay = document.getElementById("settings-overlay");
-    const settingsPromptEl = document.getElementById("settings-summary-prompt");
-    const listFilterEl = document.getElementById("list-filter");
-    const listFilterDateEl = document.getElementById("list-filter-date");
-    const listFilterDateWrap = document.getElementById("list-filter-date-wrap");
-    const listGroupEl = document.getElementById("list-group");
-    const listOrderEl = document.getElementById("list-order");
-    const listTagEl = document.getElementById("list-tag");
-    const NAMED_FILTERS = new Set(["today", "yesterday", "7d", "all"]);
-    const sidebarEl = document.getElementById("sidebar-drawer");
-    const sidebarBackdrop = document.getElementById("sidebar-backdrop");
-    const openSidebarBtn = document.getElementById("open-sidebar");
-    const closeSidebarBtn = document.getElementById("close-sidebar");
-    const mobileLayoutMq = window.matchMedia("(max-width: 899px)");
-    let tasks = [];
-    let knownTags = [];
-    let selectedId = new URLSearchParams(location.search).get("task");
-    let debug = null;
-    let summaryPromptDirty = false;
-    let summaryModel = "qwen-xhigh";
-    let extractedMarkdown = "";
-    let summaryMarkdown = "";
-    let summaryDisplayRuns = [];
-    const CHATGPT_BUTTON_LABEL = "在 ChatGPT 继续";
-    const CHATGPT_COPIED_LABEL = "已复制，请粘贴";
-    const CHATGPT_STUB = "继续基于我粘贴的内容提问：";
-    const CHATGPT_URL = "https://chatgpt.com/";
-    let visualDefaults = {
-      sample_interval_sec: 12,
-      scene_threshold: 27,
-      similarity_threshold: 0.92,
-      min_scene_duration_sec: 0.8,
-      context_before_sec: 10,
-      context_after_sec: 20,
-      vlm_keep_threshold: 0.45,
-    };
-    let defaultSummaryPrompt = "";
-    const copyResetters = {};
-    const LEGACY_SUMMARY_PROMPTS = new Set([
-      "提取这个文章的核心思想，让我无需细读这个视频。生成一份图文输出（可以截屏）让我1分钟获得99%的信息。",
-      "提取核心思想，写成一份一分钟能读完的纯文字简报。可用少量 emoji 分点，不要复述原文，不要插入任何图片、截图或附件链接。",
-      "你是一位资深分析师，擅长快速提炼复杂内容的本质，并将其转化为结构清晰、有深度的中文简报。你的目标读者是希望快速理解核心思想、逻辑链条和关键细节的人，而不是只想知道表面事实的人。\n\n请基于以下内容，输出一份纯文字总结，要求如下：\n\n1. 先写出一句话或一小段核心结论：这份内容最重要的判断、冲突、问题或目的是什么。\n2. 提炼主要论证链条或信息结构，解释“为什么”和“如何”，而不仅仅罗列“是什么”。\n3. 保留支撑核心结论的必要事实、数据、案例或技术细节，但不要做无关堆砌。\n4. 如果内容涉及多个观点、方案、主体或步骤，请对比它们的异同或逻辑关系。\n5. 如果原内容包含风险、趋势、启示或后续值得关注的问题，请在结尾适当点明。\n6. 使用简洁的中文，可少量使用 emoji 作为分点符号，但不要复述原文，不要插入图片或链接。\n7. 篇幅控制在阅读时间约 1.5–2 分钟，信息密度要高，不要为了凑长度而重复内容。",
-    ]);
-    const DEFAULT_SUMMARY_PROMPT = `你是一位资深分析师，擅长快速提炼复杂内容的本质，并将其转化为结构清晰、有深度的中文简报。你的目标读者是希望快速理解核心思想、逻辑链条和关键细节的人，而不是只想知道表面事实的人。
+  </form>
+</dialog>
+<dialog class="sheet" id="menu-sheet"><div class="sheet-body menu" id="menu-body"></div></dialog>
+<div id="toast" role="status"></div>
 
-请基于以下内容，输出一份纯文字总结，要求如下：
+<script>
+"use strict";
+/* ================================================================== constants */
+const STATUS = {
+  queued: "排队中", fetching_metadata: "获取信息", downloading: "下载中", extracting_audio: "提取音频",
+  transcribing: "转写中", diarizing: "区分说话人", aligning: "对齐", aligning_transcript: "对齐说话人",
+  detecting_scenes: "分析画面", sampling_frames: "抽取画面", deduplicating_frames: "画面去重",
+  filtering_frames: "筛选画面", aligning_multimodal: "对齐画面", writing_outputs: "写入笔记",
+  summarizing: "生成摘要", completed: "已完成", failed: "失败",
+};
+const STEPS = ["fetching_metadata", "downloading", "extracting_audio", "transcribing", "writing_outputs", "summarizing"];
+const STEP_OF = {
+  queued: -1, fetching_metadata: 0, downloading: 1, extracting_audio: 2, transcribing: 3, diarizing: 3, aligning: 3,
+  aligning_transcript: 3, detecting_scenes: 4, sampling_frames: 4, deduplicating_frames: 4, filtering_frames: 4,
+  aligning_multimodal: 4, writing_outputs: 4, summarizing: 5, completed: 6,
+};
+const SPEAKER_COLORS = ["#0a84ff", "#ff9f0a", "#30b158", "#bf5af2", "#ff375f", "#32ade6", "#c69c00", "#ac8e68"];
+const CHATGPT_URL = "https://chatgpt.com/";
+const CHATGPT_STUB = "继续基于我粘贴的内容提问：";
+const desktop = window.matchMedia("(min-width: 900px)");
 
-1. 先写出一句话或一小段核心结论：这份内容最重要的判断、冲突、问题或目的是什么。
-2. 提炼主要论证链条或信息结构，解释“为什么”和“如何”，而不仅仅罗列“是什么”。
-3. 保留支撑核心结论的必要事实、数据、条件、案例、步骤或技术细节；次要花絮、重复表述和气氛铺垫直接丢掉。
-4. 如果内容涉及多个观点、方案、主体或步骤，请对比它们的异同或逻辑关系。
-5. 如果原内容包含风险、趋势、限制条件、启示或后续值得关注的问题，请点明，不要因为篇幅而省略。
-6. 使用简洁的中文，可少量使用 emoji 作为分点符号，但不要复述原文，不要插入图片或链接。
-7. 篇幅由信息密度决定：原文短、信息少就短写；原文长、分支多或论证深，就把关键信息写完整。不要为了凑长度而重复，也不要为了写短而丢掉判断所依赖的事实。`;
-    defaultSummaryPrompt = DEFAULT_SUMMARY_PROMPT;
+const state = {
+  tasks: [],
+  chip: localStorage.getItem("mi.chip") || "all",
+  query: "",
+  route: { view: "library" },
+  note: null,
+  noteId: null,
+  run: null,
+  tQuery: "",
+  tSpeaker: "",
+  libScroll: 0,
+  listTimer: null,
+  noteTimer: null,
+  summaryModels: null,
+};
 
-    async function init() {
-      bindSettings();
-      bindSidebar();
-      renderSettingsVisualFields();
-      await loadHealth();
-      await loadWorker();
-      await loadOrganize();
-      await loadKnownTags();
-      await loadTasks();
-      if (selectedId) await openTask(selectedId);
-      setInterval(() => { loadTasks(); loadWorker(); refreshSelected(); }, 4000);
-      listFilterEl.onchange = onFilterSelectChange;
-      if (listFilterDateEl) listFilterDateEl.onchange = saveOrganize;
-      listGroupEl.onchange = saveOrganize;
-      listOrderEl.onchange = saveOrganize;
-      if (listTagEl) listTagEl.onchange = () => { loadTasks(); };
-      if (listFilterDateEl && !listFilterDateEl.value) listFilterDateEl.value = localStampDate();
+/* ================================================================== utils */
+const $ = (sel, root = document) => root.querySelector(sel);
+function esc(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+}
+async function api(path, options = {}) {
+  const response = await fetch(path, { headers: { "Content-Type": "application/json" }, ...options });
+  const text = await response.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch (_) { data = { detail: text }; }
+  if (!response.ok) throw new Error((data && (data.detail || data.error)) || `HTTP ${response.status}`);
+  return data;
+}
+function toast(message, ms = 2200) {
+  const el = $("#toast");
+  el.textContent = message;
+  el.classList.add("show");
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => el.classList.remove("show"), ms);
+}
+function clock(seconds) {
+  const s = Math.max(0, Math.floor(Number(seconds) || 0));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
+  const pad = (n) => String(n).padStart(2, "0");
+  return h ? `${h}:${pad(m)}:${pad(r)}` : `${m}:${pad(r)}`;
+}
+function parseStamp(value) {
+  if (!value) return null;
+  const text = String(value).trim();
+  const date = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(text) ? new Date(text.replace(" ", "T")) : new Date(text);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+function dayKey(date) {
+  const start = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const days = Math.round((start(new Date()) - start(date)) / 86400000);
+  if (days <= 0) return "今天";
+  if (days === 1) return "昨天";
+  if (days < 7) return "本周";
+  return date.getFullYear() === new Date().getFullYear() ? `${date.getMonth() + 1} 月` : `${date.getFullYear()} 年 ${date.getMonth() + 1} 月`;
+}
+function relTime(date) {
+  if (!date) return "";
+  const minutes = Math.round((Date.now() - date.getTime()) / 60000);
+  if (minutes < 1) return "刚刚";
+  if (minutes < 60) return `${minutes} 分钟前`;
+  if (minutes < 60 * 24 && dayKey(date) === "今天") return `${date.getHours()}:${String(date.getMinutes()).padStart(2, "0")}`;
+  return `${date.getMonth() + 1}月${date.getDate()}日`;
+}
+function speakerName(label) {
+  const match = /^Speaker\s+(\d+)$/i.exec(String(label || ""));
+  return match ? `说话人 ${match[1]}` : String(label || "说话人");
+}
+function isActive(task) {
+  return task && !["completed", "failed"].includes(task.status);
+}
+function joinText(a, b) {
+  if (!a) return b;
+  return /[A-Za-z0-9.,!?;:)]$/.test(a) && /^[A-Za-z0-9(]/.test(b) ? `${a} ${b}` : a + b;
+}
+function videoAt(task, seconds) {
+  const url = String((task && task.url) || "");
+  const t = Math.max(0, Math.floor(seconds || 0));
+  const yt = /(?:youtube\.com\/watch\?[^#]*v=|youtu\.be\/)([A-Za-z0-9_-]{11})/.exec(url);
+  if (yt) return `https://youtu.be/${yt[1]}?t=${t}`;
+  if (/bilibili\.com\/video\//.test(url)) return `${url.split("#")[0]}${url.includes("?") ? "&" : "?"}t=${t}`;
+  return url;
+}
+function thumbFor(task) {
+  if (task.thumbnail_url) return task.thumbnail_url.replace("/maxresdefault.", "/mqdefault.");
+  const yt = /(?:youtube\.com\/watch\?[^#]*v=|youtu\.be\/)([A-Za-z0-9_-]{11})/.exec(String(task.url || ""));
+  return yt ? `https://i.ytimg.com/vi/${yt[1]}/mqdefault.jpg` : "";
+}
+function hasSelection(root) {
+  const selection = window.getSelection();
+  return Boolean(selection && !selection.isCollapsed && root && root.contains(selection.anchorNode));
+}
+
+/* ================================================================== markdown (safe subset) */
+function inline(text) {
+  let html = esc(text);
+  const codes = [];
+  html = html.replace(/`([^`]+)`/g, (_, code) => { codes.push(code); return `\u0000${codes.length - 1}\u0000`; });
+  html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  html = html.replace(/(^|[\s(（])(https?:\/\/[^\s<)）]+)/g, '$1<a href="$2" target="_blank" rel="noopener">$2</a>');
+  html = html.replace(/\*\*([^*]+?)\*\*|__([^_]+?)__/g, (_, a, b) => `<strong>${a || b}</strong>`);
+  html = html.replace(/(^|[^*\w])\*([^*\s][^*]*?)\*(?!\*)/g, "$1<em>$2</em>");
+  html = html.replace(/~~([^~]+)~~/g, "<del>$1</del>");
+  return html.replace(/\u0000(\d+)\u0000/g, (_, i) => `<code>${codes[Number(i)]}</code>`);
+}
+function obsidianImages(text, videoId) {
+  return String(text || "").replace(/!\[\[([^\]|]+)(?:\|[^\]]*)?\]\]/g, (_, path) => {
+    const name = path.split("/").pop();
+    return `\n\n![${name}](/v1/videos/${encodeURIComponent(videoId)}/attachments/${encodeURIComponent(name)})\n\n`;
+  });
+}
+function markdown(source, { videoId = "", images = false } = {}) {
+  let text = String(source || "").replace(/\r\n?/g, "\n").replace(/<think>[\s\S]*?<\/think>/gi, "");
+  text = text.replace(/<details>[\s\S]*?<\/details>/gi, "");
+  if (images && videoId) text = obsidianImages(text, videoId);
+  const lines = text.split("\n");
+  const out = [];
+  let para = [];
+  const flush = () => { if (para.length) { out.push(`<p>${para.map(inline).join("<br>")}</p>`); para = []; } };
+  const isTableSep = (line) => /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(line);
+  const cells = (line) => line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (/^\s*```/.test(line)) {
+      flush();
+      const body = [];
+      for (i++; i < lines.length && !/^\s*```/.test(lines[i]); i++) body.push(lines[i]);
+      out.push(`<pre><code>${esc(body.join("\n"))}</code></pre>`);
+      continue;
     }
-
-    async function loadHealth() {
-      try {
-        const data = await api("/v1/health");
-        healthEl.textContent = data.ok ? `Backend · dashboard ${data.dashboard || ""}` : "Backend not ready";
-        if (data.visual) {
-          visualDefaults = { ...visualDefaults, ...data.visual };
-          fillSettingsVisual();
-        }
-        if (data.summary_prompt) {
-          defaultSummaryPrompt = data.summary_prompt;
-          fillSettingsPrompt();
-        }
-      } catch (error) {
-        healthEl.textContent = error.message;
+    if (!line.trim()) { flush(); continue; }
+    const heading = /^(#{1,6})\s+(.*)$/.exec(line);
+    if (heading) { flush(); const level = Math.min(4, heading[1].length + 1); out.push(`<h${level}>${inline(heading[2])}</h${level}>`); continue; }
+    if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) { flush(); out.push("<hr>"); continue; }
+    const image = /^\s*!\[([^\]]*)\]\(([^)\s]+)\)\s*$/.exec(line);
+    if (image && images) { flush(); out.push(`<img src="${esc(image[2])}" alt="${esc(image[1])}" loading="lazy">`); continue; }
+    if (/^\s*\|/.test(line) && i + 1 < lines.length && isTableSep(lines[i + 1])) {
+      flush();
+      const head = cells(line);
+      const rows = [];
+      for (i += 2; i < lines.length && /^\s*\|/.test(lines[i]); i++) rows.push(cells(lines[i]));
+      i--;
+      out.push(`<div class="table-wrap"><table><thead><tr>${head.map((c) => `<th>${inline(c)}</th>`).join("")}</tr></thead><tbody>${
+        rows.map((r) => `<tr>${head.map((_, k) => `<td>${inline(r[k] || "")}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`);
+      continue;
+    }
+    if (/^\s*>/.test(line)) {
+      flush();
+      const quote = [];
+      for (; i < lines.length && /^\s*>/.test(lines[i]); i++) quote.push(lines[i].replace(/^\s*>\s?/, ""));
+      i--;
+      out.push(`<blockquote>${markdown(quote.join("\n"))}</blockquote>`);
+      continue;
+    }
+    if (/^\s*([-*+]|\d+[.)])\s+/.test(line)) {
+      flush();
+      const items = [];
+      for (; i < lines.length; i++) {
+        const m = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/.exec(lines[i]);
+        if (m) { items.push({ indent: m[1].replace(/\t/g, "    ").length, ordered: /\d/.test(m[2]), text: m[3] }); continue; }
+        if (lines[i].trim() && items.length && /^\s{2,}/.test(lines[i])) { items[items.length - 1].text += "\n" + lines[i].trim(); continue; }
+        break;
       }
-    }
-
-    async function loadWorker() {
-      try {
-        const data = await api("/v1/worker");
-        renderWorker(data, { fillInputs: !settingsInputsBusy() });
-      } catch (error) {
-        occupancyEl.textContent = "";
-        if (settingsMsg) settingsMsg.textContent = error.message;
-      }
-    }
-
-    function renderWorker(data, { fillInputs = true } = {}) {
-      const youtube = data.youtube || { limit: 10, running: 0 };
-      const bilibili = data.bilibili || { limit: 10, running: 0 };
-      const model = data.model_jobs || { limit: 1, running: 0 };
-      if (fillInputs) {
-        ytLimit.value = youtube.limit;
-        biliLimit.value = bilibili.limit;
-        modelLimit.value = model.limit;
-      }
-      occupancyEl.innerHTML = [
-        chip("YouTube", youtube),
-        chip("Bilibili", bilibili),
-        chip("ASR", model),
-      ].join("");
-    }
-
-    function chip(label, slot) {
-      const running = Number(slot.running || 0);
-      const limit = Number(slot.limit || 0);
-      const busy = running > 0;
-      return `<span class="chip ${busy ? "ok" : ""}">${esc(label)} ${running}/${limit}</span>`;
-    }
-
-    async function saveWorker() {
-      const data = await api("/v1/worker", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          youtube: Number(ytLimit.value),
-          bilibili: Number(biliLimit.value),
-          model_jobs: Number(modelLimit.value),
-        }),
-      });
-      renderWorker(data.worker || data, { fillInputs: true });
-    }
-
-    function isIsoDateFilter(value) {
-      return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ""));
-    }
-
-    function effectiveFilter() {
-      if (listFilterEl.value === "date") {
-        const picked = listFilterDateEl && listFilterDateEl.value;
-        return picked || localStampDate();
-      }
-      return listFilterEl.value;
-    }
-
-    function applyFilterToControls(filter) {
-      const value = String(filter || "today");
-      if (isIsoDateFilter(value)) {
-        listFilterEl.value = "date";
-        if (listFilterDateEl) listFilterDateEl.value = value;
-        setDatePickerVisible(true);
-        return;
-      }
-      listFilterEl.value = NAMED_FILTERS.has(value) ? value : "today";
-      setDatePickerVisible(false);
-      if (listFilterDateEl && !listFilterDateEl.value) listFilterDateEl.value = localStampDate();
-    }
-
-    function setDatePickerVisible(show) {
-      if (!listFilterDateWrap) return;
-      listFilterDateWrap.hidden = !show;
-    }
-
-    function onFilterSelectChange() {
-      if (listFilterEl.value === "date") {
-        if (listFilterDateEl) {
-          if (!listFilterDateEl.value) listFilterDateEl.value = localStampDate();
-          setDatePickerVisible(true);
-          listFilterDateEl.focus();
-        } else {
-          setDatePickerVisible(true);
-        }
-      } else {
-        setDatePickerVisible(false);
-      }
-      saveOrganize();
-    }
-
-    async function loadOrganize() {
-      try {
-        const data = await api("/v1/dashboard");
-        if (data.filter) applyFilterToControls(data.filter);
-        if (data.group) listGroupEl.value = data.group;
-        if (data.order) listOrderEl.value = data.order;
-      } catch (_error) {
-        return;
-      }
-    }
-
-    async function saveOrganize() {
-      try {
-        await api("/v1/dashboard", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            filter: effectiveFilter(),
-            group: listGroupEl.value,
-            order: listOrderEl.value,
-          }),
-        });
-      } catch (_error) {
-        return;
-      } finally {
-        await loadTasks();
-      }
-    }
-
-    function settingsInputsBusy() {
-      if (!settingsOverlay || !settingsOverlay.classList.contains("open")) return false;
-      return settingsOverlay.contains(document.activeElement);
-    }
-
-    function isMobileLayout() {
-      return mobileLayoutMq.matches;
-    }
-
-    function bindSidebar() {
-      if (openSidebarBtn) openSidebarBtn.onclick = toggleSidebar;
-      if (closeSidebarBtn) closeSidebarBtn.onclick = () => closeSidebar();
-      if (sidebarBackdrop) sidebarBackdrop.onclick = () => closeSidebar();
-      const onLayoutChange = () => {
-        if (!isMobileLayout()) closeSidebar();
-        else syncSidebarChrome();
-      };
-      if (typeof mobileLayoutMq.addEventListener === "function") {
-        mobileLayoutMq.addEventListener("change", onLayoutChange);
-      } else if (typeof mobileLayoutMq.addListener === "function") {
-        mobileLayoutMq.addListener(onLayoutChange);
-      }
-      syncSidebarChrome();
-    }
-
-    function toggleSidebar() {
-      if (appEl && appEl.classList.contains("sidebar-open")) closeSidebar();
-      else openSidebar();
-    }
-
-    function openSidebar() {
-      if (!appEl) return;
-      appEl.classList.add("sidebar-open");
-      syncSidebarChrome();
-      if (closeSidebarBtn) closeSidebarBtn.focus();
-    }
-
-    function closeSidebar({ restoreFocus = true } = {}) {
-      if (!appEl) return;
-      const wasOpen = appEl.classList.contains("sidebar-open");
-      appEl.classList.remove("sidebar-open");
-      syncSidebarChrome();
-      if (restoreFocus && wasOpen && isMobileLayout() && openSidebarBtn) openSidebarBtn.focus();
-    }
-
-    function syncSidebarChrome() {
-      const mobile = isMobileLayout();
-      const open = Boolean(appEl && appEl.classList.contains("sidebar-open"));
-      if (openSidebarBtn) {
-        openSidebarBtn.setAttribute("aria-expanded", mobile && open ? "true" : "false");
-      }
-      if (sidebarEl) {
-        const hide = mobile && !open;
-        sidebarEl.setAttribute("aria-hidden", hide ? "true" : "false");
-        if (hide) sidebarEl.setAttribute("inert", "");
-        else sidebarEl.removeAttribute("inert");
-      }
-    }
-
-    function bindSettings() {
-      document.querySelectorAll("[data-open-settings]").forEach((button) => {
-        button.onclick = openSettings;
-      });
-      const closeBtn = document.getElementById("close-settings");
-      const saveBtn = document.getElementById("save-settings");
-      if (closeBtn) closeBtn.onclick = closeSettings;
-      if (saveBtn) saveBtn.onclick = saveSettings;
-      if (settingsOverlay) {
-        settingsOverlay.addEventListener("click", (event) => {
-          if (event.target === settingsOverlay) closeSettings();
-        });
-      }
-      document.addEventListener("keydown", (event) => {
-        if (event.key !== "Escape") return;
-        if (settingsOverlay && settingsOverlay.classList.contains("open")) {
-          closeSettings();
-          return;
-        }
-        if (appEl && appEl.classList.contains("sidebar-open")) closeSidebar();
-      });
-    }
-
-    function renderSettingsVisualFields() {
-      const host = document.getElementById("settings-visual-fields");
-      if (!host) return;
-      host.innerHTML = [
-        knobField("sample_interval_sec", "Sample interval (s)", `<input id="settings-sample_interval_sec" type="number" />`),
-        knobField("scene_threshold", "Scene threshold", `<input id="settings-scene_threshold" type="number" />`),
-        knobField("similarity_threshold", "Similarity threshold", `<input id="settings-similarity_threshold" type="number" step="0.01" />`),
-        knobField("min_scene_duration_sec", "Min scene (s)", `<input id="settings-min_scene_duration_sec" type="number" step="0.1" />`),
-        knobField("context_before_sec", "Context before (s)", `<input id="settings-context_before_sec" type="number" />`),
-        knobField("context_after_sec", "Context after (s)", `<input id="settings-context_after_sec" type="number" />`),
-        knobField("vlm_keep_threshold", "VLM keep threshold", `<input id="settings-vlm_keep_threshold" type="number" step="0.05" min="0" max="1" />`),
-      ].join("");
-    }
-
-    function visualKnobValue(key, fallback) {
-      const value = visualDefaults[key];
-      return value == null || value === "" ? fallback : value;
-    }
-
-    function fillSettingsVisual({ force = false } = {}) {
-      if (!force && settingsInputsBusy()) return;
-      const fields = [
-        ["settings-sample_interval_sec", "sample_interval_sec"],
-        ["settings-scene_threshold", "scene_threshold"],
-        ["settings-similarity_threshold", "similarity_threshold"],
-        ["settings-min_scene_duration_sec", "min_scene_duration_sec"],
-        ["settings-context_before_sec", "context_before_sec"],
-        ["settings-context_after_sec", "context_after_sec"],
-        ["settings-vlm_keep_threshold", "vlm_keep_threshold"],
-      ];
-      fields.forEach(([id, key]) => {
-        const node = document.getElementById(id);
-        if (!node || document.activeElement === node) return;
-        if (visualDefaults[key] != null && visualDefaults[key] !== "") node.value = visualDefaults[key];
-      });
-    }
-
-    function fillSettingsPrompt({ force = false } = {}) {
-      if (!settingsPromptEl) return;
-      if (!force && (document.activeElement === settingsPromptEl || settingsInputsBusy())) return;
-      settingsPromptEl.value = defaultSummaryPrompt;
-    }
-
-    async function openSettings() {
-      if (!settingsOverlay) return;
-      closeSidebar({ restoreFocus: false });
-      settingsOverlay.hidden = false;
-      settingsOverlay.classList.add("open");
-      settingsOverlay.setAttribute("aria-hidden", "false");
-      if (settingsMsg) settingsMsg.textContent = "";
-      await loadHealth();
-      await loadWorker();
-      fillSettingsVisual({ force: true });
-      fillSettingsPrompt({ force: true });
-    }
-
-    function closeSettings() {
-      if (!settingsOverlay) return;
-      settingsOverlay.classList.remove("open");
-      settingsOverlay.hidden = true;
-      settingsOverlay.setAttribute("aria-hidden", "true");
-    }
-
-    function readSettingsVisual() {
-      const payload = {};
-      const fields = [
-        "sample_interval_sec",
-        "scene_threshold",
-        "similarity_threshold",
-        "min_scene_duration_sec",
-        "context_before_sec",
-        "context_after_sec",
-        "vlm_keep_threshold",
-      ];
-      fields.forEach((key) => {
-        const node = document.getElementById(`settings-${key}`);
-        if (node && node.value !== "") payload[key] = Number(node.value);
-      });
-      return payload;
-    }
-
-    async function saveSettings() {
-      if (settingsMsg) settingsMsg.textContent = "Saving…";
-      try {
-        await saveWorker();
-        const visualPayload = readSettingsVisual();
-        if (Object.keys(visualPayload).length) {
-          const visual = await api("/v1/visual/config", {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(visualPayload),
-          });
-          visualDefaults = { ...visualDefaults, ...(visual.visual || {}) };
-          fillSettingsVisual({ force: true });
-        }
-        const promptPayload = await api("/v1/summary/config", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ prompt: (settingsPromptEl && settingsPromptEl.value) || "" }),
-        });
-        defaultSummaryPrompt = promptPayload.prompt || defaultSummaryPrompt;
-        fillSettingsPrompt({ force: true });
-        const promptEl = document.getElementById("summary-prompt");
-        if (promptEl && !summaryPromptDirty && document.activeElement !== promptEl) {
-          promptEl.value = defaultSummaryPrompt;
-        }
-        if (settingsMsg) settingsMsg.textContent = "Saved. Applies immediately.";
-      } catch (error) {
-        if (settingsMsg) settingsMsg.textContent = error.message;
-      }
-    }
-
-    function sourceLinkHtml(url) {
-      const href = String(url || "").trim();
-      if (!href) return "—";
-      try {
-        const parsed = new URL(href);
-        if (parsed.protocol === "http:" || parsed.protocol === "https:") {
-          return `<a class="source-link" href="${esc(href)}" target="_blank" rel="noopener noreferrer">${esc(href)}</a>`;
-        }
-      } catch (_error) {}
-      return esc(href);
-    }
-
-    function sourceLineHtml(url, error) {
-      const href = String(url || "").trim();
-      const link = href ? sourceLinkHtml(href) : "";
-      const suffix = error ? `${href ? " · " : ""}${esc(error)}` : "";
-      return `${link}${suffix}`;
-    }
-
-    async function loadTasks() {
-      const filter = effectiveFilter();
-      const query = new URLSearchParams({
-        filter,
-        group: listGroupEl.value,
-        order: listOrderEl.value,
-      });
-      const tag = listTagEl && listTagEl.value ? listTagEl.value : "";
-      if (tag) query.set("tag", tag);
-      const data = await api(`/v1/tasks?${query}`);
-      tasks = data.tasks || [];
-      const groups = Array.isArray(data.groups) ? data.groups : [{ key: "all", label: "", tasks }];
-      const today = localStampDate();
-      const html = groups.map((group) => {
-        const rows = (group.tasks || []).map((task) => taskButton(task, today)).join("");
-        const count = (group.tasks || []).length;
-        const heading = group.label
-          ? `<div class="task-group source-${esc(String(group.key || ""))}"><span>${esc(group.label)}</span><span class="count">${count}</span></div>`
-          : "";
-        return `<div class="task-block">${heading}${rows}</div>`;
-      }).join("");
-      const empty = emptyListMessage(filter, tag);
-      tasksEl.innerHTML = html || empty;
-      tasksEl.querySelectorAll(".task").forEach((button) => {
-        button.onclick = () => openTask(button.dataset.id);
-      });
-    }
-
-    async function loadKnownTags() {
-      try {
-        const data = await api("/v1/tags");
-        knownTags = Array.isArray(data.tags) ? data.tags : [];
-      } catch (_error) {
-        knownTags = [];
-      }
-      fillTagFilterOptions();
-    }
-
-    function fillTagFilterOptions() {
-      if (!listTagEl) return;
-      const current = listTagEl.value || "";
-      const options = [`<option value="">All tags</option>`].concat(
-        knownTags.map((tag) => `<option value="${esc(tag)}">${esc(tag)}</option>`),
-      );
-      listTagEl.innerHTML = options.join("");
-      if (current && knownTags.some((tag) => tag.toLowerCase() === current.toLowerCase())) {
-        const match = knownTags.find((tag) => tag.toLowerCase() === current.toLowerCase());
-        listTagEl.value = match || "";
-      } else {
-        listTagEl.value = "";
-      }
-    }
-
-    function taskButton(task, today) {
-      const title = task.title || task.video_id || task.url;
-      const requested = task.requested_at || task.created_at || "";
-      const when = requested.startsWith(today) && requested.length > 10
-        ? requested.slice(11)
-        : requested;
-      const source = task.source_label || task.platform || "";
-      const counts = task.media_kind === "image"
-        ? `${task.image_count || 0} images`
-        : `${task.segment_count || 0} segs · ${task.extract_keyframes ? (task.keyframe_count || 0) + " keys" : "transcript"}`;
-      return `<button class="task ${task.id === selectedId ? "active" : ""}" data-id="${task.id}">
-          <div class="title">${esc(title)}</div>
-          <div class="meta">${esc(when)} · ${esc(source)} · ${esc(task.status)} · ${esc(counts)}</div>
-        </button>`;
-    }
-
-    function localStampDate() {
-      const now = new Date();
-      const month = String(now.getMonth() + 1).padStart(2, "0");
-      const day = String(now.getDate()).padStart(2, "0");
-      return `${now.getFullYear()}-${month}-${day}`;
-    }
-
-    function emptyListMessage(filter, tag) {
-      if (tag) {
-        return `<div class="empty">No extracts with tag “${esc(tag)}” for this filter. Clear the tag filter or switch date filter.</div>`;
-      }
-      if (filter === "today") {
-        return `<div class="empty">No extracts today. Switch filter to All to see older requests.</div>`;
-      }
-      if (filter === "yesterday") {
-        return `<div class="empty">No extracts yesterday. Switch filter to All to see other days.</div>`;
-      }
-      if (isIsoDateFilter(filter)) {
-        return `<div class="empty">No extracts on ${esc(filter)}. Switch filter to All to see other days.</div>`;
-      }
-      return `<div class="empty">No tasks yet. Use the browser extension to extract a video.</div>`;
-    }
-
-    async function openTask(id) {
-      selectedId = id;
-      history.replaceState(null, "", `?task=${encodeURIComponent(id)}`);
-      debug = await api(`/v1/tasks/${id}/debug`);
-      renderDetail();
-      if (isMobileLayout()) closeSidebar({ restoreFocus: false });
-      await loadTasks();
-    }
-
-    const KNOB_HELP = {
-      stage: "Which pipeline step to restart from. Artifacts produced by that step and everything after it are discarded, then the job is queued again.\n\nRe-run summary: keep the transcript, post, and stills; ask Qwen3.8 again for the one-minute text briefing.\n\nRe-run Qwen3.8 frame filter: keep existing keyframe JPEGs and re-score which ones belong in the note. Changing the VLM keep threshold reuses cached verdicts and does not reload the model.\n\nRe-run deduplication: keep existing candidate JPEGs and recompute keep/drop with the similarity threshold and your manual Keep/Drop overrides.\n\nRe-run candidate generation: recut stills from scene boundaries, the sample interval, and visual-change spikes, then dedup again.\n\nRe-run scene detection: detect cuts again with the scene threshold and min scene length, then regenerate candidates and keyframes.\n\nRebuild multimodal alignment: keep keyframes; rebuild transcript context windows in multimodal.json. The Obsidian note puts each frame above the transcript block covering that timestamp.\n\nRe-run ASR: transcribe audio again, then redo diarization and transcript alignment. Video and WAV files are reused. Visual stills are kept unless a later visual stage is also selected.\n\nRe-run diarization: refresh speaker labels and realign the transcript. Frames stay; the multimodal timeline is rebuilt.\n\nFull rerun: redo ASR through summary. Download and audio extraction run only if those files are missing.",
-      sample_interval_sec: "How often to grab a still even when the picture is not changing, in seconds. Default 12.\n\nSmaller values catch more slides, title cards, and UI states, and produce more candidate JPEGs. Periodic samples are merged with scene cuts and visual-change spikes when they land within 0.4 seconds of each other.\n\nUsed when you rerun candidate generation or an earlier visual stage.",
-      scene_threshold: "How sensitive scene-cut detection is. Default 27, in PySceneDetect ContentDetector units (about 0.30 as an ffmpeg scene score).\n\nLower values create more cuts and therefore more candidate frames. Higher values ignore small motion, zooms, and talking-head jitter.\n\nCuts shorter than Min scene are merged into the previous scene. Used when you rerun scene detection or a full visual rerun.",
-      similarity_threshold: "When two candidate frames are similar enough to drop the later one as a duplicate. Default 0.92.\n\nEach candidate is compared to kept frames in the previous 30 seconds using dHash plus color histogram. It is auto-dropped only if similarity is at least this value. Lower means more aggressive dropping of talking-head frames; higher keeps more near-duplicates.\n\nManual Keep/Drop always wins. A large OCR text change can force-keep a frame that would otherwise drop.\n\nUsed when you rerun deduplication.",
-      min_scene_duration_sec: "Shortest scene that is kept as its own span, in seconds. Default 0.8.\n\nShorter detected cuts are merged into the previous scene so a fade, blink, or flash does not emit a burst of extra frames.\n\nUsed when you rerun scene detection.",
-      context_before_sec: "How many seconds of transcript to attach before each keyframe in multimodal.json. Default 10.\n\nThis window is stored for later analysis. It does not move images in the Obsidian note. The note places each frame above the speech block whose time range covers that frame.\n\nUsed when you rebuild multimodal alignment.",
-      context_after_sec: "How many seconds of transcript to attach after each keyframe in multimodal.json. Default 20, because speakers often put a slide up and then talk about it.\n\nTogether with Context before, this is the machine-readable window on each keyframe. It does not change where frames appear in the note.\n\nUsed when you rebuild multimodal alignment.",
-      vlm_keep_threshold: "Minimum Qwen3.8 score (0-1) for a keyframe to appear in the Obsidian note. Default 0.45.\n\nThe model scores how much unique visual information the frame adds beyond the transcript. Talking-heads, transitions, and blur typically score low; slides, book covers, UI, and diagrams score high.\n\nRe-running the Qwen3.8 frame filter with a new threshold reuses cached verdicts. It does not call the model again unless a frame has no verdict yet. Manual Keep/Drop still wins.",
-    };
-
-    const STAGE_ROWS = [
-      ["fetching_metadata", "Fetch metadata", "metadata"],
-      ["downloading", "Download", "video"],
-      ["extracting_audio", "Audio", "audio"],
-      ["transcribing", "ASR / transcript", "transcript"],
-      ["diarizing", "Diarization", "diarization"],
-      ["aligning_transcript", "Transcript alignment", "named"],
-      ["detecting_scenes", "Scene detection", "scenes"],
-      ["sampling_frames", "Candidate frames", "candidates"],
-      ["deduplicating_frames", "Deduplicated keyframes", "keyframes"],
-      ["filtering_frames", "Qwen3.8 frame filter", "frame_analysis"],
-      ["aligning_multimodal", "Multimodal alignment", "multimodal"],
-      ["writing_outputs", "Writing outputs", "outputs"],
-      ["summarizing", "Summary", "summary"],
-    ];
-
-    async function refreshSelected() {
-      if (!selectedId || !document.getElementById("stages")) return;
-      try {
-        debug = await api(`/v1/tasks/${selectedId}/debug`);
-      } catch (_error) {
-        return;
-      }
-      const stagesEl = document.getElementById("stages");
-      if (stagesEl) stagesEl.innerHTML = stagesInner(debug);
-      const statusChip = document.getElementById("task-status");
-      if (statusChip) statusChip.textContent = debug.status || "";
-      const sourceLink = document.getElementById("task-source-link");
-      if (sourceLink) sourceLink.innerHTML = sourceLinkHtml(debug.url);
-      const errorLine = document.getElementById("task-error");
-      if (errorLine) {
-        errorLine.textContent = debug.error || "";
-        errorLine.hidden = !debug.error;
-      }
-      const tagsEl = document.getElementById("task-tags");
-      const pickerOpen = Boolean(document.getElementById("tag-picker") && !document.getElementById("tag-picker").hidden);
-      if (tagsEl && !pickerOpen && !tagsEl.contains(document.activeElement)) {
-        tagsEl.innerHTML = tagRowHtml(debug.tags || []);
-        bindTagControls();
-      }
-      // Completed tasks are static unless summary is regenerating.
-      // Rewriting extracted/summary via innerHTML clears the user's text selection.
-      if (!detailBodyNeedsPoll() || hasDetailTextSelection()) return;
-      if (!rerunPanelBusy()) {
-        const gallery = document.getElementById("gallery");
-        const decisions = debug.decisions || [];
-        if (gallery) {
-          gallery.innerHTML = decisions.map((item) => cardHtml(debug.video_id, item)).join("") || `<div class="empty">No candidate frames yet.</div>`;
-          gallery.querySelectorAll("[data-act]").forEach((button) => {
-            button.onclick = () => decide(button.dataset.file, button.dataset.act, button.dataset.stage);
-          });
-        }
-      }
-      paintExtracted(debug.extracted_markdown || "", debug.video_id);
-      paintSummary(debug.summary || {}, { keepPrompt: true });
-    }
-
-    function detailBodyNeedsPoll() {
-      const status = String((debug && debug.status) || "");
-      const summaryStatus = String(((debug && debug.summary) || {}).status || "");
-      if (summaryStatus === "running") return true;
-      if (status === "completed") return false;
-      return true;
-    }
-
-    function hasDetailTextSelection() {
-      const sel = window.getSelection && window.getSelection();
-      if (!sel || sel.isCollapsed || !sel.rangeCount) return false;
-      const node = sel.anchorNode;
-      if (!node || !main) return false;
-      return main.contains(node);
-    }
-
-    function rerunPanelBusy() {
-      const panel = document.getElementById("rerun-panel");
-      if (!panel) return false;
-      if (panel.contains(document.activeElement)) return true;
-      return Boolean(panel.querySelector(".help:hover, .field:hover"));
-    }
-
-    function normalizeTagClient(value) {
-      return String(value || "").replace(/\s+/g, " ").trim().slice(0, 40);
-    }
-
-    function tagRowHtml(tags) {
-      const chips = (tags || []).map((tag) => `
-        <span class="tag-chip">
-          <span>${esc(tag)}</span>
-          <button type="button" data-remove-tag="${esc(tag)}" aria-label="Remove tag ${esc(tag)}">×</button>
-        </span>`).join("");
-      return `${chips}
-        <div class="tag-add-wrap">
-          <button type="button" class="btn" id="add-tag-btn">Add tag</button>
-          <div class="tag-picker" id="tag-picker" hidden>
-            <input id="tag-input" type="text" maxlength="40" placeholder="New or existing tag" autocomplete="off" list="tag-suggestions" />
-            <datalist id="tag-suggestions"></datalist>
-            <div class="tag-picker-list" id="tag-picker-list"></div>
-          </div>
-        </div>`;
-    }
-
-    function bindTagControls() {
-      const addBtn = document.getElementById("add-tag-btn");
-      const picker = document.getElementById("tag-picker");
-      const input = document.getElementById("tag-input");
-      const list = document.getElementById("tag-picker-list");
-      const suggestions = document.getElementById("tag-suggestions");
-      if (!addBtn || !picker || !input || !list) return;
-      const current = new Set((debug && debug.tags || []).map((tag) => String(tag).toLowerCase()));
-      const prior = knownTags.filter((tag) => !current.has(String(tag).toLowerCase()));
-      if (suggestions) {
-        suggestions.innerHTML = prior.map((tag) => `<option value="${esc(tag)}"></option>`).join("");
-      }
-      list.innerHTML = prior.length
-        ? prior.map((tag) => `<button type="button" data-pick-tag="${esc(tag)}">${esc(tag)}</button>`).join("")
-        : `<div class="tag-picker-empty">No previous tags yet. Type a new one and press Enter.</div>`;
-      addBtn.onclick = () => {
-        const open = picker.hidden;
-        picker.hidden = !open;
-        if (open) {
-          input.value = "";
-          input.focus();
-        }
-      };
-      list.querySelectorAll("[data-pick-tag]").forEach((button) => {
-        button.onclick = () => addTagToTask(button.dataset.pickTag);
-      });
-      input.onkeydown = (event) => {
-        if (event.key === "Enter") {
-          event.preventDefault();
-          addTagToTask(input.value);
-        } else if (event.key === "Escape") {
-          picker.hidden = true;
-        }
-      };
-      document.querySelectorAll("[data-remove-tag]").forEach((button) => {
-        button.onclick = () => removeTagFromTask(button.dataset.removeTag);
-      });
-    }
-
-    async function saveTaskTags(tags) {
-      if (!debug || !debug.id) return;
-      const payload = await api(`/v1/tasks/${debug.id}/tags`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tags }),
-      });
-      debug.tags = payload.tags || [];
-      const tagsEl = document.getElementById("task-tags");
-      if (tagsEl) {
-        tagsEl.innerHTML = tagRowHtml(debug.tags);
-        bindTagControls();
-      }
-      await loadKnownTags();
-      await loadTasks();
-    }
-
-    async function addTagToTask(raw) {
-      const tag = normalizeTagClient(raw);
-      if (!tag || !debug) return;
-      const next = [...(debug.tags || [])];
-      if (next.some((item) => String(item).toLowerCase() === tag.toLowerCase())) {
-        const picker = document.getElementById("tag-picker");
-        if (picker) picker.hidden = true;
-        return;
-      }
-      next.push(tag);
-      await saveTaskTags(next);
-    }
-
-    async function removeTagFromTask(raw) {
-      const tag = normalizeTagClient(raw);
-      if (!tag || !debug) return;
-      const next = (debug.tags || []).filter((item) => String(item).toLowerCase() !== tag.toLowerCase());
-      await saveTaskTags(next);
-    }
-
-    function renderDetail() {
-      const task = debug;
-      const visual = { ...visualDefaults, ...(task.visual || {}) };
-      const stagesOpen = task.status === "completed" ? "" : " open";
-      main.innerHTML = `
-        <h2>${esc(task.title || task.video_id || "Untitled")}</h2>
-        <div class="row">
-          <span class="chip">${esc(task.requested_at || task.created_at || "—")}</span>
-          <span class="chip">${esc(task.source_label || task.platform || "—")}</span>
-          <span class="chip" id="task-status">${esc(task.status)}</span>
-          <span class="chip chip-link" id="task-source-link">${sourceLinkHtml(task.url)}</span>
-        </div>
-        <div class="tag-row" id="task-tags">${tagRowHtml(task.tags || [])}</div>
-        <p class="source-line" id="task-error"${task.error ? "" : " hidden"}>${esc(task.error || "")}</p>
-        <details class="fold" id="fold-summary" open>
-          <summary>
-            <span class="fold-title">Summary</span>
-            <button type="button" class="btn fold-copy" id="chatgpt-summary" disabled>在 ChatGPT 继续</button>
-            <button type="button" class="btn fold-copy" id="copy-summary" disabled>Copy</button>
-          </summary>
-          <div class="fold-body summary-md" id="summary-output"></div>
-        </details>
-        <details class="fold" id="fold-extracted">
-          <summary>
-            <span class="fold-title">Extracted contents</span>
-            <button type="button" class="btn fold-copy" id="copy-extracted" disabled>Copy</button>
-          </summary>
-          <div class="fold-body note-md" id="extracted-output"></div>
-        </details>
-        <details class="fold" id="fold-stages"${stagesOpen}>
-          <summary><span class="fold-title">Stage</span></summary>
-          <div class="fold-body">
-            <div class="stages" id="stages">${stagesInner(task)}</div>
-          </div>
-        </details>
-        <details class="fold" id="rerun-panel">
-          <summary><span class="fold-title">Rerun a stage</span></summary>
-          <div class="fold-body">
-            <div class="fields" style="margin-top:10px">
-              ${knobField("stage", "Stage", `<select id="stage">
-                  <option value="summarizing">Re-run summary</option>
-                  <option value="filtering_frames">Re-run Qwen3.8 frame filter</option>
-                  <option value="deduplicating_frames">Re-run deduplication</option>
-                  <option value="sampling_frames">Re-run candidate generation</option>
-                  <option value="detecting_scenes">Re-run scene detection</option>
-                  <option value="aligning_multimodal">Rebuild multimodal alignment</option>
-                  <option value="transcribing">Re-run ASR</option>
-                  <option value="diarizing">Re-run diarization</option>
-                  <option value="all">Full rerun</option>
-                </select>`)}
-              ${knobField("sample_interval_sec", "Sample interval (s)", `<input id="sample_interval_sec" type="number" value="${esc(visual.sample_interval_sec ?? visualKnobValue("sample_interval_sec", 12))}" />`)}
-              ${knobField("scene_threshold", "Scene threshold", `<input id="scene_threshold" type="number" value="${esc(visual.scene_threshold ?? visualKnobValue("scene_threshold", 27))}" />`)}
-              ${knobField("similarity_threshold", "Similarity threshold", `<input id="similarity_threshold" type="number" step="0.01" value="${esc(visual.similarity_threshold ?? visualKnobValue("similarity_threshold", 0.92))}" />`)}
-              ${knobField("min_scene_duration_sec", "Min scene (s)", `<input id="min_scene_duration_sec" type="number" step="0.1" value="${esc(visual.min_scene_duration_sec ?? visualKnobValue("min_scene_duration_sec", 0.8))}" />`)}
-              ${knobField("context_before_sec", "Context before (s)", `<input id="context_before_sec" type="number" value="${esc(visual.context_before_sec ?? visualKnobValue("context_before_sec", 10))}" />`)}
-              ${knobField("context_after_sec", "Context after (s)", `<input id="context_after_sec" type="number" value="${esc(visual.context_after_sec ?? visualKnobValue("context_after_sec", 20))}" />`)}
-              ${knobField("vlm_keep_threshold", "VLM keep threshold", `<input id="vlm_keep_threshold" type="number" step="0.05" min="0" max="1" value="${esc(visual.vlm_keep_threshold ?? visualKnobValue("vlm_keep_threshold", 0.45))}" />`)}
-            </div>
-            <div class="actions">
-              <button class="btn primary" id="rerun">Queue rerun</button>
-              ${task.extract_keyframes || task.media_kind === "image" ? "" : `<button class="btn" id="extract-keyframes">Extract keyframes</button>`}
-            </div>
-          </div>
-        </details>
-        <details class="fold" id="summary-panel">
-          <summary><span class="fold-title">Summary Generation</span></summary>
-          <div class="fold-body">
-            <p class="empty" style="padding:8px 0 10px">The pipeline writes a local qwen-3.8-27B 4bit thinking xhigh briefing by default. Use the model menu to regenerate with 8bit, thinking none, Gemini, OpenAI, DeepSeek, or Qwen Max.</p>
-            <label class="field">Model
-              <select id="summary-model">
-                <option value="all">Compare all available</option>
-                <option value="qwen">qwen-3.8-27B 4bit thinking none</option>
-                <option value="qwen-low">qwen-3.8-27B 4bit thinking low</option>
-                <option value="qwen-medium">qwen-3.8-27B 4bit thinking medium</option>
-                <option value="qwen-xhigh" selected>qwen-3.8-27B 4bit thinking xhigh</option>
-                <option value="qwen-8bit">qwen-3.8-27B 8bit thinking none</option>
-                <option value="qwen-8bit-low">qwen-3.8-27B 8bit thinking low</option>
-                <option value="qwen-8bit-medium">qwen-3.8-27B 8bit thinking medium</option>
-                <option value="qwen-8bit-xhigh">qwen-3.8-27B 8bit thinking xhigh</option>
-                <option value="gemini">Gemini</option>
-                <option value="openai">OpenAI</option>
-                <option value="deepseek-v4-pro">DeepSeek V4 Pro (reasoning high)</option>
-                <option value="qwen3.8-max">Qwen3.8-Max (reasoning medium)</option>
-              </select>
-            </label>
-            <div class="actions">
-              <button class="btn primary" id="summarize">Regenerate summary</button>
-              <span class="worker-msg" id="summary-status"></span>
-            </div>
-            <label class="field" style="margin-top:12px">Prompt
-              <textarea id="summary-prompt" class="prompt" rows="12">${esc(defaultSummaryPrompt)}</textarea>
-            </label>
-          </div>
-        </details>
-        <details class="fold" id="fold-frames">
-          <summary>Candidate frames</summary>
-          <div class="fold-body">
-            <div class="grid" id="gallery"></div>
-          </div>
-        </details>
-      `;
-      document.getElementById("rerun").onclick = rerun;
-      const extractBtn = document.getElementById("extract-keyframes");
-      if (extractBtn) extractBtn.onclick = extractKeyframes;
-      document.getElementById("summarize").onclick = summarize;
-      bindTagControls();
-      bindCopyButton("copy-extracted", () => extractedMarkdown);
-      bindCopyButton("copy-summary", () => summaryMarkdown);
-      bindChatGptButton("chatgpt-summary", () => summaryMarkdown);
-      const promptEl = document.getElementById("summary-prompt");
-      summaryPromptDirty = false;
-      promptEl.addEventListener("input", () => { summaryPromptDirty = true; });
-      paintSummary(task.summary || {}, { keepPrompt: false });
-      fillSummaryModels();
-      paintExtracted(task.extracted_markdown || "", task.video_id);
-      const gallery = document.getElementById("gallery");
-      const decisions = task.decisions || [];
-      gallery.innerHTML = decisions.map((item) => cardHtml(task.video_id, item)).join("") || `<div class="empty">No candidate frames yet.</div>`;
-      gallery.querySelectorAll("[data-act]").forEach((button) => {
-        button.onclick = () => decide(button.dataset.file, button.dataset.act, button.dataset.stage);
-      });
-    }
-
-    function knobField(key, label, controlHtml) {
-      return `<label class="field">
-        <span class="label-row">${esc(label)}<button type="button" class="help" aria-label="About ${esc(label)}">?<span class="tip">${esc(KNOB_HELP[key] || "")}</span></button></span>
-        ${controlHtml}
-      </label>`;
-    }
-
-    function stagesInner(task) {
-      const d = task.debug || {};
-      const timings = task.stage_timings || {};
-      const artifactOk = {
-        metadata: Boolean(d.metadata),
-        video: Boolean(task.video_path),
-        audio: Boolean(task.audio_path),
-        transcript: Boolean(d.transcript),
-        diarization: Boolean(d.diarization),
-        named: Boolean(d.named),
-        scenes: Boolean(d.scenes),
-        candidates: Boolean(d.candidates),
-        keyframes: Boolean(d.keyframes),
-        frame_analysis: Boolean(d.frame_analysis),
-        multimodal: Boolean(d.multimodal),
-        outputs: task.status === "completed" || Boolean(timings.writing_outputs && timings.writing_outputs.status === "succeeded"),
-        summary: Boolean(d.summary && d.summary.status === "completed" && d.summary.markdown),
-      };
-      const rows = STAGE_ROWS.map(([key, label, flag]) => {
-        const timing = timings[key] || {};
-        const state = stageChip(timing, artifactOk[flag]);
-        return `<div class="stage-row">
-          <span>${esc(label)}</span>
-          <span class="time">${esc(fmtStart(timing.started_at))}</span>
-          <span class="time">${esc(fmtStageDuration(timing))}</span>
-          <span class="chip ${state.cls}">${esc(state.label)}</span>
-        </div>`;
-      }).join("");
-      return `<div class="stage-head"><span>Stage</span><span>Started</span><span>Duration</span><span>Done</span></div>${rows}`;
-    }
-
-    function stageChip(timing, ok) {
-      const status = timing.status || "";
-      if (status === "running") return { label: "running", cls: "" };
-      if (status === "failed") return { label: "failed", cls: "bad" };
-      if (status === "succeeded" || ok) return { label: "yes", cls: "ok" };
-      return { label: "—", cls: "" };
-    }
-
-    function fmtStart(iso) {
-      if (!iso) return "—";
-      const date = new Date(iso);
-      if (Number.isNaN(date.getTime())) return String(iso);
-      const time = date.toLocaleTimeString([], { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
-      const now = new Date();
-      if (date.toDateString() === now.toDateString()) return time;
-      const month = String(date.getMonth() + 1).padStart(2, "0");
-      const day = String(date.getDate()).padStart(2, "0");
-      return `${date.getFullYear()}-${month}-${day} ${time}`;
-    }
-
-    function fmtStageDuration(timing) {
-      if (!timing || timing.status !== "succeeded" || timing.duration_sec == null || timing.duration_sec === "") return "—";
-      const seconds = Number(timing.duration_sec);
-      if (!Number.isFinite(seconds) || seconds < 0) return "—";
-      if (seconds < 10) return `${seconds.toFixed(1)}s`;
-      if (seconds < 60) return `${Math.round(seconds)}s`;
-      const total = Math.round(seconds);
-      const hours = Math.floor(total / 3600);
-      const minutes = Math.floor((total % 3600) / 60);
-      const secs = total % 60;
-      if (hours) return `${hours}h ${minutes}m ${secs}s`;
-      return `${minutes}m ${secs}s`;
-    }
-
-    function cardHtml(videoId, item) {
-      const name = (item.path || "").split("/").pop();
-      const vlm = item.analysis;
-      const dedupKept = Boolean(item.dedup && item.dedup.kept);
-      const kept = vlm ? Boolean(vlm.kept) : dedupKept;
-      const src = `/v1/videos/${encodeURIComponent(videoId)}/frames/candidate_frames/${encodeURIComponent(name)}`;
-      const sources = (item.sources || []).join(" + ") || "unknown";
-      const sim = item.dedup ? Number(item.dedup.similarity || 0).toFixed(2) : "—";
-      const nearest = item.dedup?.nearest_frame || "—";
-      const decision = vlm ? (vlm.decision || "vlm") : (item.dedup?.decision || "auto");
-      const score = vlm && vlm.score != null ? Number(vlm.score).toFixed(2) : "";
-      const category = vlm && vlm.category ? vlm.category : "";
-      const caption = vlm && vlm.caption ? vlm.caption : "";
-      const reason = vlm && vlm.reason ? vlm.reason : "";
-      const retryStage = vlm && dedupKept ? "filtering_frames" : "deduplicating_frames";
-      const vlmLine = vlm
-        ? `Qwen: ${esc(category || "—")} · score ${esc(score || "—")}${reason ? "<br />" + esc(reason) : ""}${caption ? "<br />" + esc(caption) : ""}<br />`
-        : "";
-      return `<article class="card ${kept ? "kept" : "dropped"}">
-        <img src="${src}" alt="${esc(name)}" />
-        <div class="body">
-          <strong>${fmt(item.timestamp)} · ${kept ? "KEEP" : "DROP"}</strong>
-          Source: ${esc(sources)}<br />
-          Nearest: ${esc(nearest)} · similarity ${esc(sim)} · ${esc(decision)}<br />
-          ${vlmLine}
-          <div class="actions">
-            <button class="btn keep" data-act="keep" data-file="${esc(name)}" data-stage="${retryStage}">Keep</button>
-            <button class="btn drop" data-act="drop" data-file="${esc(name)}" data-stage="${retryStage}">Drop</button>
-          </div>
-        </div>
-      </article>`;
-    }
-
-    async function decide(filename, decision, stage) {
-      await api(`/v1/videos/${encodeURIComponent(debug.video_id)}/frames/${encodeURIComponent(filename)}/decision`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ decision }),
-      });
-      await api(`/v1/tasks/${debug.id}/retry`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ stage: stage || "deduplicating_frames" }),
-      });
-      await openTask(debug.id);
-    }
-
-    async function extractKeyframes() {
-      await api(`/v1/tasks/${debug.id}/retry`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ stage: "detecting_scenes" }),
-      });
-      await openTask(debug.id);
-    }
-
-    async function rerun() {
-      const visual = {};
-      for (const key of ["sample_interval_sec", "scene_threshold", "similarity_threshold", "min_scene_duration_sec", "context_before_sec", "context_after_sec", "vlm_keep_threshold"]) {
-        const node = document.getElementById(key);
-        if (node && node.value !== "") visual[key] = Number(node.value);
-      }
-      await api(`/v1/tasks/${debug.id}/retry`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ stage: document.getElementById("stage").value, visual }),
-      });
-      await openTask(debug.id);
-    }
-
-    async function summarize() {
-      const promptEl = document.getElementById("summary-prompt");
-      const statusEl = document.getElementById("summary-status");
-      const button = document.getElementById("summarize");
-      const modelEl = document.getElementById("summary-model");
-      const raw = (promptEl && promptEl.value.trim()) || defaultSummaryPrompt;
-      const prompt = canonicalPrompt(raw);
-      const model = (modelEl && modelEl.value) || summaryModel || "all";
-      summaryModel = model;
-      if (button) button.disabled = true;
-      if (statusEl) statusEl.textContent = "Generating…";
-      try {
-        const payload = await api(`/v1/tasks/${debug.id}/summary`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ prompt, model }),
-        });
-        paintSummary(payload, { keepPrompt: true });
-      } catch (error) {
-        if (statusEl) statusEl.textContent = error.message;
-        if (button) button.disabled = false;
-      }
-    }
-
-    async function fillSummaryModels() {
-      const select = document.getElementById("summary-model");
-      if (!select) return;
-      let providers = [];
-      try {
-        const data = await api("/v1/summary/models");
-        providers = data.providers || [];
-        const defaults = data.default || [];
-        if (defaults[0] && !select.dataset.userSet) {
-          summaryModel = defaults[0];
-        }
-      } catch (_error) {
-        providers = [];
-      }
-      const byKey = Object.fromEntries(providers.map((item) => [item.key, item]));
-      [...select.options].forEach((option) => {
-        if (option.value === "all") return;
-        const info = byKey[option.value];
-        if (!info) return;
-        option.disabled = !info.available;
-        option.textContent = info.available ? info.label : `${info.label} — ${info.detail}`;
-      });
-      if ([...select.options].some((item) => item.value === summaryModel && !item.disabled)) {
-        select.value = summaryModel;
-      }
-      select.onchange = () => {
-        summaryModel = select.value;
-        select.dataset.userSet = "1";
-      };
-    }
-
-    function paintSummary(summary, { keepPrompt = false } = {}) {
-      const output = document.getElementById("summary-output");
-      const statusEl = document.getElementById("summary-status");
-      const button = document.getElementById("summarize");
-      const promptEl = document.getElementById("summary-prompt");
-      if (!output || !statusEl || !button || !promptEl) return;
-      const status = summary.status || "idle";
-      const running = status === "running";
-      const runs = Array.isArray(summary.runs)
-        ? summary.runs.filter((item) => item && typeof item === "object")
-        : [];
-      const markdown = summary.markdown || "";
-      button.disabled = running;
-      if (status === "running") statusEl.textContent = "Generating…";
-      else if (status === "failed") statusEl.textContent = summary.error || "Summary failed";
-      else if (status === "completed" && runs.length > 1) statusEl.textContent = `Done · ${runs.length} summaries`;
-      else if (status === "completed") statusEl.textContent = summary.model ? `Done · ${summary.model}` : "Done";
-      else statusEl.textContent = "";
-      if (runs.length) {
-        const openThinking = {};
-        output.querySelectorAll("details.summary-thinking").forEach((el) => {
-          if (el.open && el.dataset.thinkKey) openThinking[el.dataset.thinkKey] = true;
-        });
-        summaryDisplayRuns = [...runs].reverse();
-        output.innerHTML = summaryDisplayRuns.map((item, index) => renderSummaryRun(item, index)).join("");
-        output.querySelectorAll("details.summary-thinking").forEach((el) => {
-          if (openThinking[el.dataset.thinkKey]) el.open = true;
-          const summaryEl = el.querySelector(":scope > summary");
-          if (!summaryEl) return;
-          summaryEl.addEventListener("click", (event) => event.stopPropagation());
-          summaryEl.addEventListener("pointerdown", (event) => event.stopPropagation());
-        });
-        bindSummaryRunChatGptButtons(output);
-        summaryMarkdown = markdown || copyMarkdownFromRuns(runs);
-      } else {
-        summaryDisplayRuns = [];
-        output.innerHTML = renderSummaryMarkdown(markdown) || `<div class="empty">No summary yet.</div>`;
-        summaryMarkdown = markdown;
-      }
-      const hasSummary = Boolean(String(summaryMarkdown || "").trim());
-      const copyBtn = document.getElementById("copy-summary");
-      if (copyBtn) copyBtn.disabled = !hasSummary;
-      const chatBtn = document.getElementById("chatgpt-summary");
-      if (chatBtn) chatBtn.disabled = !hasSummary;
-      const focused = document.activeElement === promptEl;
-      const storedPrompt = canonicalPrompt(summary.prompt);
-      if (!keepPrompt && !summaryPromptDirty && !focused && storedPrompt) {
-        promptEl.value = storedPrompt;
-      }
-    }
-
-    function renderSummaryRun(item, index = 0) {
-      const label = item.label || item.model || item.key || "Model";
-      const duration = formatRunDuration(item.duration_sec);
-      const head = duration ? `${label} · ${duration}` : label;
-      const thinking = String(item.thinking || "").trim();
-      const markdown = String(item.markdown || "").trim();
-      const failed = item.status === "failed" || (!markdown && !thinking);
-      const thinkKey = String(item.created_at || `${item.key || "run"}-${index}`);
-      const thinkingHtml = thinking
-        ? `<details class="summary-thinking" data-think-key="${esc(thinkKey)}"><summary>Thinking</summary><div class="summary-thinking-body">${renderSummaryMarkdown(thinking)}</div></details>`
-        : "";
-      const body = markdown
-        ? `${thinkingHtml}<div class="summary-run-body">${renderSummaryMarkdown(item.markdown)}</div>`
-        : thinkingHtml || `<p class="summary-run-error">失败：${esc(item.error || "empty")}</p>`;
-      const chatBtn = failed
-        ? ""
-        : `<button type="button" class="btn fold-copy summary-chatgpt" data-run-index="${index}">${CHATGPT_BUTTON_LABEL}</button>`;
-      return `<article class="summary-run${failed ? " failed" : ""}"><header class="summary-run-head"><span class="run-label">${esc(head)}</span>${chatBtn}</header>${body}</article>`;
-    }
-
-    function copyMarkdownFromRuns(runs) {
-      return [...runs].reverse().map((item) => runCopyMarkdown(item)).join("\n");
-    }
-
-    function runCopyMarkdown(item) {
-      const label = item.label || item.model || item.key || "Model";
-      const duration = formatRunDuration(item.duration_sec);
-      const head = duration ? `${label} · ${duration}` : label;
-      const thinking = String(item.thinking || "").trim();
-      const briefing = String(item.markdown || "").trim() || (thinking ? "" : `（失败：${item.error || "empty"}）`);
-      const thinkBlock = thinking
-        ? `<details>\n<summary>Thinking</summary>\n\n${thinking}\n\n</details>\n\n`
-        : "";
-      return `### ${head}\n\n${thinkBlock}${briefing}\n`;
-    }
-
-    function formatRunDuration(seconds) {
-      if (seconds == null || seconds === "") return "";
-      const value = Number(seconds);
-      if (!Number.isFinite(value)) return "";
-      const safe = Math.max(0, value);
-      if (safe < 10) return `${safe.toFixed(1)}s`;
-      if (safe < 60) return `${Math.round(safe)}s`;
-      const total = Math.round(safe);
-      const hours = Math.floor(total / 3600);
-      const minutes = Math.floor((total % 3600) / 60);
-      const secs = total % 60;
-      if (hours) return `${hours}h ${minutes}m ${secs}s`;
-      return `${minutes}m ${secs}s`;
-    }
-
-    function canonicalPrompt(text) {
-      const raw = String(text || "").trim();
-      if (!raw || LEGACY_SUMMARY_PROMPTS.has(raw) || raw === DEFAULT_SUMMARY_PROMPT) return defaultSummaryPrompt;
-      return raw;
-    }
-
-    function paintExtracted(markdown, videoId) {
-      const output = document.getElementById("extracted-output");
-      if (!output) return;
-      extractedMarkdown = markdown || "";
-      const copyBtn = document.getElementById("copy-extracted");
-      if (copyBtn) copyBtn.disabled = !extractedMarkdown.trim();
-      output.innerHTML = renderNoteMarkdown(markdown, videoId) || `<div class="empty">No extracted note yet.</div>`;
-    }
-
-    function bindCopyButton(id, getText) {
-      const button = document.getElementById(id);
-      if (!button) return;
-      const stop = (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-      };
-      button.addEventListener("pointerdown", stop);
-      button.addEventListener("click", async (event) => {
-        stop(event);
-        const text = String(getText() || "").trim();
-        if (!text) return;
-        try {
-          await copyText(text);
-          button.textContent = "Copied";
-          clearTimeout(copyResetters[id]);
-          copyResetters[id] = setTimeout(() => { button.textContent = "Copy"; }, 1600);
-        } catch (_error) {
-          button.textContent = "Copy failed";
-          clearTimeout(copyResetters[id]);
-          copyResetters[id] = setTimeout(() => { button.textContent = "Copy"; }, 1600);
-        }
-      });
-    }
-
-    function buildChatGptPayload(summaryText) {
-      const extracted = String(extractedMarkdown || "").trim();
-      const summary = String(summaryText || "").trim();
-      const parts = [];
-      if (extracted) parts.push(`## Extracted contents\n\n${extracted}`);
-      if (summary) parts.push(`## Summary\n\n${summary}`);
-      if (!parts.length) return "";
-      parts.push("请基于以上内容继续提问和讨论。");
-      return parts.join("\n\n---\n\n");
-    }
-
-    function bindChatGptButton(id, getSummaryText) {
-      const button = document.getElementById(id);
-      if (!button) return;
-      const stop = (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-      };
-      button.addEventListener("pointerdown", stop);
-      button.addEventListener("click", async (event) => {
-        stop(event);
-        await continueInChatGpt(getSummaryText(), button, id);
-      });
-    }
-
-    function bindSummaryRunChatGptButtons(output) {
-      output.querySelectorAll("button.summary-chatgpt").forEach((button) => {
-        const stop = (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-        };
-        button.addEventListener("pointerdown", stop);
-        button.addEventListener("click", async (event) => {
-          stop(event);
-          const index = Number(button.dataset.runIndex);
-          const item = summaryDisplayRuns[index];
-          if (!item) return;
-          const resetKey = `summary-chatgpt-${index}`;
-          await continueInChatGpt(runCopyMarkdown(item), button, resetKey);
-        });
-      });
-    }
-
-    async function continueInChatGpt(summaryText, button, resetKey) {
-      const payload = buildChatGptPayload(summaryText);
-      if (!payload) return;
+      i--;
+      out.push(mdList(items));
+      continue;
+    }
+    para.push(line.trim());
+  }
+  flush();
+  return out.join("");
+}
+function mdList(items) {
+  let html = "";
+  const stack = [];
+  for (const item of items) {
+    while (stack.length && item.indent < stack[stack.length - 1].indent) html += `</li></${stack.pop().tag}>`;
+    const top = stack[stack.length - 1];
+    if (!top || item.indent > top.indent) {
+      const tag = item.ordered ? "ol" : "ul";
+      stack.push({ indent: item.indent, tag });
+      html += `<${tag}><li>`;
+    } else {
+      html += "</li><li>";
+    }
+    html += item.text.split("\n").map(inline).join("<br>");
+  }
+  while (stack.length) html += `</li></${stack.pop().tag}>`;
+  return html;
+}
+
+/* ================================================================== library */
+function filteredTasks() {
+  const q = state.query.trim().toLowerCase();
+  return state.tasks.filter((task) => {
+    const chip = state.chip;
+    if (chip === "active" && !isActive(task)) return false;
+    if (chip === "failed" && task.status !== "failed") return false;
+    if (chip.startsWith("src:") && task.source !== chip.slice(4)) return false;
+    if (chip.startsWith("tag:") && !(task.tags || []).includes(chip.slice(4))) return false;
+    if (!q) return true;
+    return [task.title, task.author, task.source_label, ...(task.tags || [])].join(" ").toLowerCase().includes(q);
+  });
+}
+function renderChips() {
+  const tasks = state.tasks;
+  const chips = [["all", "全部", tasks.length]];
+  const active = tasks.filter(isActive).length;
+  const failed = tasks.filter((t) => t.status === "failed").length;
+  if (active) chips.push(["active", "处理中", active]);
+  if (failed) chips.push(["failed", "失败", failed, "danger"]);
+  const sources = new Map();
+  for (const t of tasks) if (t.source) sources.set(t.source, [t.source_label || t.source, (sources.get(t.source)?.[1] || 0) + 1]);
+  if (sources.size > 1) for (const [key, [label, n]] of sources) chips.push([`src:${key}`, label, n]);
+  const tags = new Map();
+  for (const t of tasks) for (const tag of t.tags || []) tags.set(tag, (tags.get(tag) || 0) + 1);
+  for (const [tag, n] of tags) chips.push([`tag:${tag}`, `#${tag}`, n]);
+  if (!chips.some(([key]) => key === state.chip)) state.chip = "all";
+  $("#chips").innerHTML = chips.map(([key, label, n, cls]) =>
+    `<button class="chip ${cls || ""}" type="button" data-chip="${esc(key)}" aria-pressed="${key === state.chip}">${esc(label)}<span class="n">${n}</span></button>`).join("");
+}
+function rowState(task) {
+  if (task.status === "failed") return `<div class="row-state err">⚠︎ 失败 · ${esc(STATUS[task.error_stage] || task.error_stage || "")}</div>`;
+  if (isActive(task)) {
+    const step = STEP_OF[task.status] ?? -1;
+    const pct = Math.max(6, Math.round(((step + 0.5) / STEPS.length) * 100));
+    return `<div class="row-state"><span class="bar"><i style="width:${pct}%"></i></span>${esc(STATUS[task.status] || task.status)}</div>`;
+  }
+  if (task.summary_status === "running") return `<div class="row-state"><span class="spinner"></span>生成摘要</div>`;
+  return "";
+}
+function rowHtml(task) {
+  const thumb = thumbFor(task);
+  const duration = Number(task.duration) > 0 ? `<span class="dur">${clock(task.duration)}</span>` : "";
+  const glyph = task.media_kind === "image" ? "🖼" : "▶";
+  const meta = [task.author || task.source_label, relTime(parseStamp(task.requested_at || task.created_at))].filter(Boolean).join(" · ");
+  const tags = (task.tags || []).length ? `<span class="tagline">${task.tags.map((t) => `<span class="tag">#${esc(t)}</span>`).join("")}</span>` : "";
+  const current = state.route.view === "note" && state.route.id === task.id;
+  return `<a class="row" href="#/n/${encodeURIComponent(task.id)}" aria-current="${current}">
+    <div class="thumb">${thumb ? `<img src="${esc(thumb)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : ""}<span class="glyph" aria-hidden="true">${thumb ? "" : glyph}</span>${duration}</div>
+    <div class="row-body"><div class="row-title">${esc(task.title || task.url)}</div>
+      <div class="row-meta">${esc(meta)}${tags}</div>${rowState(task)}</div></a>`;
+}
+function renderList() {
+  renderChips();
+  const tasks = filteredTasks();
+  $("#lib-count").textContent = state.tasks.length ? String(state.tasks.length) : "";
+  if (!tasks.length) {
+    $("#list").innerHTML = `<div class="empty">${state.tasks.length ? "没有符合条件的笔记" : "还没有笔记。<br>点右上角 ＋ 粘贴链接，或在手机分享菜单里用 Media Extract。"}</div>`;
+    return;
+  }
+  const groups = [];
+  for (const task of tasks) {
+    const key = dayKey(parseStamp(task.requested_at || task.created_at) || new Date(0));
+    if (!groups.length || groups[groups.length - 1][0] !== key) groups.push([key, []]);
+    groups[groups.length - 1][1].push(task);
+  }
+  $("#list").innerHTML = groups.map(([key, items]) => `<div class="section-title">${esc(key)}</div>${items.map(rowHtml).join("")}`).join("");
+}
+/* A note belongs to a video, not to a task: resubmitting a video must not duplicate it.
+   Keep the task that matters most: still processing > completed > failed, newest first within each. */
+function onePerVideo(tasks) {
+  const rank = (task) => (isActive(task) ? 3 : task.status === "completed" ? 2 : 1);
+  const best = new Map();
+  for (const task of tasks) {
+    const key = task.video_id || task.url || task.id;
+    const current = best.get(key);
+    if (!current || rank(task) > rank(current)) best.set(key, task);
+  }
+  return tasks.filter((task) => best.get(task.video_id || task.url || task.id) === task);
+}
+async function loadTasks() {
+  clearTimeout(state.listTimer);
+  try {
+    const data = await api("/v1/tasks?filter=all&group=none&order=requested_desc");
+    state.tasks = onePerVideo(data.tasks || []);
+    renderList();
+  } catch (error) {
+    if (!state.tasks.length) $("#list").innerHTML = `<div class="empty">无法连接后台：${esc(error.message)}</div>`;
+  }
+  // Fast while something is processing; slow otherwise so share-sheet submissions still show up.
+  state.listTimer = setTimeout(loadTasks, state.tasks.some(isActive) ? 4000 : 20000);
+}
+async function loadHealth() {
+  try {
+    const health = await api("/v1/health");
+    $("#health").textContent = health.ok === false ? "后台异常" : "后台在线";
+  } catch (_) {
+    $("#health").textContent = "后台离线";
+  }
+}
+
+/* ================================================================== note */
+function noteSkeleton(task) {
+  return `<div class="note-bar" id="note-bar">
+      <a class="back" href="#/" aria-label="返回笔记列表"><svg viewBox="0 0 12 20" aria-hidden="true"><path d="M10 2 2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>笔记</a>
+      <div class="bar-title">${esc(task ? task.title : "")}</div>
+      <button class="bar-btn" type="button" id="more-btn" aria-label="更多操作">···</button>
+    </div>
+    <div class="note-wrap" id="note-wrap"></div>`;
+}
+function headHtml(note) {
+  const task = note.task;
+  const date = (task.published || "").slice(0, 10);
+  const bits = [
+    `<span class="src-badge">${esc(task.source_label || task.platform || "")}</span>`,
+    task.author ? esc(task.author) : "",
+    Number(task.duration) > 0 ? clock(task.duration) : "",
+    date,
+  ].filter(Boolean).join("<span>·</span>");
+  const speakers = note.speakers.length > 1 ? `${note.speakers.length} 位说话人` : "";
+  const tags = (task.tags || []).map((t) => `<span class="tag">#${esc(t)}</span>`).join(" ");
+  return `<header class="note-head">
+      <div class="src-line">${bits}${speakers ? `<span>·</span>${speakers}` : ""}</div>
+      <h1 class="note-title clamped" id="note-title" title="${esc(task.title)}">${esc(task.title || task.url)}</h1>
+      <div class="head-actions">
+        ${task.url ? `<a class="pill" href="${esc(task.url)}" target="_blank" rel="noopener">打开视频 ↗</a>` : ""}
+        ${tags}
+      </div>
+    </header>`;
+}
+function progressHtml(note) {
+  const task = note.task;
+  if (task.status === "failed") {
+    return `<div class="card err"><h3>处理失败 · ${esc(STATUS[task.error_stage] || task.error_stage || "")}</h3>
+      <p>${esc(task.error || "")}</p><div class="actions"><button class="pill primary" type="button" data-act="retry">重试</button></div></div>`;
+  }
+  if (!isActive(task)) return "";
+  const step = STEP_OF[task.status] ?? -1;
+  const bars = STEPS.map((_, i) => `<i class="${i < step ? "done" : i === step ? "now" : ""}"></i>`).join("");
+  return `<div class="card"><h3><span class="spinner"></span> ${esc(STATUS[task.status] || task.status)}</h3>
+    <div class="steps">${bars}</div><p>完成后摘要和逐字稿会自动出现，可以先离开这个页面。</p></div>`;
+}
+function tabsHtml(note, tab) {
+  const isImage = note.task.media_kind === "image";
+  const tabs = [["summary", "摘要", ""]];
+  if (isImage) tabs.push(["post", "正文", ""]);
+  else tabs.push(["transcript", "逐字稿", note.transcript.length || ""]);
+  if (note.frames.length) tabs.push(["frames", "画面", note.frames.length]);
+  return `<div class="tabs"><div class="seg" role="tablist">${tabs.map(([key, label, n]) =>
+    `<button type="button" role="tab" data-tab="${key}" aria-selected="${key === tab}">${label}${n ? `<span class="n">${n}</span>` : ""}</button>`).join("")}</div></div>`;
+}
+function completedRuns(summary) {
+  return (summary.runs || []).filter((run) => run.status === "completed" && String(run.markdown || "").trim());
+}
+function summaryHtml(note) {
+  const summary = note.summary || {};
+  const runs = completedRuns(summary);
+  let body = "";
+  if (summary.status === "running") {
+    body += `<div class="card"><h3><span class="spinner"></span> 正在生成摘要…</h3><p>通常需要 1–2 分钟。</p></div>`;
+  } else if (summary.status === "failed" && !runs.length) {
+    body += `<div class="card err"><h3>摘要失败</h3><p>${esc(summary.error || "")}</p>
+      <div class="actions"><button class="pill primary" type="button" data-act="summarize">重新生成</button></div></div>`;
+  }
+  if (!runs.length && summary.status !== "running" && summary.status !== "failed") {
+    if (note.task.status === "completed") {
+      body += `<div class="card"><h3>还没有摘要</h3><div class="actions"><button class="pill primary" type="button" data-act="summarize">生成摘要</button></div></div>`;
+    } else if (!isActive(note.task)) {
+      body += "";
+    }
+  }
+  if (runs.length) {
+    const index = Math.min(state.run ?? runs.length - 1, runs.length - 1);
+    const run = runs[index];
+    if (runs.length > 1) {
+      body += `<div class="sum-runs">${runs.map((r, i) =>
+        `<button class="chip" type="button" data-run="${i}" aria-pressed="${i === index}">${esc(shortModel(r.label || r.model))}</button>`).join("")}</div>`;
+    }
+    body += `<div class="prose" id="summary-prose">${markdown(run.markdown)}</div>`;
+    const seconds = Number(run.duration_sec) > 0 ? ` · ${Math.round(run.duration_sec)} 秒` : "";
+    body += `<div class="sum-foot"><span>${esc(shortModel(run.label || run.model))}${seconds}</span>
+      <button type="button" data-act="copy-summary">复制</button>
+      <button type="button" data-act="chatgpt">在 ChatGPT 继续</button></div>`;
+    if (String(run.thinking || "").trim()) {
+      body += `<details class="fold"><summary>推理过程</summary><div class="fold-body thinking">${esc(run.thinking.trim())}</div></details>`;
+    }
+  }
+  return body + infoHtml(note);
+}
+function shortModel(label) {
+  return String(label || "").replace(/\s*\((reasoning|thinking)[^)]*\)/i, "");
+}
+function infoHtml(note) {
+  const task = note.task;
+  const timings = task.stage_timings || {};
+  const stages = Object.entries(timings)
+    .filter(([, v]) => v && v.status)
+    .map(([k, v]) => `${STATUS[k] || k}${Number(v.duration_sec) >= 0 && v.duration_sec != null ? ` ${Math.round(v.duration_sec)}s` : ""}${v.status === "failed" ? " ✗" : ""}`)
+    .join(" · ");
+  const speakers = note.speakers.map((s) => `${speakerName(s.label)} ${clock(s.seconds)}`).join("、");
+  return `<details class="fold"><summary>处理信息</summary><div class="fold-body"><dl class="kv">
+      <dt>转写</dt><dd>${esc(task.asr_label || task.asr_model || "")}${task.detected_languages ? ` · ${esc(task.detected_languages)}` : ""}</dd>
+      ${speakers ? `<dt>说话人</dt><dd>${esc(speakers)}</dd>` : ""}
+      <dt>片段</dt><dd>${note.transcript.length}</dd>
+      ${stages ? `<dt>阶段</dt><dd>${esc(stages)}</dd>` : ""}
+      <dt>提交于</dt><dd>${esc(task.requested_at || task.created_at || "")}</dd>
+      <dt>笔记</dt><dd>${esc(task.note_path || "—")}</dd>
+    </dl>
+    <div class="actions">
+      <button class="pill" type="button" data-act="resummarize">换模型重新总结</button>
+      ${task.status === "failed" ? `<button class="pill" type="button" data-act="retry">重试</button>` : ""}
+      <a class="pill" href="/classic?task=${encodeURIComponent(task.id)}">在旧版中打开</a>
+    </div></div></details>`;
+}
+
+/* Transcript: speaker turns, split into readable paragraphs. */
+function transcriptBlocks(note) {
+  const blocks = [];
+  for (const seg of note.transcript) {
+    const last = blocks[blocks.length - 1];
+    const sameSpeaker = last && last.speaker === seg.speaker;
+    if (sameSpeaker && seg.start - last.end < 4 && seg.end - last.start < 75) {
+      last.text = joinText(last.text, seg.text);
+      last.end = seg.end;
+    } else {
+      blocks.push({ speaker: seg.speaker, label: seg.label, start: seg.start, end: seg.end, text: seg.text, cont: sameSpeaker });
+    }
+  }
+  return blocks;
+}
+function speakerColors(note) {
+  const map = {};
+  note.speakers.forEach((s, i) => { map[s.id] = SPEAKER_COLORS[i % SPEAKER_COLORS.length]; });
+  return map;
+}
+function transcriptHtml(note) {
+  if (!note.transcript.length) {
+    return `<div class="card"><p>${isActive(note.task) ? "转写完成后会显示在这里。" : "这条笔记没有逐字稿。"}</p></div>`;
+  }
+  const colors = speakerColors(note);
+  const chips = note.speakers.length > 1
+    ? `<nav class="chips">${[["", "全部"], ...note.speakers.map((s) => [s.id, speakerName(s.label)])].map(([id, label]) =>
+        `<button class="chip" type="button" data-speaker="${esc(id)}" aria-pressed="${state.tSpeaker === id}" style="--spk:${colors[id] || "transparent"}">${id ? '<span class="dot"></span>' : ""}${esc(label)}</button>`).join("")}</nav>`
+    : "";
+  return `<div class="t-tools"><label class="search"><span class="sr-only">在逐字稿中搜索</span>
+      <svg width="14" height="14" viewBox="0 0 20 20" aria-hidden="true"><path fill="currentColor" d="M8.5 2a6.5 6.5 0 0 1 5.18 10.43l4.45 4.44-1.42 1.42-4.44-4.45A6.5 6.5 0 1 1 8.5 2Zm0 2a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9Z"/></svg>
+      <input id="t-q" type="search" placeholder="在逐字稿中搜索" value="${esc(state.tQuery)}" autocomplete="off" enterkeyhint="search"></label>${chips}
+      <div class="t-count" id="t-count"></div></div><div id="t-body"></div>`;
+}
+function paintTranscript() {
+  const note = state.note;
+  const body = $("#t-body");
+  if (!note || !body) return;
+  const colors = speakerColors(note);
+  const q = state.tQuery.trim().toLowerCase();
+  const blocks = transcriptBlocks(note);
+  let shown = 0;
+  let previous = null;
+  const html = [];
+  for (const block of blocks) {
+    if (state.tSpeaker && block.speaker !== state.tSpeaker) { previous = null; continue; }
+    if (q && !block.text.toLowerCase().includes(q)) { previous = null; continue; }
+    shown++;
+    let text = esc(block.text);
+    if (q) {
+      const pattern = new RegExp(esc(q).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
+      text = text.replace(pattern, (m) => `<mark>${m}</mark>`);
+    }
+    const cont = previous === block.speaker;
+    const who = cont ? "" : `<span class="who">${esc(speakerName(block.label))}</span>`;
+    html.push(`<div class="blk${cont ? " cont" : ""}" style="--spk:${colors[block.speaker] || "var(--text)"}">
+      <div class="blk-head">${who}<a class="ts" href="${esc(videoAt(note.task, block.start))}" target="_blank" rel="noopener" title="在视频中打开">${clock(block.start)}</a></div>
+      <p>${text}</p></div>`);
+    previous = block.speaker;
+  }
+  body.innerHTML = html.join("") || `<div class="empty">没有匹配的内容</div>`;
+  $("#t-count").textContent = q || state.tSpeaker ? `${shown} 段` : "";
+}
+function framesHtml(note) {
+  return `<div class="frames">${note.frames.map((f) => `<figure class="frame">
+      <a class="img" href="${esc(f.url)}" target="_blank" rel="noopener"><img src="${esc(f.url)}" alt="" loading="lazy"></a>
+      <figcaption><a class="ts" href="${esc(videoAt(note.task, f.timestamp))}" target="_blank" rel="noopener">${clock(f.timestamp)}</a> ${esc(f.caption || "")}</figcaption>
+    </figure>`).join("")}</div>`;
+}
+function postHtml(note) {
+  return `<div class="prose">${markdown(note.post_markdown || "", { videoId: note.task.video_id, images: true })}</div>`;
+}
+function renderNote() {
+  const note = state.note;
+  const wrap = $("#note-wrap");
+  if (!note || !wrap) return;
+  const tab = validTab(note, state.route.tab);
+  let content = "";
+  if (tab === "transcript") content = transcriptHtml(note);
+  else if (tab === "frames") content = framesHtml(note);
+  else if (tab === "post") content = postHtml(note);
+  else content = summaryHtml(note);
+  wrap.innerHTML = headHtml(note) + progressHtml(note) + tabsHtml(note, tab) + `<section id="tab-body">${content}</section>`;
+  $(".bar-title").textContent = note.task.title || "";
+  if (tab === "transcript") paintTranscript();
+  document.title = `${note.task.title || "笔记"} · Media`;
+}
+function validTab(note, tab) {
+  if (tab === "frames" && note.frames.length) return "frames";
+  if (tab === "transcript" && note.task.media_kind !== "image") return "transcript";
+  if (tab === "post" && note.task.media_kind === "image") return "post";
+  return "summary";
+}
+async function openNote(id) {
+  clearTimeout(state.noteTimer);
+  const fresh = state.noteId !== id;
+  if (fresh) {
+    state.noteId = id;
+    state.note = null;
+    state.run = null;
+    state.tQuery = "";
+    state.tSpeaker = "";
+    const cached = state.tasks.find((t) => t.id === id);
+    $("#note").innerHTML = noteSkeleton(cached);
+    $("#note-wrap").innerHTML = `<div class="note-empty"><span class="spinner"></span></div>`;
+    window.scrollTo(0, 0);
+  }
+  await refreshNote(true);
+}
+async function refreshNote(force = false) {
+  clearTimeout(state.noteTimer);
+  const id = state.noteId;
+  if (!id) return;
+  try {
+    const note = await api(`/v1/tasks/${encodeURIComponent(id)}/note`);
+    if (state.noteId !== id) return;
+    const before = state.note;
+    state.note = note;
+    const changed = !before || before.task.status !== note.task.status || (before.summary || {}).status !== (note.summary || {}).status
+      || (before.summary?.runs || []).length !== (note.summary?.runs || []).length || before.transcript.length !== note.transcript.length;
+    // Never repaint finished content under the reader's fingers or selection (see AGENTS.md).
+    if (force || (changed && !hasSelection($("#note")))) renderNote();
+  } catch (error) {
+    $("#note-wrap").innerHTML = `<div class="note-empty">打不开这条笔记：${esc(error.message)}</div>`;
+    return;
+  }
+  const busy = isActive(state.note.task) || (state.note.summary || {}).status === "running";
+  if (busy) state.noteTimer = setTimeout(() => refreshNote(false), 3000);
+}
+
+/* ================================================================== actions */
+function summaryText() {
+  const runs = completedRuns(state.note.summary || {});
+  if (!runs.length) return "";
+  return runs[Math.min(state.run ?? runs.length - 1, runs.length - 1)].markdown;
+}
+function copyTextSync(text) {
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.setAttribute("readonly", "");
+  Object.assign(area.style, { position: "fixed", top: "0", left: "0", width: "1px", height: "1px", opacity: "0" });
+  document.body.appendChild(area);
+  area.focus();
+  area.select();
+  area.setSelectionRange(0, area.value.length);
+  let ok = false;
+  try { ok = document.execCommand("copy"); } finally { area.remove(); }
+  if (!ok) throw new Error("copy failed");
+}
+async function copyText(text) {
+  // Sync copy first, while the tap gesture is still active (Safari drops the Clipboard API after that).
+  try { copyTextSync(text); return; } catch (_) { /* fall through */ }
+  if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return; }
+  throw new Error("copy failed");
+}
+function chatPayload() {
+  const note = state.note;
+  const transcript = transcriptBlocks(note).map((b) => `[${clock(b.start)}] ${speakerName(b.label)}：${b.text}`).join("\n");
+  const parts = [`# ${note.task.title || ""}\n${note.task.url || ""}`];
+  const summary = summaryText();
+  if (summary) parts.push(`## 摘要\n\n${summary}`);
+  if (transcript) parts.push(`## 逐字稿\n\n${transcript}`);
+  parts.push("请基于以上内容继续提问和讨论。");
+  return parts.join("\n\n---\n\n");
+}
+async function act(name, button) {
+  const note = state.note;
+  if (!note) return;
+  const id = note.task.id;
+  try {
+    if (name === "copy-summary") {
+      await copyText(summaryText());
+      toast("摘要已复制");
+    } else if (name === "chatgpt") {
       let copied = false;
-      try {
-        // Copy during the click gesture first — Clipboard API after opening a new
-        // tab loses user-activation and fails on Safari / some Chromium builds.
-        await copyText(payload);
-        copied = true;
-        if (button) {
-          button.textContent = CHATGPT_COPIED_LABEL;
-          clearTimeout(copyResetters[resetKey]);
-          copyResetters[resetKey] = setTimeout(() => {
-            button.textContent = CHATGPT_BUTTON_LABEL;
-          }, 2200);
-        }
-      } catch (_error) {
-        showCopyFallback(payload);
-        if (button) {
-          button.textContent = "Copy failed";
-          clearTimeout(copyResetters[resetKey]);
-          copyResetters[resetKey] = setTimeout(() => {
-            button.textContent = CHATGPT_BUTTON_LABEL;
-          }, 2200);
-        }
-      }
-      const stub = encodeURIComponent(CHATGPT_STUB);
-      const opened = window.open(`${CHATGPT_URL}?q=${stub}`, "_blank", "noopener,noreferrer");
-      if (copied && !opened && button) {
-        button.textContent = "已复制；请允许弹窗或手动打开 ChatGPT";
-        clearTimeout(copyResetters[resetKey]);
-        copyResetters[resetKey] = setTimeout(() => {
-          button.textContent = CHATGPT_BUTTON_LABEL;
-        }, 4200);
-      }
+      try { await copyText(chatPayload()); copied = true; } catch (_) { /* still open ChatGPT */ }
+      const opened = window.open(`${CHATGPT_URL}?q=${encodeURIComponent(CHATGPT_STUB)}`, "_blank", "noopener,noreferrer");
+      toast(copied ? (opened ? "内容已复制，在 ChatGPT 中粘贴即可" : "已复制；请允许弹窗或手动打开 ChatGPT") : "复制失败，请手动复制", 3600);
+    } else if (name === "retry") {
+      if (button) button.disabled = true;
+      await api(`/v1/tasks/${encodeURIComponent(id)}/retry`, { method: "POST", body: "{}" });
+      toast("已重新排队");
+      await refreshNote(true);
+      loadTasks();
+    } else if (name === "summarize") {
+      await startSummary("");
+    } else if (name === "resummarize") {
+      await openResummarize();
+    } else if (name === "tags") {
+      const current = (note.task.tags || []).join(", ");
+      const value = window.prompt("标签（用逗号分隔）", current);
+      if (value === null) return;
+      const tags = value.split(/[,，\s]+/).map((t) => t.trim()).filter(Boolean);
+      await api(`/v1/tasks/${encodeURIComponent(id)}/tags`, { method: "PUT", body: JSON.stringify({ tags }) });
+      toast("标签已更新");
+      await refreshNote(true);
+      loadTasks();
     }
+  } catch (error) {
+    toast(`操作失败：${error.message}`, 3600);
+    if (button) button.disabled = false;
+  }
+}
+async function startSummary(model) {
+  const id = state.note.task.id;
+  await api(`/v1/tasks/${encodeURIComponent(id)}/summary`, { method: "POST", body: JSON.stringify(model ? { model } : {}) });
+  toast("开始生成摘要");
+  state.run = null;
+  await refreshNote(true);
+}
+async function openResummarize() {
+  if (!state.summaryModels) state.summaryModels = await api("/v1/summary/models");
+  const providers = (state.summaryModels.providers || []).filter((p) => p.available);
+  const fallback = (state.summaryModels.default || [])[0] || "";
+  $("#menu-body").innerHTML = `<h2>换模型重新总结</h2>
+    <select id="model-pick">${providers.map((p) => `<option value="${esc(p.key)}" ${p.key === fallback ? "selected" : ""}>${esc(shortModel(p.label))}</option>`).join("")}</select>
+    <div class="actions"><button class="pill" type="button" data-close>取消</button><button class="pill primary" type="button" id="model-go">开始</button></div>`;
+  $("#menu-sheet").showModal();
+  $("#model-go").onclick = async () => {
+    const model = $("#model-pick").value;
+    $("#menu-sheet").close();
+    try { await startSummary(model); } catch (error) { toast(`操作失败：${error.message}`, 3600); }
+  };
+}
+function openMenu() {
+  const note = state.note;
+  if (!note) return;
+  const task = note.task;
+  const items = [];
+  if (task.url) items.push(`<button type="button" data-menu="open">打开原视频</button>`);
+  if (completedRuns(note.summary || {}).length) {
+    items.push(`<button type="button" data-menu="copy-summary">复制摘要</button>`);
+    items.push(`<button type="button" data-menu="chatgpt">在 ChatGPT 继续</button>`);
+  }
+  items.push(`<button type="button" data-menu="tags">编辑标签</button>`);
+  if (task.video_id) items.push(`<button type="button" data-menu="resummarize">换模型重新总结</button>`);
+  if (task.status === "failed") items.push(`<button type="button" data-menu="retry">重试</button>`);
+  items.push(`<button type="button" data-menu="classic">在旧版中打开</button>`);
+  items.push(`<button type="button" data-close>取消</button>`);
+  $("#menu-body").innerHTML = items.join("");
+  $("#menu-sheet").showModal();
+}
 
-    function showCopyFallback(text) {
-      const overlay = document.getElementById("copy-fallback-overlay");
-      const area = document.getElementById("copy-fallback-text");
-      const selectBtn = document.getElementById("copy-fallback-select");
-      const closeBtn = document.getElementById("close-copy-fallback");
-      if (!overlay || !area) return;
-      area.value = text;
-      overlay.hidden = false;
-      overlay.classList.add("open");
-      overlay.setAttribute("aria-hidden", "false");
-      const close = () => {
-        overlay.classList.remove("open");
-        overlay.hidden = true;
-        overlay.setAttribute("aria-hidden", "true");
-      };
-      if (closeBtn) closeBtn.onclick = close;
-      if (selectBtn) {
-        selectBtn.onclick = () => {
-          area.focus();
-          area.select();
-          area.setSelectionRange(0, area.value.length);
-        };
-      }
-      overlay.onclick = (event) => {
-        if (event.target === overlay) close();
-      };
-      area.focus();
-      area.select();
-      area.setSelectionRange(0, area.value.length);
+/* ================================================================== routing */
+function parseRoute() {
+  const hash = location.hash.replace(/^#/, "") || "/";
+  const m = /^\/n\/([^/]+)(?:\/(t|f|p))?/.exec(hash);
+  if (!m) return { view: "library" };
+  return { view: "note", id: decodeURIComponent(m[1]), tab: { t: "transcript", f: "frames", p: "post" }[m[2]] || "summary" };
+}
+function tabHash(id, tab) {
+  return `#/n/${encodeURIComponent(id)}${{ transcript: "/t", frames: "/f", post: "/p" }[tab] || ""}`;
+}
+async function onRoute() {
+  const previous = state.route;
+  const route = parseRoute();
+  state.route = route;
+  if (route.view === "note") {
+    if (previous.view !== "note" && !desktop.matches) state.libScroll = window.scrollY;
+    document.body.classList.add("route-note");
+    if (state.noteId === route.id && state.note) {
+      renderNote();
+    } else {
+      await openNote(route.id);
     }
+  } else {
+    document.body.classList.remove("route-note");
+    clearTimeout(state.noteTimer);
+    state.noteId = null;
+    state.note = null;
+    if (desktop.matches) $("#note").innerHTML = `<div class="note-empty">选择左侧的一条笔记</div>`;
+    else requestAnimationFrame(() => window.scrollTo(0, state.libScroll || 0));
+    document.title = "Media Intelligence";
+  }
+  renderList();
+}
 
-    function copyTextSync(text) {
-      const area = document.createElement("textarea");
-      area.value = text;
-      area.setAttribute("readonly", "");
-      area.style.position = "fixed";
-      area.style.top = "0";
-      area.style.left = "0";
-      area.style.width = "1px";
-      area.style.height = "1px";
-      area.style.opacity = "0";
-      area.style.pointerEvents = "none";
-      document.body.appendChild(area);
-      area.focus();
-      area.select();
-      area.setSelectionRange(0, area.value.length);
-      let ok = false;
-      try {
-        ok = document.execCommand("copy");
-      } finally {
-        area.remove();
-      }
-      if (!ok) throw new Error("copy failed");
-    }
+/* ================================================================== events */
+document.addEventListener("click", (event) => {
+  const chip = event.target.closest("[data-chip]");
+  if (chip) {
+    state.chip = chip.dataset.chip;
+    localStorage.setItem("mi.chip", state.chip);
+    renderList();
+    return;
+  }
+  const tab = event.target.closest("[data-tab]");
+  if (tab && state.note) {
+    const next = tab.dataset.tab;
+    history.replaceState(null, "", tabHash(state.note.task.id, next));
+    state.route = parseRoute();
+    renderNote();
+    const tabs = $(".tabs");
+    if (tabs && tabs.getBoundingClientRect().top < 60) window.scrollTo(0, tabs.offsetTop - (desktop.matches ? 0 : 48));
+    return;
+  }
+  const run = event.target.closest("[data-run]");
+  if (run) { state.run = Number(run.dataset.run); renderNote(); return; }
+  const speaker = event.target.closest("[data-speaker]");
+  if (speaker) {
+    state.tSpeaker = speaker.dataset.speaker;
+    document.querySelectorAll("[data-speaker]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.speaker === state.tSpeaker)));
+    paintTranscript();
+    return;
+  }
+  const action = event.target.closest("[data-act]");
+  if (action) { act(action.dataset.act, action); return; }
+  const menu = event.target.closest("[data-menu]");
+  if (menu) {
+    const name = menu.dataset.menu;
+    $("#menu-sheet").close();
+    if (name === "open") window.open(state.note.task.url, "_blank", "noopener");
+    else if (name === "classic") location.href = `/classic?task=${encodeURIComponent(state.note.task.id)}`;
+    else act(name, null);
+    return;
+  }
+  if (event.target.closest("[data-close]")) { event.target.closest("dialog").close(); return; }
+  if (event.target.id === "more-btn") { openMenu(); return; }
+  if (event.target.id === "note-title") { event.target.classList.toggle("clamped"); return; }
+});
+document.addEventListener("input", (event) => {
+  if (event.target.id === "q") { state.query = event.target.value; renderList(); }
+  if (event.target.id === "t-q") {
+    state.tQuery = event.target.value;
+    clearTimeout(paintTranscript.timer);
+    paintTranscript.timer = setTimeout(paintTranscript, 120);
+  }
+});
+document.querySelectorAll("dialog").forEach((dialog) => {
+  dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
+});
+$("#add-btn").addEventListener("click", () => { $("#add-sheet").showModal(); setTimeout(() => $("#add-url").focus(), 50); });
+$("#add-cancel").addEventListener("click", () => $("#add-sheet").close());
+$("#add-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const url = $("#add-url").value.trim();
+  if (!url) return;
+  $("#add-submit").disabled = true;
+  try {
+    const task = await api("/v1/tasks", { method: "POST", body: JSON.stringify({ url, extract_keyframes: $("#add-frames").checked }) });
+    $("#add-sheet").close();
+    $("#add-url").value = "";
+    toast("已提交");
+    await loadTasks();
+    location.hash = `#/n/${encodeURIComponent(task.id)}`;
+  } catch (error) {
+    toast(`提交失败：${error.message}`, 4000);
+  } finally {
+    $("#add-submit").disabled = false;
+  }
+});
+window.addEventListener("hashchange", onRoute);
+window.addEventListener("scroll", () => {
+  const bar = $("#note-bar");
+  if (bar) bar.classList.toggle("scrolled", window.scrollY > 90);
+}, { passive: true });
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible") return;
+  loadTasks();
+  if (state.noteId) refreshNote(false);
+});
+desktop.addEventListener("change", () => onRoute());
 
-    async function copyText(text) {
-      // Prefer sync execCommand while the click gesture is still active
-      // (more reliable than Clipboard API after focus moves to a new tab).
-      try {
-        copyTextSync(text);
-        return;
-      } catch (_syncError) {
-        /* fall through to Clipboard API */
-      }
-      if (navigator.clipboard && window.isSecureContext) {
-        await navigator.clipboard.writeText(text);
-        return;
-      }
-      throw new Error("copy failed");
-    }
-
-    function stripSummaryImages(text) {
-      return String(text || "")
-        .replace(/!\[\[[^\]]+\]\]/g, "")
-        .replace(/\[\[attachments\/[^\]]+\]\]/g, "")
-        .replace(/!\[[^\]]*\]\([^)]+\)/g, "")
-        .replace(/<img\b[^>]*>/gi, "")
-        .replace(/\n{3,}/g, "\n\n")
-        .trim();
-    }
-
-    function renderSummaryMarkdown(text) {
-      if (!text) return "";
-      let html = esc(stripSummaryImages(text));
-      html = html.replace(/^### (.+)$/gm, "<h3>$1</h3>");
-      html = html.replace(/^## (.+)$/gm, "<h2>$1</h2>");
-      html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
-      html = html.replace(/\n/g, "<br />");
-      return html;
-    }
-
-    function renderNoteMarkdown(text, videoId) {
-      if (!text) return "";
-      let html = esc(text);
-      html = html.replace(/!?\[\[(?:attachments\/([^/\]]+)\/)?([^\]|]+)(?:\|[^\]]*)?\]\]/g, (_, vid, file) => {
-        return noteImage(vid || videoId, file);
-      });
-      html = html.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_, alt, file) => {
-        const name = String(file).split("/").pop();
-        return noteImage(videoId, name, alt);
-      });
-      html = html.replace(/^### (.+)$/gm, "<h3>$1</h3>");
-      html = html.replace(/^## (.+)$/gm, "<h2>$1</h2>");
-      html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
-      html = html.replace(/\n/g, "<br />");
-      return html;
-    }
-
-    function noteImage(videoId, filename, alt) {
-      const name = String(filename || "").split("/").pop();
-      const label = esc(alt || name);
-      const src = `/v1/videos/${encodeURIComponent(videoId)}/attachments/${encodeURIComponent(name)}`;
-      return `<img src="${src}" alt="${label}" />`;
-    }
-
-    async function api(path, options) {
-      const response = await fetch(path, options);
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.detail || data.error || response.statusText);
-      return data;
-    }
-
-    function esc(value) {
-      return String(value ?? "")
-        .replaceAll("&", "&amp;")
-        .replaceAll("<", "&lt;")
-        .replaceAll(">", "&gt;")
-        .replaceAll('"', "&quot;");
-    }
-
-    function fmt(seconds) {
-      const total = Math.max(0, Math.floor(Number(seconds) || 0));
-      const h = String(Math.floor(total / 3600)).padStart(2, "0");
-      const m = String(Math.floor((total % 3600) / 60)).padStart(2, "0");
-      const s = String(total % 60).padStart(2, "0");
-      return `${h}:${m}:${s}`;
-    }
-
-    init();
-  </script>
+loadHealth();
+loadTasks().then(onRoute);
+</script>
 </body>
 </html>

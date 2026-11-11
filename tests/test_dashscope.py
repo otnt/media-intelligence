@@ -318,7 +318,7 @@ def test_fun_asr_splits_long_audio_and_links_speakers_across_windows(tmp_path: P
     config = AppConfig(dashscope=DashScopeConfig(api_key="sk", chunk_sec=150, chunk_overlap_sec=30))
     provider = DashScopeASRProvider(config=config, client=Client())
     transcript = provider.transcribe(audio, ASROptions())
-    assert cuts == [(0.0, 150.0), (120.0, 270.0), (240.0, 400.0)]
+    assert sorted(cuts) == [(0.0, 150.0), (120.0, 270.0), (240.0, 400.0)]  # windows run in parallel
     by_text = {s.text: s.speaker for s in transcript.segments}
     assert by_text["host intro"] == by_text["host two"] == by_text["host four"]
     assert by_text["guest one"] == by_text["guest three"] == by_text["guest five"]

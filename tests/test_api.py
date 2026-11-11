@@ -521,7 +521,8 @@ def test_dashboard_and_frame_override(tmp_path: Path):
     store = TaskStore(config.paths.db)
     worker = DummyWorker()
     client = TestClient(create_app(config, store=store, worker=worker))
-    home = client.get("/")
+    # The previous dashboard (settings, keyframe decisions, prompt editing) lives at /classic.
+    home = client.get("/classic")
     assert home.status_code == 200
     assert "Extraction dashboard" in home.text
     assert "list-filter" in home.text
@@ -933,3 +934,62 @@ def test_task_tags_api_and_list_filter(tmp_path: Path):
     assert client.get("/v1/tags").json()["tags"] == []
 
 
+
+
+def test_reader_ui_note_endpoint_and_pwa_files(tmp_path: Path):
+    from media_pipeline.artifacts import ArtifactStore
+    from media_pipeline.models import NamedSegment, TaskStatus, VideoMetadata
+
+    config = AppConfig(
+        paths=PathsConfig(
+            videos=tmp_path / "videos",
+            audio=tmp_path / "audio",
+            artifacts=tmp_path / "artifacts",
+            logs=tmp_path / "logs",
+            vault=tmp_path / "vault",
+            db=tmp_path / "tasks.sqlite3",
+        )
+    )
+    config.ensure_directories()
+    store = TaskStore(config.paths.db)
+    client = TestClient(create_app(config, store=store, worker=DummyWorker()))
+
+    home = client.get("/")
+    assert home.status_code == 200
+    assert 'rel="manifest"' in home.text and "apple-touch-icon" in home.text
+    assert "/v1/tasks/${encodeURIComponent(id)}/note" in home.text
+    # Same clipboard rule as the classic page: copy inside the tap, then open ChatGPT.
+    assert home.text.index("await copyText(chatPayload())") < home.text.index("window.open(`${CHATGPT_URL}")
+    # Two top-level functions with one name silently shadow each other in a browser
+    # (a markdown helper once replaced the list renderer and dropped every bullet list).
+    import collections
+    import re as _re
+
+    names = collections.Counter(_re.findall(r"^(?:async )?function ([A-Za-z_$][\w$]*)", home.text, _re.M))
+    assert [name for name, count in names.items() if count > 1] == []
+    manifest = client.get("/manifest.webmanifest")
+    assert manifest.status_code == 200 and manifest.json()["display"] == "standalone"
+    assert client.get("/static/icon-192.png").headers["content-type"] == "image/png"
+    assert client.get("/static/../api.py").status_code == 404
+    assert client.get("/static/nope.png").status_code == 404
+
+    task = store.insert(
+        Task(id="n1", url="https://www.youtube.com/watch?v=BVnoteXXXXX", asr_model="fun-asr", video_id="vid1",
+             status=TaskStatus.completed, title="A talk")
+    )
+    artifacts = ArtifactStore(config.paths.artifacts, "vid1")
+    artifacts.save_metadata(VideoMetadata(
+        url=task.url, title="A talk", platform="YouTube", author="Host", video_id="vid1", duration=90.0,
+        published="2026-01-02", description="d", thumbnail_url="https://i.ytimg.com/vi/x/maxresdefault.jpg", asr_model="fun-asr"))
+    artifacts.save_named([
+        NamedSegment(0.0, 4.0, "SPEAKER_00", "Host", "hello"),
+        NamedSegment(4.5, 20.0, "SPEAKER_01", "Speaker 2", "a much longer answer"),
+    ])
+    note = client.get("/v1/tasks/n1/note").json()
+    assert note["task"]["author"] == "Host" and note["task"]["duration"] == 90.0
+    assert [s["label"] for s in note["transcript"]] == ["Host", "Speaker 2"]
+    assert note["speakers"][0]["id"] == "SPEAKER_01"  # sorted by talk time
+    assert note["frames"] == [] and "summary" in note
+    listed = client.get("/v1/tasks?filter=all&group=none").json()["tasks"][0]
+    assert listed["thumbnail_url"].startswith("https://i.ytimg.com/") and listed["duration"] == 90.0
+    assert client.get("/v1/tasks/missing/note").status_code == 404

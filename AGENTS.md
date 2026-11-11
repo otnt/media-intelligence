@@ -80,9 +80,15 @@ git worktree add .worktrees/<short-name> <branch>
 
 Never create sibling worktrees such as `../media-download-<name>`.
 
+## Web UI
+
+- `/` is the reader (`dashboard/static/index.html`): mobile-first library + note view, one row per video, page-level scrolling, PWA manifest and icons under `/static/`.
+  It reads `/v1/tasks/{id}/note` (task, summary, speaker transcript, frames) and polls only while a task or summary is running, never repainting under a text selection.
+- `/classic` is the previous dashboard (`classic.html`): settings, concurrency, keyframe keep/drop, prompt editing, stage reruns.
+
 ## Dashboard polling (text selection)
 
-The detail page polls every 4s (`loadTasks` / `loadWorker` / `refreshSelected`).
+The classic detail page polls every 4s (`loadTasks` / `loadWorker` / `refreshSelected`).
 
 `refreshSelected` must **not** rewrite Extracted / Summary / gallery via `innerHTML` when:
 
