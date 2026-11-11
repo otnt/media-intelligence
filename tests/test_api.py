@@ -177,7 +177,8 @@ def test_inbox_get_queues_share_text(tmp_path: Path):
     )
     assert response.status_code == 202
     payload = response.json()
-    assert payload["message"] == "Added to queue"
+    # Shown verbatim as the iOS Shortcut's notification.
+    assert payload["message"] == "✅ 已加入队列 · RedNote"
     assert payload["url"] == "http://xhslink.com/o/2x5jqGA2hr6"
     stored = store.get(payload["id"])
     assert stored is not None
@@ -993,3 +994,25 @@ def test_reader_ui_note_endpoint_and_pwa_files(tmp_path: Path):
     listed = client.get("/v1/tasks?filter=all&group=none").json()["tasks"][0]
     assert listed["thumbnail_url"].startswith("https://i.ytimg.com/") and listed["duration"] == 90.0
     assert client.get("/v1/tasks/missing/note").status_code == 404
+
+
+def test_inbox_always_explains_itself_for_ios_shortcuts(tmp_path: Path):
+    config = AppConfig(
+        paths=PathsConfig(
+            videos=tmp_path / "videos", audio=tmp_path / "audio", artifacts=tmp_path / "artifacts",
+            logs=tmp_path / "logs", vault=tmp_path / "vault", db=tmp_path / "tasks.sqlite3",
+        )
+    )
+    config.ensure_directories()
+    client = TestClient(create_app(config, store=TaskStore(config.paths.db), worker=DummyWorker()))
+    # An empty or missing url (what a broken shortcut sends) gets a readable reason, not a bare 422.
+    for path in ("/v1/inbox?url=", "/v1/inbox"):
+        reply = client.get(path)
+        assert reply.status_code == 400
+        assert reply.json()["message"].startswith("❌") and "没有收到链接" in reply.json()["message"]
+    unsupported = client.get("/v1/inbox", params={"url": "看看这个 https://example.com/x"})
+    assert unsupported.status_code == 400 and unsupported.json()["message"].startswith("❌")
+    # Share text from the Bilibili app: title + b23.tv short link.
+    ok = client.get("/v1/inbox", params={"url": "【推理芯片之战】 https://b23.tv/AbC123"})
+    assert ok.status_code == 202
+    assert ok.json()["message"] == "✅ 已加入队列 · Bilibili"

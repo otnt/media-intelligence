@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ipaddress
+import logging
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -8,7 +9,7 @@ from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from media_pipeline.artifacts import ArtifactStore
@@ -45,6 +46,7 @@ from media_pipeline.summary import (
 from media_pipeline.tags import collect_manual_tags, normalize_tag, set_task_tags
 from media_pipeline.worker import TaskWorker
 
+logger = logging.getLogger(__name__)
 DASHBOARD_DIR = Path(__file__).resolve().parent / "dashboard" / "static"
 DASHBOARD_FILE = DASHBOARD_DIR / "index.html"
 # The previous dashboard: settings, keyframe decisions and prompt editing still live here.
@@ -240,7 +242,7 @@ def create_app(config: AppConfig, store: TaskStore | None = None, worker: TaskWo
     @app.get("/v1/inbox", status_code=202)
     def inbox(
         request: Request,
-        url: str,
+        url: str = "",
         asr_model: str | None = None,
         language: str | None = None,
         extract_keyframes: bool = False,
@@ -248,17 +250,32 @@ def create_app(config: AppConfig, store: TaskStore | None = None, worker: TaskWo
         x_ingest_token: str | None = Header(default=None),
         authorization: str | None = Header(default=None),
     ) -> dict[str, Any]:
-        """Queue a share URL. GET+query is what iOS Shortcuts can send without breaking HTTP."""
-        _authorize_ingest(config, request, x_ingest_token or token, authorization)
-        return _enqueue_share(
-            config,
-            store,
-            worker,
-            url,
-            asr_model=asr_model,
-            language=language,
-            extract_keyframes=extract_keyframes,
-        )
+        """Queue a share URL. GET+query is what iOS Shortcuts can send without breaking HTTP.
+
+        Shortcuts' "Get Contents of URL" does not fail on HTTP errors, so every reply, good or bad,
+        carries a human-readable ``message`` that the shortcut shows as its notification.
+        """
+        try:
+            _authorize_ingest(config, request, x_ingest_token or token, authorization)
+            if not url.strip():
+                raise HTTPException(status_code=400, detail="没有收到链接：快捷指令没有把分享的内容传过来")
+            queued = _enqueue_share(
+                config,
+                store,
+                worker,
+                url,
+                asr_model=asr_model,
+                language=language,
+                extract_keyframes=extract_keyframes,
+            )
+        except HTTPException as exc:
+            logger.warning("Inbox rejected %r: %s", url[:200], exc.detail)
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={"detail": exc.detail, "message": f"❌ 没有加入队列：{exc.detail}"},
+            )
+        queued["message"] = f"✅ 已加入队列 · {queued['source_label']}"
+        return queued
 
     @app.post("/v1/tasks", status_code=202)
     async def create_task(

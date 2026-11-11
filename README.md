@@ -136,6 +136,20 @@ The LaunchAgent runs `media-pipeline serve --host 127.0.0.1 --port 8875`.
 It uses `KeepAlive` and a 30s `ThrottleInterval` so the API comes back after crashes or login.
 Bind is **localhost only**: Tailscale Serve already owns the Tailscale IP on port 8875; binding `0.0.0.0` fights that listener and launchd will thrash then stop.
 
+### iPhone share sheet (Media Extract shortcut)
+
+`scripts/shortcuts/build_media_extract.py` builds the "Media Extract" shortcut: Share → Media Extract sends the shared link or share text to `/v1/inbox` over Tailscale and shows the server's reply as a notification (`✅ 已加入队列 · YouTube`, or `❌ …` with the reason).
+Run with no share input, it uses the clipboard.
+
+```bash
+python3 scripts/shortcuts/build_media_extract.py /tmp/me.unsigned.shortcut
+shortcuts sign --mode anyone --input /tmp/me.unsigned.shortcut --output "Media Extract.shortcut"
+```
+
+Open the signed file on the iPhone (e.g. from iCloud Drive) to install it.
+Edit the Tailscale host at the top of the script for another machine.
+Text parameters must be serialized as `WFTextTokenString`; a `WFTextTokenAttachment` there silently resolves to an empty string (the v1 shortcut sent `url=` for every share).
+
 ### LAN and Tailscale
 
 Use Tailscale for phone and off-LAN access (including while you are on home Wi‑Fi):
