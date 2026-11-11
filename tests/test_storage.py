@@ -193,3 +193,16 @@ def test_eviction_sweep_frees_only_what_icloud_accepted(tmp_path: Path, monkeypa
     report = cleanup(config, TaskStore(config.paths.db))
     assert report.evicted == [uploaded] and report.evicted_bytes == 10
     assert report.awaiting_upload == [pending]
+
+
+def test_sweep_never_touches_in_progress_download_pieces(tmp_path: Path):
+    config = _config(tmp_path, mode="archive", archive_dir=tmp_path / "icloud" / "videos")
+    store = TaskStore(config.paths.db)
+    store.insert(Task(id="t", url="https://www.youtube.com/watch?v=vid", asr_model="fun-asr", video_id="vid",
+                      status=TaskStatus.completed, extra={"media_kind": "video"}))
+    pieces = [config.paths.videos / name for name in ("vid.f397.mp4", "vid.f251.webm.part", "vid.mp4.ytdl")]
+    for piece in pieces:
+        piece.write_bytes(b"in progress")
+    cleanup(config, store)
+    assert all(piece.exists() for piece in pieces)
+    assert not config.storage.archive_dir.exists() or not any(config.storage.archive_dir.iterdir())

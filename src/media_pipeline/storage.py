@@ -32,7 +32,10 @@ logger = logging.getLogger(__name__)
 
 TERMINAL = (TaskStatus.completed, TaskStatus.failed)
 SF_DATALESS = 0x40000000
-VIDEO_SUFFIXES = {".mp4", ".webm", ".mkv", ".mov", ".flv", ".m4a", ".mp3", ".part", ".ytdl"}
+# Only finished downloads have these exact names (<video_id><suffix>). yt-dlp's in-progress pieces
+# (<id>.f397.mp4, <id>.f251.webm.part, .ytdl) must never be touched: a sweep that moved one mid-download
+# broke the merge.
+VIDEO_SUFFIXES = (".mp4", ".webm", ".mkv", ".mov", ".flv", ".m4a", ".mp3")
 
 
 @dataclass
@@ -96,13 +99,13 @@ def wav_path(config: AppConfig, video_id: str) -> Path:
 
 
 def video_files(config: AppConfig, video_id: str) -> list[Path]:
-    directory = config.paths.videos
-    if not directory.exists():
+    return _finished_media(config.paths.videos, video_id)
+
+
+def _finished_media(directory: Path, video_id: str) -> list[Path]:
+    if not directory.is_dir():
         return []
-    return sorted(
-        path for path in directory.glob(f"{video_id}.*")
-        if path.is_file() and (path.suffix.lower() in VIDEO_SUFFIXES or path.name.endswith(".part"))
-    )
+    return [directory / f"{video_id}{suffix}" for suffix in VIDEO_SUFFIXES if (directory / f"{video_id}{suffix}").is_file()]
 
 
 def compact_video_media(config: AppConfig, video_id: str, *, dry_run: bool = False) -> CompactResult:
@@ -192,9 +195,6 @@ def _dispose_originals(config: AppConfig, videos: list[Path], result: CompactRes
         return
     target_dir = config.storage.archive_dir
     for path in videos:
-        if path.suffix.lower() in {".part", ".ytdl"} or path.name.endswith(".part"):
-            result.remove(path, dry_run)  # unfinished download, nothing worth keeping
-            continue
         target = target_dir / path.name
         result.archived.append(target)
         result.freed += path.stat().st_size
@@ -204,11 +204,8 @@ def _dispose_originals(config: AppConfig, videos: list[Path], result: CompactRes
 
 
 def locate_archived(config: AppConfig, video_id: str) -> Path | None:
-    directory = config.storage.archive_dir
-    if not directory.is_dir():
-        return None
-    for path in sorted(directory.glob(f"{video_id}.*")):
-        if path.is_file() and path.suffix.lower() in VIDEO_SUFFIXES and path.stat().st_size > 0:
+    for path in _finished_media(config.storage.archive_dir, video_id):
+        if path.stat().st_size > 0:
             return path
     return None
 
