@@ -164,6 +164,22 @@ def change_error(ref_segments, hyp_segments, duration) -> tuple[float | None, fl
     return statistics.median(errors), sum(e <= 1.0 for e in errors) / len(errors)
 
 
+def seam_er(ref_segments: list[dict], hyp_segments: list[dict], windows: list, reach: float = 120.0) -> float | None:
+    """ER restricted to reference turns within ±reach seconds of a window seam."""
+    seams = [w[0] for w in windows[1:]]
+    errors = total = 0
+    for seam in seams:
+        refs = [s for s in ref_segments if s["end"] > seam - reach and s["start"] < seam + reach]
+        if not refs:
+            continue
+        lo, hi = refs[0]["start"], refs[-1]["end"]
+        hyps = [h for h in hyp_segments if lo <= (h["start"] + h["end"]) / 2 < hi]
+        ref_tokens = [t for s in refs for t in tokens(s["text"])]
+        errors += error_count(ref_tokens, [t for h in hyps for t in tokens(h["text"])])
+        total += len(ref_tokens)
+    return errors / total if total else None
+
+
 def score(bench: Path) -> list[dict]:
     rows = []
     for truth_path in sorted((bench / "samples").glob("*.json")):
@@ -188,6 +204,7 @@ def score(bench: Path) -> list[dict]:
                     "der": der(ref, hyp, truth["duration"]) if truth["timing"] == "exact" else None,
                     "chg_med": med,
                     "chg_1s": within,
+                    "seam_er": seam_er(ref, hyp, hyp_doc["windows"]) if hyp_doc.get("windows") else None,
                 })
     return rows
 
@@ -202,8 +219,8 @@ def report(rows: list[dict]) -> str:
     grouped: dict[tuple[str, str], list[dict]] = defaultdict(list)
     for row in rows:
         grouped[(row["sample"], row["system"])].append(row)
-    lines = ["| sample | system | runs | ER | cpER | spk | attrib err | DER | chg med (s) | chg ≤1s | time (s) |",
-             "|---|---|---|---|---|---|---|---|---|---|---|"]
+    lines = ["| sample | system | runs | ER | cpER | spk | attrib err | DER | chg med (s) | chg ≤1s | seam ER | time (s) |",
+             "|---|---|---|---|---|---|---|---|---|---|---|---|"]
 
     def mean(items, key):
         values = [r[key] for r in items if r[key] is not None]
@@ -221,7 +238,7 @@ def report(rows: list[dict]) -> str:
             f"| {sample} | {system} | {len(items)} | {_fmt(mean(items, 'er'))}{spread(items, 'er')} | "
             f"{_fmt(mean(items, 'cp_er'))}{spread(items, 'cp_er')} | {spk} | {_fmt(mean(items, 'attrib'))} | "
             f"{_fmt(mean(items, 'der'))} | {_fmt(mean(items, 'chg_med'), pct=False)} | {_fmt(mean(items, 'chg_1s'))} | "
-            f"{_fmt(mean(items, 'elapsed'), pct=False)} |"
+            f"{_fmt(mean(items, 'seam_er'))} | {_fmt(mean(items, 'elapsed'), pct=False)} |"
         )
     return "\n".join(lines)
 

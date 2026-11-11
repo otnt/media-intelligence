@@ -27,6 +27,12 @@ SYSTEMS = {
     "agy-argon-rescale": ("agy-gemini", {"agy.asr_model": "gemini-4-argon-medium", "agy.rescale": True}),
     "agy-flash": ("agy-gemini", {"agy.asr_model": "gemini-3.8-flash-medium"}),
     "fun-asr": ("fun-asr", {}),
+    # Long-audio chunking study (Lex #503 full episode).
+    "funasr-whole": ("fun-asr", {"dashscope.chunk_sec": 0.0}),
+    "funasr-c90-o0": ("fun-asr", {"dashscope.chunk_sec": 5400.0, "dashscope.chunk_overlap_sec": 0.0}),
+    "funasr-c90-o30": ("fun-asr", {"dashscope.chunk_sec": 5400.0, "dashscope.chunk_overlap_sec": 30.0}),
+    "funasr-c90-o120": ("fun-asr", {"dashscope.chunk_sec": 5400.0, "dashscope.chunk_overlap_sec": 120.0}),
+    "funasr-c45-o60": ("fun-asr", {"dashscope.chunk_sec": 2700.0, "dashscope.chunk_overlap_sec": 60.0}),
     "qwen3-local": ("qwen3-asr-1.7b", {}),
 }
 
@@ -70,6 +76,12 @@ def main() -> None:
                     continue
                 elapsed = time.time() - started
                 payload = {"system": system, "sample": sample, "run": run, "elapsed_sec": round(elapsed, 1), **transcript.to_dict()}
+                chunk = float(getattr(config.dashscope, "chunk_sec", 0) or 0) if model_id == "fun-asr" else 0.0
+                duration = json.loads((bench / "samples" / f"{sample}.json").read_text(encoding="utf-8"))["duration"]
+                if chunk and duration > chunk * 1.25:
+                    from media_pipeline.asr.windows import plan_windows
+
+                    payload["windows"] = plan_windows(duration, chunk, float(config.dashscope.chunk_overlap_sec))
                 target.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
                 speakers = len({s.speaker for s in transcript.segments if s.speaker})
                 print(f"{system} {sample} run{run}: {elapsed:.0f}s, {len(transcript.segments)} segs, {speakers} speakers", flush=True)

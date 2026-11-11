@@ -41,11 +41,18 @@ class DashScopeASRProvider(ASRProvider):
     def transcribe(self, audio_path: Path, options: ASROptions | None = None) -> Transcript:
         client = self._ensure_client()
         options = options or ASROptions()
-        with tempfile.TemporaryDirectory(prefix="dashscope-asr-") as tmp:
-            upload = _compress_for_upload(audio_path, Path(tmp))
-            file_url = client.upload_file(upload, self.model)
-        result = client.transcribe(self.model, file_url, self._parameters(options))
-        transcript = parse_transcription(result, provider="dashscope", model=self.model)
+        dash = getattr(self.config, "dashscope", None)
+        chunk = float(getattr(dash, "chunk_sec", 0) or 0)
+        overlap = float(getattr(dash, "chunk_overlap_sec", 0) or 0)
+        duration = _probe_duration(audio_path) or 0.0
+        if chunk > 0 and duration > chunk * 1.25:
+            transcript = self._transcribe_chunked(client, audio_path, duration, chunk, overlap, options)
+        else:
+            with tempfile.TemporaryDirectory(prefix="dashscope-asr-") as tmp:
+                upload = _compress_for_upload(audio_path, Path(tmp))
+                file_url = client.upload_file(upload, self.model)
+            result = client.transcribe(self.model, file_url, self._parameters(options))
+            transcript = parse_transcription(result, provider="dashscope", model=self.model)
         if options.language:
             transcript.language = options.language
         logger.info(
@@ -55,6 +62,46 @@ class DashScopeASRProvider(ASRProvider):
             len({segment.speaker for segment in transcript.segments if segment.speaker}),
         )
         return transcript
+
+    def _transcribe_chunked(
+        self,
+        client,
+        audio_path: Path,
+        duration: float,
+        chunk: float,
+        overlap: float,
+        options: ASROptions,
+    ) -> Transcript:
+        """Diarization is only reliable up to ~2 h per request, so long audio goes in overlapping windows."""
+        from concurrent.futures import ThreadPoolExecutor
+
+        from media_pipeline.asr.windows import Piece, plan_windows, stitch_windows
+
+        windows = plan_windows(duration, chunk, overlap)
+        logger.info("DashScope %s: %.0fs of audio in %s windows (overlap %.0fs)", self.model, duration, len(windows), overlap)
+        parameters = self._parameters(options)
+
+        def work(item: tuple[int, tuple[float, float]]) -> list[Piece]:
+            index, (start, end) = item
+            with tempfile.TemporaryDirectory(prefix="dashscope-asr-") as tmp:
+                clip = _compress_for_upload(audio_path, Path(tmp), start=start, end=end)
+                file_url = client.upload_file(clip, self.model)
+            result = client.transcribe(self.model, file_url, parameters)
+            part = parse_transcription(result, provider="dashscope", model=self.model)
+            return [
+                Piece(start + s.start, start + s.end, s.text, f"w{index}:{s.speaker or 'SPEAKER_00'}")
+                for s in part.segments
+            ]
+
+        with ThreadPoolExecutor(max_workers=min(3, len(windows))) as pool:
+            results = list(pool.map(work, enumerate(windows)))
+        pieces = stitch_windows([(s, e, found) for (s, e), found in zip(windows, results)])
+        return Transcript(
+            language=None,
+            segments=[TranscriptSegment(start=p.start, end=p.end, text=p.text, speaker=p.speaker) for p in pieces],
+            provider="dashscope",
+            model=self.model,
+        )
 
     def _parameters(self, options: ASROptions) -> dict[str, Any]:
         params: dict[str, Any] = {"channel_id": [0], "diarization_enabled": True}
@@ -121,21 +168,36 @@ def parse_transcription(result: dict[str, Any], *, provider: str, model: str) ->
     return Transcript(language=None, segments=segments, provider=provider, model=model)
 
 
-def _compress_for_upload(audio_path: Path, tmp_dir: Path) -> Path:
-    """Shrink 16 kHz PCM WAV (≈115 MB/hour) to mono AAC (≈20 MB/hour) before uploading."""
+def _compress_for_upload(audio_path: Path, tmp_dir: Path, start: float | None = None, end: float | None = None) -> Path:
+    """Shrink 16 kHz PCM WAV (≈115 MB/hour) to mono AAC (≈20 MB/hour) before uploading; optionally cut a window."""
     ffmpeg = shutil.which("ffmpeg")
+    trimming = start is not None and end is not None
     if not ffmpeg:
+        if trimming:
+            raise ASRNotAvailableError("ffmpeg is required to split long audio for Fun-ASR")
         return audio_path
-    target = tmp_dir / f"{audio_path.stem}.m4a"
-    command = [
-        ffmpeg, "-y", "-loglevel", "error", "-i", str(audio_path),
-        "-vn", "-ac", "1", "-ar", "16000", "-c:a", "aac", "-b:a", "48k", str(target),
-    ]
+    suffix = f"-{int(start)}" if trimming else ""
+    target = tmp_dir / f"{audio_path.stem}{suffix}.m4a"
+    command = [ffmpeg, "-y", "-loglevel", "error"]
+    if trimming:
+        command += ["-ss", f"{start:.3f}", "-to", f"{end:.3f}"]
+    command += ["-i", str(audio_path), "-vn", "-ac", "1", "-ar", "16000", "-c:a", "aac", "-b:a", "48k", str(target)]
     completed = subprocess.run(command, check=False, capture_output=True, text=True)
     if completed.returncode != 0 or not target.exists() or target.stat().st_size == 0:
+        if trimming:
+            raise ASRNotAvailableError(f"ffmpeg could not cut audio: {completed.stderr.strip()[-300:]}")
         logger.warning("Audio compression failed, uploading original: %s", completed.stderr.strip()[-300:])
         return audio_path
     return target
+
+
+def _probe_duration(path: Path) -> float | None:
+    from media_pipeline.media import probe_duration
+
+    try:
+        return probe_duration(path)
+    except Exception:
+        return None
 
 
 def _seconds(value: object) -> float:

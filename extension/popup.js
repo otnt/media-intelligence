@@ -5,7 +5,7 @@ const startEl = document.getElementById("start");
 const statusEl = document.getElementById("status");
 const tasksEl = document.getElementById("tasks");
 
-let selectedModel = MDP_DEFAULT_MODEL;
+let selectedModel = ""; // empty: the server's default (asr.default) wins until the user picks one
 let models = MDP_FALLBACK_MODELS;
 let currentUrl = "";
 let serviceOk = false;

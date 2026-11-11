@@ -140,7 +140,10 @@ class Pipeline:
         audio_path = self._extract_audio(task, metadata, video_path, artifacts)
         transcript = self._transcribe(task, metadata, artifacts, audio_path)
         diarization = self._diarize(task, artifacts, audio_path, transcript)
+        rebuilt_before = artifacts.named_source()
         named = self._align(task, artifacts, transcript, diarization, metadata)
+        # A new transcript (e.g. after switching ASR model) makes the cached summary stale.
+        transcript_changed = artifacts.named_source() != rebuilt_before
         task.extra["segment_count"] = len(named)
         self.store.update(task)
 
@@ -154,7 +157,7 @@ class Pipeline:
             task.extra["selected_count"] = 0
             self.store.update(task)
         self._write_outputs(task, metadata, artifacts, named, visual_result)
-        self._summarize(task, metadata, artifacts, force=from_stage == "summarizing")
+        self._summarize(task, metadata, artifacts, force=from_stage == "summarizing" or transcript_changed)
         task.status = TaskStatus.completed
         task.error = ""
         task.error_stage = ""
@@ -290,13 +293,16 @@ class Pipeline:
         metadata: VideoMetadata,
     ):
         existing = artifacts.load_named()
-        if existing is not None:
+        # Older artifacts have no source marker; trust them only when the diarization came from elsewhere.
+        source = artifacts.named_source()
+        if existing is not None and (source == task.asr_model or (not source and not diarization.provider.startswith("asr:"))):
             return existing
         with self._stage(task, TaskStatus.aligning_transcript, metadata, artifacts):
             aligned = align_transcript(transcript, diarization.segments)
             artifacts.save_aligned(aligned)
             named = name_speakers(aligned, metadata)
             artifacts.save_named(named)
+            artifacts.set_named_source(task.asr_model)
             return named
 
     def _extract_visual(

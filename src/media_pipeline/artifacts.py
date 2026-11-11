@@ -29,6 +29,8 @@ class ArtifactStore:
         self.diarization_path = self.root / "diarization.json"
         self.aligned_path = self.root / "aligned.json"
         self.named_path = self.root / "named.json"
+        # Which ASR model the aligned/named transcript was built from; switching models must rebuild it.
+        self.named_source_path = self.root / "named_source.txt"
         self.note_pointer_path = self.root / "note_path.txt"
         self.scenes_path = self.root / "scenes.json"
         self.candidates_path = self.root / "candidates.json"
@@ -79,6 +81,15 @@ class ArtifactStore:
 
     def save_named(self, segments: list[NamedSegment]) -> None:
         self.write_json(self.named_path, [segment.to_dict() for segment in segments])
+
+    def named_source(self) -> str:
+        try:
+            return self.named_source_path.read_text(encoding="utf-8").strip()
+        except OSError:
+            return ""
+
+    def set_named_source(self, asr_model: str) -> None:
+        self.named_source_path.write_text(asr_model, encoding="utf-8")
 
     def load_named(self) -> list[NamedSegment] | None:
         if not self.named_path.exists():

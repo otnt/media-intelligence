@@ -194,6 +194,9 @@ class DashScopeConfig:
     vision_model: str = "qwen3.8-flash"
     # Parallel keyframe judgments against the cloud model.
     vision_concurrency: int = 4
+    # Fun-ASR diarization is only reliable up to ~2 h per file; longer audio goes in windows. 0 = never split.
+    chunk_sec: float = 5400.0
+    chunk_overlap_sec: float = 120.0
 
 
 @dataclass
@@ -427,6 +430,8 @@ def load_config(path: Path | None = None) -> AppConfig:
             speaker_count=int(dashscope_raw.get("speaker_count") or 0),
             vision_model=str(dashscope_raw.get("vision_model") or "qwen3.8-flash").strip(),
             vision_concurrency=max(1, int(dashscope_raw.get("vision_concurrency") or 4)),
+            chunk_sec=float(dashscope_raw.get("chunk_sec", 5400) or 0),
+            chunk_overlap_sec=float(dashscope_raw.get("chunk_overlap_sec", 120) or 0),
         ),
         agy=AgyConfig(
             binary=str(agy_raw.get("binary") or "agy"),
