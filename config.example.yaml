@@ -86,10 +86,15 @@ summary:
   prompt: ""
 
 storage:
-  # After a video is processed: delete the downloaded video and the 16 kHz WAV, keep a small
-  # audio copy (~22 MB/hour) to re-transcribe from. Anything deleted is fetched again on demand.
+  # After a video is processed the 16 kHz WAV (derived, ~115 MB/hour) becomes a ~22 MB/hour audio copy.
   compact_after_processing: true
-  # Delete that audio copy after N days (0 = right after processing, -1 = keep forever).
+  # The original download: archive = move into iCloud Drive (kept; evicted from this Mac once uploaded;
+  # fetched back when a stage needs it), keep = leave in paths.videos, delete = remove (re-downloaded if needed).
+  # Default: archive when iCloud Drive is set up, otherwise keep.
+  mode: archive
+  archive_dir: ~/Library/Mobile Documents/com~apple~CloudDocs/Media Intelligence/videos
+  evict_archived: true
+  # Delete the small audio copy after N days (0 = right after processing, -1 = keep forever).
   keep_audio_days: 30
 
 agy:

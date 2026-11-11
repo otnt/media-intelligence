@@ -249,7 +249,8 @@ class TaskWorker:
             return
         if self._cleanup_thread is not None and self._cleanup_thread.is_alive():
             return
-        self._next_cleanup = time.monotonic() + 6 * 3600
+        # Archive mode evicts files once iCloud has them, so look again sooner than the 6-hour purge.
+        self._next_cleanup = time.monotonic() + (1800 if self.config.storage.mode == "archive" else 6 * 3600)
 
         def run() -> None:
             from media_pipeline.storage import cleanup

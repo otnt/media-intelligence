@@ -18,7 +18,7 @@ from media_pipeline.diarization import (
     build_diarization_provider,
     diarization_from_transcript,
 )
-from media_pipeline.storage import compact_audio_path
+from media_pipeline.storage import compact_audio_path, locate_archived, materialize
 from media_pipeline.media import (
     MediaError,
     UnsupportedURLError,
@@ -191,7 +191,7 @@ class Pipeline:
         except Exception:
             logger.warning("Could not compact media for %s", metadata.video_id, exc_info=True)
             return
-        task.video_path = ""
+        task.video_path = str(result.archived[0]) if result.archived else task.video_path if self.config.storage.mode == "keep" else ""
         task.audio_path = str(result.audio) if result.audio else ""
         self.store.update(task)
 
@@ -240,6 +240,11 @@ class Pipeline:
 
     def _download(self, task: Task, metadata: VideoMetadata, artifacts: ArtifactStore) -> Path:
         existing = find_media_file(self.config.paths.videos, metadata.video_id)
+        archived = None if existing else locate_archived(self.config, metadata.video_id)
+        if archived is not None:
+            # The original was archived to iCloud after an earlier run: bring it back instead of re-downloading.
+            with self._stage(task, TaskStatus.downloading, metadata, artifacts):
+                existing = materialize(archived)
         if existing:
             task.video_path = str(existing)
             self.store.update(task)
@@ -615,8 +620,9 @@ class _Media:
 
     def existing_video(self) -> Path:
         """The downloaded file if it is still on disk, else a placeholder the visual cache never opens."""
-        found = find_media_file(self._pipeline.config.paths.videos, self._metadata.video_id)
-        return found or _media_destination(self._pipeline.config, self._metadata)
+        config = self._pipeline.config
+        found = find_media_file(config.paths.videos, self._metadata.video_id) or locate_archived(config, self._metadata.video_id)
+        return found or _media_destination(config, self._metadata)
 
     def audio(self) -> Path:
         if self._audio is None:

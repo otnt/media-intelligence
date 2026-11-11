@@ -1,20 +1,23 @@
 """Disk retention for downloaded media.
 
-Once a video is processed, the note (transcript, speakers, summary) is the product. The downloaded
-video is only needed to extract keyframes again, and the 16 kHz WAV (~115 MB/hour) only to re-run ASR.
-So after a successful run:
+Once a video is processed, the note (transcript, speakers, summary) is the product. After a
+successful run:
 
-* **compact**: delete the video and the WAV, keep a mono 48 kbps AAC copy (~22 MB/hour) from which
-  the WAV can be rebuilt in about a second;
-* **purge**: delete that compact copy after ``storage.keep_audio_days`` (0 = right away, -1 = never).
+* the 16 kHz WAV (derived, ~115 MB/hour) is replaced by a mono 48 kbps AAC copy (~22 MB/hour) that
+  rebuilds the WAV in about a second; that copy goes after ``storage.keep_audio_days``;
+* the original download follows ``storage.mode``: ``archive`` moves it into iCloud Drive, where it is
+  kept and, once uploaded, evicted from this Mac (``brctl evict``; eviction is refused until iCloud has
+  the file, so nothing is lost); ``keep`` leaves it; ``delete`` removes it.
 
-Everything removed here comes back on demand: the pipeline only downloads or extracts when a stage
-actually needs media (see ``pipeline._Media``).
+Media comes back on demand: the pipeline only touches media when a stage needs it, and fetches an
+archived original back from iCloud (``brctl download``) before reading it, because a process may be
+refused automatic download of a cloud-only file (EDEADLK).
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import subprocess
 import time
@@ -28,6 +31,7 @@ from media_pipeline.models import Task, TaskStatus
 logger = logging.getLogger(__name__)
 
 TERMINAL = (TaskStatus.completed, TaskStatus.failed)
+SF_DATALESS = 0x40000000
 VIDEO_SUFFIXES = {".mp4", ".webm", ".mkv", ".mov", ".flv", ".m4a", ".mp3", ".part", ".ytdl"}
 
 
@@ -35,6 +39,7 @@ VIDEO_SUFFIXES = {".mp4", ".webm", ".mkv", ".mov", ".flv", ".m4a", ".mp3", ".par
 class CompactResult:
     video_id: str
     removed: list[Path] = field(default_factory=list)
+    archived: list[Path] = field(default_factory=list)
     freed: int = 0
     audio: Path | None = None
 
@@ -52,6 +57,9 @@ class CleanupReport:
     compacted: list[CompactResult] = field(default_factory=list)
     skipped_active: list[str] = field(default_factory=list)
     orphans: list[Path] = field(default_factory=list)
+    evicted: list[Path] = field(default_factory=list)
+    evicted_bytes: int = 0
+    awaiting_upload: list[Path] = field(default_factory=list)
     dry_run: bool = False
 
     @property
@@ -62,9 +70,14 @@ class CleanupReport:
         verb = "would free" if self.dry_run else "freed"
         lines = [f"{verb} {self.freed / 1e6:.0f} MB from {sum(1 for c in self.compacted if c.removed)} video(s)"]
         for item in self.compacted:
-            if item.removed:
+            if item.removed or item.archived:
                 names = ", ".join(path.name for path in item.removed)
-                lines.append(f"  {item.video_id}: {item.freed / 1e6:.0f} MB ({names})")
+                moved = f"; moved to iCloud: {', '.join(path.name for path in item.archived)}" if item.archived else ""
+                lines.append(f"  {item.video_id}: {item.freed / 1e6:.0f} MB deleted ({names or '-'}){moved}")
+        if self.evicted:
+            lines.append(f"  evicted from this Mac (kept in iCloud): {len(self.evicted)} file(s), {self.evicted_bytes / 1e6:.0f} MB")
+        if self.awaiting_upload:
+            lines.append(f"  waiting for iCloud upload before evicting: {len(self.awaiting_upload)} file(s)")
         if self.skipped_active:
             lines.append(f"  still processing, left alone: {', '.join(self.skipped_active)}")
         if self.orphans:
@@ -106,12 +119,10 @@ def compact_video_media(config: AppConfig, video_id: str, *, dry_run: bool = Fal
             # if a WAV is left to re-transcribe from.
             logger.warning("Keeping %s: compact audio encode failed", source.name)
             if source == wav:
-                for path in videos:
-                    result.remove(path, dry_run)
+                _dispose_originals(config, videos, result, dry_run)
                 result.audio = wav
             return result
-    for path in videos:
-        result.remove(path, dry_run)
+    _dispose_originals(config, videos, result, dry_run)
     result.remove(wav, dry_run)
     if keep_audio:
         result.audio = m4a if (_nonempty(m4a) or dry_run) else None
@@ -149,15 +160,19 @@ def cleanup(config: AppConfig, store: Any, *, dry_run: bool = False, now: float 
                 result.audio = None
             report.compacted.append(result)
         elif not done and expired:
-            # Only failures, and nobody retried within the retention window: drop everything.
+            # Only failures, and nobody retried within the retention window: drop the derived audio,
+            # and the original too unless it is meant to be kept.
             result = CompactResult(video_id)
-            for path in [*video_files(config, video_id), wav_path(config, video_id), compact_audio_path(config, video_id)]:
+            _dispose_originals(config, video_files(config, video_id), result, dry_run)
+            for path in [wav_path(config, video_id), compact_audio_path(config, video_id)]:
                 result.remove(path, dry_run)
             report.compacted.append(result)
         else:
             continue
         if not dry_run:
             _forget_paths(store, items, report.compacted[-1])
+    if config.storage.mode == "archive" and config.storage.evict_archived:
+        _evict_uploaded(config, report)
     known = set(by_video)
     for directory in (config.paths.videos, config.paths.audio):
         if directory.exists():
@@ -167,12 +182,86 @@ def cleanup(config: AppConfig, store: Any, *, dry_run: bool = False, now: float 
     return report
 
 
+def _dispose_originals(config: AppConfig, videos: list[Path], result: CompactResult, dry_run: bool) -> None:
+    mode = config.storage.mode
+    if mode == "keep":
+        return
+    if mode == "delete":
+        for path in videos:
+            result.remove(path, dry_run)
+        return
+    target_dir = config.storage.archive_dir
+    for path in videos:
+        if path.suffix.lower() in {".part", ".ytdl"} or path.name.endswith(".part"):
+            result.remove(path, dry_run)  # unfinished download, nothing worth keeping
+            continue
+        target = target_dir / path.name
+        result.archived.append(target)
+        result.freed += path.stat().st_size
+        if not dry_run:
+            target_dir.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(path), str(target))
+
+
+def locate_archived(config: AppConfig, video_id: str) -> Path | None:
+    directory = config.storage.archive_dir
+    if not directory.is_dir():
+        return None
+    for path in sorted(directory.glob(f"{video_id}.*")):
+        if path.is_file() and path.suffix.lower() in VIDEO_SUFFIXES and path.stat().st_size > 0:
+            return path
+    return None
+
+
+def is_dataless(path: Path) -> bool:
+    """True when the file's content lives only in iCloud (SF_DATALESS)."""
+    try:
+        return bool(os.stat(path).st_flags & SF_DATALESS)
+    except (OSError, AttributeError):
+        return False
+
+
+def materialize(path: Path, timeout: float | None = None) -> Path:
+    """Make sure an iCloud file's content is on this Mac before anything reads it."""
+    if not is_dataless(path):
+        return path
+    size_mb = max(1.0, path.stat().st_size / 1e6)
+    deadline = time.monotonic() + (timeout if timeout is not None else min(1800.0, 120.0 + size_mb * 2.0))
+    logger.info("Fetching %s (%.0f MB) back from iCloud", path.name, size_mb)
+    subprocess.run(["brctl", "download", str(path)], check=False, capture_output=True, text=True)
+    while is_dataless(path):
+        if time.monotonic() > deadline:
+            raise TimeoutError(f"iCloud did not deliver {path.name} in time; is this Mac online and signed in to iCloud?")
+        time.sleep(1.0)
+    return path
+
+
+def _evict_uploaded(config: AppConfig, report: CleanupReport) -> None:
+    directory = config.storage.archive_dir
+    if not directory.is_dir() or shutil.which("brctl") is None:
+        return
+    for path in sorted(directory.iterdir()):
+        if not path.is_file() or path.name.startswith(".") or is_dataless(path):
+            continue
+        if report.dry_run:
+            report.awaiting_upload.append(path)
+            continue
+        size = path.stat().st_size
+        done = subprocess.run(["brctl", "evict", str(path)], check=False, capture_output=True, text=True)
+        if done.returncode == 0 and is_dataless(path):
+            report.evicted.append(path)
+            report.evicted_bytes += size
+        else:
+            report.awaiting_upload.append(path)  # iCloud refuses until the upload has finished
+
+
 def _forget_paths(store: Any, tasks: Iterable[Task], result: CompactResult) -> None:
     gone = {str(path) for path in result.removed}
+    archived = str(result.archived[0]) if result.archived else ""
     for task in tasks:
         changed = False
         if task.video_path and (task.video_path in gone or not Path(task.video_path).exists()):
-            task.video_path = ""
+            task.video_path = archived
             changed = True
         if task.audio_path and task.audio_path in gone:
             task.audio_path = str(result.audio) if result.audio else ""

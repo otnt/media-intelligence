@@ -199,13 +199,26 @@ class DashScopeConfig:
     chunk_overlap_sec: float = 120.0
 
 
+ICLOUD_DRIVE = Path.home() / "Library" / "Mobile Documents" / "com~apple~CloudDocs"
+
+
+def _default_storage_mode() -> str:
+    return "archive" if ICLOUD_DRIVE.is_dir() else "keep"
+
+
 @dataclass
 class StorageConfig:
-    """What to keep on disk once a video is processed (see storage.py)."""
+    """What happens to media once a video is processed (see storage.py)."""
 
-    # Delete the downloaded video and the WAV; keep a ~22 MB/hour audio copy for re-transcribing.
+    # Replace the 16 kHz WAV (derived, ~115 MB/hour) with a ~22 MB/hour audio copy for re-transcribing.
     compact_after_processing: bool = True
-    # Delete that audio copy after this many days (0 = right after processing, -1 = keep forever).
+    # The original download: "archive" moves it into iCloud Drive (kept, and evicted from this Mac once
+    # uploaded), "keep" leaves it in paths.videos, "delete" removes it (re-downloaded if ever needed).
+    mode: str = field(default_factory=_default_storage_mode)
+    archive_dir: Path = field(default_factory=lambda: ICLOUD_DRIVE / "Media Intelligence" / "videos")
+    # In archive mode, free the local copy as soon as iCloud has it instead of waiting for disk pressure.
+    evict_archived: bool = True
+    # Delete the small audio copy after this many days (0 = right after processing, -1 = keep forever).
     keep_audio_days: int = 30
 
 
@@ -457,6 +470,9 @@ def load_config(path: Path | None = None) -> AppConfig:
         ),
         storage=StorageConfig(
             compact_after_processing=_as_bool(storage_raw.get("compact_after_processing"), True),
+            mode=_storage_mode(storage_raw.get("mode")),
+            archive_dir=_as_path(storage_raw.get("archive_dir"), ICLOUD_DRIVE / "Media Intelligence" / "videos"),
+            evict_archived=_as_bool(storage_raw.get("evict_archived"), True),
             keep_audio_days=int(storage_raw.get("keep_audio_days", 30)),
         ),
         worker=_worker_from_raw(worker_raw),
@@ -464,6 +480,11 @@ def load_config(path: Path | None = None) -> AppConfig:
         source_path=config_path if config_path.exists() else None,
     )
     return config
+
+
+def _storage_mode(value: Any) -> str:
+    mode = str(value or "").strip().lower()
+    return mode if mode in {"archive", "keep", "delete"} else _default_storage_mode()
 
 
 def _as_bool(value: Any, default: bool) -> bool:
