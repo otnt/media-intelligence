@@ -263,7 +263,8 @@ def _extract_with_curl(url: str, config: AppConfig) -> XhsPost:
     if not note:
         raise _media_error(
             "fetching_metadata",
-            "Could not parse Xiaohongshu note data. Log into Xiaohongshu or RedNote in Chrome so cookies can be read.",
+            "Could not parse Xiaohongshu note data: the page format may have changed, or the note needs a login "
+            "(log into Xiaohongshu or RedNote in Chrome so cookies can be read).",
         )
     note_id = str(note.get("noteId") or parse_xhs_ref(final_url)[1])
     image_list = note.get("imageList") or []
@@ -417,11 +418,52 @@ def _note_from_html(html: str) -> dict[str, Any] | None:
         return None
     raw = match.group(1).strip().rstrip(";")
     cleaned = _YAML_ILLEGAL.sub("", raw)
-    cleaned = cleaned.replace("undefined", "null").replace("new Map([])", "[]")
+    cleaned = _unwrap_js_collections(cleaned.replace("undefined", "null"))
     data = _parse_state(cleaned)
     if not isinstance(data, dict):
         return None
     return _note_from_state(data)
+
+
+def _unwrap_js_collections(text: str) -> str:
+    """Turn JS `new Map([...])` / `new Set([...])` (not JSON) into their array argument.
+
+    The page state is a JS object literal; Xiaohongshu added `"originalCommentIds": new Set([])` in
+    late 2026 and that single token made every note unparseable.
+    """
+    out: list[str] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch == '"':
+            j = i + 1
+            while j < n and text[j] != '"':
+                j += 2 if text[j] == "\\" else 1
+            out.append(text[i : j + 1])
+            i = j + 1
+            continue
+        if text.startswith("new Map(", i) or text.startswith("new Set(", i):
+            start = i + len("new Map(")
+            depth, j = 1, start
+            while j < n and depth:
+                c = text[j]
+                if c == '"':
+                    j += 1
+                    while j < n and text[j] != '"':
+                        j += 2 if text[j] == "\\" else 1
+                elif c in "([{":
+                    depth += 1
+                elif c in ")]}":
+                    depth -= 1
+                j += 1
+            inner = text[start : j - 1].strip()
+            out.append(_unwrap_js_collections(inner) if inner else "[]")
+            i = j
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
 
 
 def _parse_state(cleaned: str) -> Any:

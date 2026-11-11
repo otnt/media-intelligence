@@ -188,3 +188,17 @@ def test_render_image_post():
     assert "a walk" in body
     assert f"![[attachments/{NOTE_ID}/01.jpg]]" in body
     assert f"![[attachments/{NOTE_ID}/02.jpg]]" in body
+
+
+def test_page_state_with_js_set_and_map_parses():
+    from media_pipeline.xhs import _note_from_html, _unwrap_js_collections
+
+    assert _unwrap_js_collections('{"a":new Set([]),"b":new Map([["k",{"x":1}]]),"c":"new Set( in a string"}') == \
+        '{"a":[],"b":[["k",{"x":1}]],"c":"new Set( in a string"}'
+    html = (
+        '<script>window.__INITIAL_STATE__={"translate":{"originalCommentIds":new Set([])},'
+        '"note":{"noteDetailMap":{"6ae2":{"note":{"noteId":"6ae2","title":"富人是如何合法避税的","type":"video",'
+        '"imageList":[],"user":{"nickname":"n"}}}}},"x":undefined}</script>'
+    )
+    note = _note_from_html(html)
+    assert note and note["noteId"] == "6ae2" and note["title"] == "富人是如何合法避税的"
