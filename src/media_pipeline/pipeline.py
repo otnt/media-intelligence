@@ -425,9 +425,9 @@ class Pipeline:
         from media_pipeline.xhs import find_xhs_images, render_image_post
 
         with self._stage(task, TaskStatus.writing_outputs, metadata, artifacts):
-            images = find_xhs_images(media_path)
-            if not images:
-                raise PipelineError(TaskStatus.writing_outputs, "Xiaohongshu image files were not found")
+            images = find_xhs_images(media_path) if media_path.is_dir() else []
+            if not images and not (metadata.description or "").strip():
+                raise PipelineError(TaskStatus.writing_outputs, "The post has neither text nor image files")
             names = [path.name for path in images]
             notes_dir = self.config.notes_dir()
             if notes_dir is not None:

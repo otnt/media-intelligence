@@ -198,10 +198,16 @@ function mdpIsSupportedVideoUrl(urlString) {
     }
     if (host === "b23.tv") return url.pathname.replace(/\/$/, "").length > 1;
     if (mdpIsXiaohongshuHost(urlString)) return Boolean(mdpParseXiaohongshuNote(urlString));
+    if (mdpIsThreadsHost(urlString)) return /^\/(?:@[^/]+\/post|share)\/[A-Za-z0-9_-]+/.test(url.pathname);
     return false;
   } catch (_error) {
     return false;
   }
+}
+
+function mdpIsThreadsHost(urlString) {
+  const host = mdpHostname(urlString);
+  return ["threads.com", "threads.net"].some((domain) => host === domain || host.endsWith(`.${domain}`));
 }
 
 async function mdpGetActiveTab() {

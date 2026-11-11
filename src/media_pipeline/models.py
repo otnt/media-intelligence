@@ -339,11 +339,13 @@ def now_stamp() -> str:
 SOURCE_YOUTUBE = "youtube"
 SOURCE_BILIBILI = "bilibili"
 SOURCE_REDNOTE = "rednote"
+SOURCE_THREADS = "threads"
 SOURCE_OTHER = "other"
 SOURCE_LABELS = {
     SOURCE_YOUTUBE: "YouTube",
     SOURCE_BILIBILI: "Bilibili",
     SOURCE_REDNOTE: "RedNote",
+    SOURCE_THREADS: "Threads",
     SOURCE_OTHER: "Other",
 }
 
@@ -357,6 +359,8 @@ def source_key(platform: str | None = "", url: str | None = "") -> str:
         return SOURCE_BILIBILI
     if name in {"xiaohongshu", "rednote", "xhs", "red book", "redbook"}:
         return SOURCE_REDNOTE
+    if name in {"threads"}:
+        return SOURCE_THREADS
     host = urlparse(url or "").netloc.lower()
     if host.startswith("www."):
         host = host[4:]
@@ -368,6 +372,8 @@ def source_key(platform: str | None = "", url: str | None = "") -> str:
         ".rednote.com"
     ):
         return SOURCE_REDNOTE
+    if host in {"threads.com", "threads.net"} or host.endswith(".threads.com") or host.endswith(".threads.net"):
+        return SOURCE_THREADS
     return SOURCE_OTHER
 
 

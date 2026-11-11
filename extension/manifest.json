@@ -3,7 +3,11 @@
   "name": "Save & Transcribe",
   "version": "0.1.12",
   "description": "Save Bilibili, YouTube, Xiaohongshu, and RedNote posts to Obsidian with local speech recognition.",
-  "permissions": ["storage", "activeTab", "tabs"],
+  "permissions": [
+    "storage",
+    "activeTab",
+    "tabs"
+  ],
   "host_permissions": [
     "http://127.0.0.1/*",
     "http://127.0.0.1:8875/*",
@@ -20,7 +24,11 @@
     "*://*.rednote.com/*",
     "*://rednote.com/*",
     "*://xhslink.com/*",
-    "*://*.xhslink.com/*"
+    "*://*.xhslink.com/*",
+    "*://*.threads.com/*",
+    "*://threads.com/*",
+    "*://*.threads.net/*",
+    "*://threads.net/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -51,8 +59,13 @@
         "*://xhslink.com/*",
         "*://*.xhslink.com/*"
       ],
-      "js": ["shared.js", "content.js"],
-      "css": ["content.css"],
+      "js": [
+        "shared.js",
+        "content.js"
+      ],
+      "css": [
+        "content.css"
+      ],
       "run_at": "document_start"
     }
   ],
@@ -63,7 +76,9 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["page-bridge.js"],
+      "resources": [
+        "page-bridge.js"
+      ],
       "matches": [
         "*://*.xiaohongshu.com/*",
         "*://xiaohongshu.com/*",

@@ -58,7 +58,7 @@ async function loadTab() {
     pageEl.textContent = "Xiaohongshu / RedNote feed: click ✨ Extract on a post card, or open a note and press Extract here.";
     return;
   }
-  pageEl.textContent = `Not a Bilibili, YouTube, Xiaohongshu, or RedNote page:\n${currentUrl}`;
+  pageEl.textContent = `Not a Bilibili, YouTube, Xiaohongshu, RedNote, or Threads post page:\n${currentUrl}`;
 }
 
 async function loadModels() {
