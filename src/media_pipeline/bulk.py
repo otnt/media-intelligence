@@ -331,7 +331,7 @@ class BulkStore:
             "SELECT COUNT(*) n, COALESCE(SUM(duration),0) dur, COALESCE(SUM(CASE WHEN status='done' THEN bytes END),0) "
             "bytes, COALESCE(SUM(CASE WHEN status='done' THEN duration END),0) done_dur, "
             "COALESCE(SUM(CASE WHEN status='done' AND location='nas' THEN 1 END),0) on_nas, "
-            "COALESCE(SUM(CASE WHEN asr_status='done' AND transcript_source!='youtube' "
+            "COALESCE(SUM(CASE WHEN asr_status='done' AND transcript_source NOT IN ('youtube', 'ai-engineer') "
             "THEN COALESCE(asr_seconds, duration) END),0) asr_secs "
             "FROM videos"
         )[0]
@@ -666,6 +666,9 @@ class BulkRunner:
     def _worker(self, max_videos: int | None) -> None:
         while not self._stop.is_set():
             if not self._downloads_on():
+                self.store.set_meta("pause_until", 0)  # a YouTube limit no longer matters
+                self.store.set_meta("pause_reason", "")
+                self._set_state("running", "已停止从 YouTube 下载；转写、总结、存 NAS 继续")
                 self._move_staged(force=True)  # what was downloaded still goes to the NAS
                 return
             if max_videos is not None and self._done >= max_videos:

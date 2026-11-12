@@ -93,6 +93,7 @@ def test_import_saves_what_the_pipeline_reads_and_finishes_the_transcript_stage(
     assert row["asr_status"] == "done" and row["transcript_source"] == "ai-engineer" and row["segments"] == 2
     assert row["captions_status"] == "skipped" and row["chapters"] == 2 and row["status"] == "pending"
     assert other["asr_status"] == "pending" and other["transcript_source"] == ""
+    assert store.summary()["asr_cost_usd"] == 0 and store.summary()["transcript_sources"] == {"ai-engineer": 1}
 
     artifacts = ArtifactStore(config.paths.artifacts, VID)
     assert artifacts.load_transcript("ai-engineer").segments[1].text == "We used to think agents differ."
