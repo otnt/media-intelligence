@@ -320,6 +320,9 @@ def probe_duration(path: Path) -> float | None:
         return None
 
 
+MEDIA_SUFFIXES = {".mp4", ".webm", ".mkv", ".m4a", ".mp3", ".flv", ".mov", ".m4v", ".ts", ".opus", ".ogg", ".aac"}
+
+
 def find_media_file(directory: Path, video_id: str) -> Path | None:
     if not directory.exists():
         return None
@@ -328,10 +331,12 @@ def find_media_file(directory: Path, video_id: str) -> Path | None:
         candidate = directory / f"{video_id}{suffix}"
         if candidate.exists() and candidate.stat().st_size > 0:
             return candidate
-    matches = sorted(directory.glob(f"{video_id}.*"))
-    for match in matches:
-        if match.is_file() and match.stat().st_size > 0:
-            return match
+    # Only a finished `<id>.<ext>`: yt-dlp's per-format pieces (`<id>.f30032.mp4`, left behind when the
+    # other half of a split download failed) and `.part`/`.ytdl` files are not a playable video.
+    for match in sorted(directory.glob(f"{video_id}.*")):
+        if match.suffix.lower() in MEDIA_SUFFIXES and match.name == f"{video_id}{match.suffix}":
+            if match.is_file() and match.stat().st_size > 0:
+                return match
     folder = directory / video_id
     if folder.is_dir():
         from media_pipeline.xhs import find_xhs_images

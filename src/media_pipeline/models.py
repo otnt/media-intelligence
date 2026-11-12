@@ -300,6 +300,9 @@ class Task:
             "audio_path": self.audio_path,
             "error_stage": self.error_stage,
             "error": self.error,
+            "auto_retry_at": float((self.extra.get("auto_retry") or {}).get("at") or 0)
+            if self.status == TaskStatus.failed else 0.0,
+            "auto_retry_count": int((self.extra.get("auto_retry") or {}).get("count") or 0),
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "language": str(self.extra.get("language") or "auto"),

@@ -116,6 +116,11 @@ class TaskStore:
             found[vid] = {"id": row["id"], "status": row["status"]}
         return found
 
+    def list_failed(self) -> list[Task]:
+        with self._lock:
+            rows = self._conn.execute("SELECT * FROM tasks WHERE status = ?", (TaskStatus.failed.value,)).fetchall()
+        return [_task_from_row(row) for row in rows]
+
     def list_incomplete(self) -> list[Task]:
         with self._lock:
             rows = self._conn.execute(

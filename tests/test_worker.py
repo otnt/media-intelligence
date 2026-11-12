@@ -193,3 +193,54 @@ def test_worker_unloads_idle_vision(tmp_path: Path):
     worker._vision = provider
     worker._maybe_unload_vision()
     assert provider.loaded is False
+
+
+def test_temporary_download_errors_are_retried_later_on_their_own(tmp_path: Path):
+    from media_pipeline.worker import AUTO_RETRY_DELAYS, is_transient_failure
+
+    assert is_transient_failure("downloading", "yt-dlp download failed: ERROR: [download] Got error: HTTP Error 567")
+    assert is_transient_failure("fetching_metadata", "Sign in to confirm you're not a bot")
+    assert not is_transient_failure("downloading", "Private video")
+    assert not is_transient_failure("extracting_audio", "HTTP Error 567")  # only download-side stages
+
+    config = _config(tmp_path)
+    store = TaskStore(config.paths.db)
+    worker = TaskWorker(config, store)
+    submitted = []
+    worker.submit = lambda task: submitted.append(task.id)
+    task = _task("t-567", "Bilibili")
+    task.status = TaskStatus.failed
+    task.error_stage = "downloading"
+    task.error = "yt-dlp download failed: ERROR: [download] Got error: HTTP Error 567: Unknown Status."
+    store.insert(task)
+
+    before = time.time()
+    worker._schedule_auto_retry("t-567")
+    state = store.get("t-567").extra["auto_retry"]
+    assert state["count"] == 1 and state["at"] >= before + AUTO_RETRY_DELAYS[0]
+    assert store.get("t-567").to_public()["auto_retry_at"] == state["at"]
+
+    worker._maybe_auto_retry(now=before + 60)  # not due yet
+    assert submitted == []
+    worker._next_auto_retry = 0.0
+    worker._maybe_auto_retry(now=state["at"] + 1)
+    retried = store.get("t-567")
+    assert submitted == ["t-567"] and retried.status == TaskStatus.queued and retried.extra["auto_retry"]["at"] == 0
+
+    # Each failure schedules the next, longer wait; after the last one it stays failed.
+    for attempt in range(2, len(AUTO_RETRY_DELAYS) + 2):
+        retried = store.get("t-567")
+        retried.status, retried.error_stage, retried.error = TaskStatus.failed, "downloading", task.error
+        store.update(retried)
+        worker._schedule_auto_retry("t-567")
+        state = store.get("t-567").extra["auto_retry"]
+        if attempt <= len(AUTO_RETRY_DELAYS):
+            assert state["count"] == attempt and state["at"] > 0
+        else:
+            assert state["count"] == len(AUTO_RETRY_DELAYS)  # no more retries scheduled
+
+    permanent = _task("t-private", "YouTube")
+    permanent.status, permanent.error_stage, permanent.error = TaskStatus.failed, "downloading", "Private video"
+    store.insert(permanent)
+    worker._schedule_auto_retry("t-private")
+    assert "auto_retry" not in store.get("t-private").extra

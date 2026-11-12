@@ -302,3 +302,17 @@ def test_yt_dlp_gets_a_js_runtime_when_one_is_installed(monkeypatch):
         assert "js_runtimes" not in media._base_ydl_opts(AppConfig())
     finally:
         media.js_runtimes.cache_clear()
+
+
+def test_find_media_file_ignores_pieces_of_a_split_download(tmp_path: Path):
+    from media_pipeline.media import find_media_file
+
+    # The video half arrived, the audio half hit HTTP 567: that piece is not a playable video.
+    (tmp_path / "BV1d7W26SEkb_p1.f100023.mp4").write_bytes(b"video only")
+    (tmp_path / "BV1d7W26SEkb_p1.f30280.m4a.part").write_bytes(b"partial")
+    (tmp_path / "BV1d7W26SEkb_p1.mp4.ytdl").write_bytes(b"state")
+    assert find_media_file(tmp_path, "BV1d7W26SEkb_p1") is None
+    (tmp_path / "BV1d7W26SEkb_p1.flv").write_bytes(b"merged")
+    assert find_media_file(tmp_path, "BV1d7W26SEkb_p1") == tmp_path / "BV1d7W26SEkb_p1.flv"
+    (tmp_path / "BV1d7W26SEkb_p1.mp4").write_bytes(b"merged")
+    assert find_media_file(tmp_path, "BV1d7W26SEkb_p1") == tmp_path / "BV1d7W26SEkb_p1.mp4"

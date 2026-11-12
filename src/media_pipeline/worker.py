@@ -17,6 +17,38 @@ from media_pipeline.visual.vlm import VisionProvider, build_vision_provider, bui
 logger = logging.getLogger(__name__)
 
 DOMAIN_KEYS = ("youtube", "bilibili", "other")
+# A download that hit a temporary block (Bilibili's HTTP 567, rate limits, flaky network) is retried
+# on its own after these delays, so a video shared from the phone is not lost to a bad half hour.
+AUTO_RETRY_DELAYS = (600.0, 1800.0, 7200.0)
+AUTO_RETRY_STAGES = {"fetching_metadata", "downloading"}
+TRANSIENT_ERROR_MARKERS = (
+    "http error 567",
+    "http error 412",
+    "http error 429",
+    "http error 500",
+    "http error 502",
+    "http error 503",
+    "http error 504",
+    "too many requests",
+    "not a bot",
+    "rate-limited",
+    "try again later",
+    "timed out",
+    "connection reset",
+    "connection aborted",
+    "remote end closed connection",
+    "incompleteread",
+    "temporary failure in name resolution",
+    "nodename nor servname",
+    "unable to download webpage",
+)
+
+
+def is_transient_failure(stage: str | None, error: str | None) -> bool:
+    if (stage or "") not in AUTO_RETRY_STAGES:
+        return False
+    text = (error or "").lower()
+    return any(marker in text for marker in TRANSIENT_ERROR_MARKERS)
 
 
 def platform_key(platform: str | None) -> str:
@@ -105,6 +137,7 @@ class TaskWorker:
         self._stop = threading.Event()
         # Disk retention (storage.py): shortly after start, then every 6 hours.
         self._next_cleanup = time.monotonic() + 60.0
+        self._next_auto_retry = 0.0
         self._cleanup_thread: threading.Thread | None = None
         self._dispatcher: threading.Thread | None = None
         self._jobs: list[threading.Thread] = []
@@ -241,8 +274,37 @@ class TaskWorker:
             self._dispatch()
             self._maybe_unload_vision()
             self._maybe_cleanup()
+            self._maybe_auto_retry()
             self._wake.wait(timeout=0.2)
             self._wake.clear()
+
+    def _schedule_auto_retry(self, task_id: str) -> None:
+        task = self.store.get(task_id)
+        if task is None or task.status != TaskStatus.failed or not is_transient_failure(task.error_stage, task.error):
+            return
+        state = dict(task.extra.get("auto_retry") or {})
+        count = int(state.get("count") or 0)
+        if count >= len(AUTO_RETRY_DELAYS):
+            return
+        state.update({"count": count + 1, "at": time.time() + AUTO_RETRY_DELAYS[count]})
+        task.extra["auto_retry"] = state
+        self.store.update(task)
+        logger.info("Task %s hit a temporary download error; retry %s/%s in %s min",
+                    task_id, count + 1, len(AUTO_RETRY_DELAYS), round(AUTO_RETRY_DELAYS[count] / 60))
+
+    def _maybe_auto_retry(self, now: float | None = None) -> None:
+        if time.monotonic() < self._next_auto_retry:
+            return
+        self._next_auto_retry = time.monotonic() + 30.0
+        now = time.time() if now is None else now
+        for task in self.store.list_failed():
+            state = task.extra.get("auto_retry") or {}
+            due = float(state.get("at") or 0)
+            if not due or due > now:
+                continue
+            task.extra["auto_retry"] = {**state, "at": 0}
+            logger.info("Auto-retrying task %s (%s/%s)", task.id, state.get("count"), len(AUTO_RETRY_DELAYS))
+            self.retry(task)
 
     def _maybe_cleanup(self) -> None:
         if time.monotonic() < self._next_cleanup:
@@ -314,6 +376,7 @@ class TaskWorker:
                 if vision is not None:
                     self._vision = vision
             pipeline.run(task)
+            self._schedule_auto_retry(task_id)
         except Exception:
             logger.exception("Worker crashed while running task %s", task_id)
         finally:

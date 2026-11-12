@@ -597,8 +597,16 @@ function renderChips() {
   $("#chips").innerHTML = chips.map(([key, label, n, cls]) =>
     `<button class="chip ${cls || ""}" type="button" data-chip="${esc(key)}" aria-pressed="${key === state.chip}">${esc(label)}<span class="n">${n}</span></button>`).join("");
 }
+function retryAt(task) {
+  if (!task.auto_retry_at) return "";
+  const d = new Date(task.auto_retry_at * 1000);
+  return d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
+}
 function rowState(task) {
-  if (task.status === "failed") return `<div class="row-state err">⚠︎ 失败 · ${esc(STATUS[task.error_stage] || task.error_stage || "")}</div>`;
+  if (task.status === "failed") {
+    const auto = retryAt(task) ? ` · ${retryAt(task)} 自动重试` : "";
+    return `<div class="row-state err">⚠︎ 失败 · ${esc(STATUS[task.error_stage] || task.error_stage || "")}${auto}</div>`;
+  }
   if (isActive(task)) {
     const step = STEP_OF[task.status] ?? -1;
     const pct = Math.max(6, Math.round(((step + 0.5) / STEPS.length) * 100));
@@ -700,8 +708,10 @@ function headHtml(note) {
 function progressHtml(note) {
   const task = note.task;
   if (task.status === "failed") {
+    const auto = retryAt(task)
+      ? `<p>临时性错误，${retryAt(task)} 会自动重试（第 ${task.auto_retry_count}/3 次）；也可以现在手动重试。</p>` : "";
     return `<div class="card err"><h3>处理失败 · ${esc(STATUS[task.error_stage] || task.error_stage || "")}</h3>
-      <p>${esc(task.error || "")}</p><div class="actions"><button class="pill primary" type="button" data-act="retry">重试</button></div></div>`;
+      <p>${esc(task.error || "")}</p>${auto}<div class="actions"><button class="pill primary" type="button" data-act="retry">重试</button></div></div>`;
   }
   if (!isActive(task)) return "";
   const step = STEP_OF[task.status] ?? -1;
