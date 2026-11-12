@@ -672,7 +672,15 @@ class BulkRunner:
             self._move_staged()
             if self._stop.is_set() or (max_videos is not None and self._done >= max_videos):
                 return
-            self.sleep(random.uniform(*self.limits.pause_between))
+            self.sleep(random.uniform(*self._pause_range()))
+
+    def _pause_range(self) -> tuple[float, float]:
+        """Seconds between downloads: the job's ``pause_between`` (changeable while it runs) or the default."""
+        value = self.store.meta("pause_between")
+        if isinstance(value, list) and len(value) == 2:
+            low, high = sorted(float(item) for item in value)
+            return low, high
+        return self.limits.pause_between
 
     def _claim(self) -> sqlite3.Row | None:
         with self._claim_lock:

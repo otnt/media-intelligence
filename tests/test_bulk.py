@@ -631,3 +631,16 @@ def test_finished_files_move_to_the_nas_while_youtube_has_the_job_paused(tmp_pat
     runner.run()
     assert at_probe == [True]  # copied during the pause, before downloading resumed
     assert _row(store, "a")["location"] == "nas" and not (media / "a.mp4").exists()
+
+
+
+def test_pacing_can_be_changed_while_a_job_runs(tmp_path: Path):
+    config = _config(tmp_path)
+    store = _job(config, ids=("a", "b"))
+    clock = Clock()
+    naps = []
+    runner = _runner(config, store, clock, FakeYouTube())
+    runner.sleep = lambda seconds: (naps.append(seconds), clock.sleep(seconds))
+    store.set_meta("pause_between", [90, 45])
+    runner.run()
+    assert any(45 <= nap <= 90 for nap in naps)

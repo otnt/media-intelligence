@@ -112,11 +112,15 @@ def main(argv: list[str] | None = None) -> int:
     bulk_summary.add_argument("--window", default=None, help="HH:MM-HH:MM@+08:00 (default 22:00-08:00 Beijing)")
     bulk_summary.add_argument("--any-time", action="store_true", help="No time window")
     bulk_summary.add_argument("--off", action="store_true")
+    bulk_pace = bulk_sub.add_parser("pace", help="Seconds between downloads, e.g. 45-90 (applies while it runs)")
+    bulk_pace.add_argument("name")
+    bulk_pace.add_argument("seconds", help="MIN-MAX, or 'default'")
     bulk_pause = bulk_sub.add_parser("pause", help="Pause a running job after the current video")
     bulk_pause.add_argument("name")
     bulk_resume = bulk_sub.add_parser("resume", help="Undo a pause; a YouTube-limit pause is probed right away")
     bulk_resume.add_argument("name")
-    for parser_ in (bulk_add, bulk_run, bulk_status, bulk_dest, bulk_pause, bulk_resume, bulk_asr, bulk_summary):
+    for parser_ in (bulk_add, bulk_run, bulk_status, bulk_dest, bulk_pause, bulk_resume, bulk_asr, bulk_summary,
+                    bulk_pace):
         parser_.add_argument("--config", type=Path, default=None)
 
     watchdog = sub.add_parser("watchdog", help="One self-check: API, bulk jobs, disk; restarts what is stuck")
@@ -317,6 +321,17 @@ def cmd_bulk(config: AppConfig, args: argparse.Namespace) -> int:
         window = store.meta("summary_window") or "any time"
         print(f"{args.name}: summaries with {store.meta('summary_model')} during {window} (restart the job to apply: "
               f"launchctl kickstart -k gui/$(id -u)/com.media-pipeline.bulk.{args.name})")
+        return 0
+    if command == "pace":
+        if args.seconds == "default":
+            store.set_meta("pause_between", None)
+            print(f"{args.name}: default pacing")
+            return 0
+        low, _, high = args.seconds.partition("-")
+        pace = sorted([float(low), float(high or low)])
+        store.set_meta("pause_between", pace)
+        hourly = 3600 / (sum(pace) / 2 + 20)  # ~20 s per download
+        print(f"{args.name}: {pace[0]:.0f}-{pace[1]:.0f} s between downloads (about {hourly:.0f} videos an hour)")
         return 0
     if command == "pause":
         store.set_meta("control", "pause")
