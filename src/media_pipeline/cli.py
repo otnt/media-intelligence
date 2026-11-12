@@ -124,6 +124,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     bulk_archive.add_argument("name")
     bulk_archive.add_argument("--dest", default=None, help="Folder (default: <job dest>/official, e.g. on the NAS)")
+    bulk_learn = bulk_sub.add_parser("learn", help="Topic syntheses and a learning plan from the collection's summaries")
+    bulk_learn.add_argument("name")
+    bulk_learn.add_argument("--wait", action="store_true",
+                            help="Wait for the half-price window and for the summaries to finish first")
+    bulk_learn.add_argument("--min-topic-talks", type=int, default=8)
+    bulk_learn.add_argument("--model", default="deepseek-v4.1-flash")
     bulk_youtube = bulk_sub.add_parser("youtube", help="Stop (--off) or restart (--on) downloads and captions from YouTube")
     bulk_youtube.add_argument("name")
     bulk_youtube.add_argument("switch", choices=("on", "off"))
@@ -135,7 +141,7 @@ def main(argv: list[str] | None = None) -> int:
     bulk_resume = bulk_sub.add_parser("resume", help="Undo a pause; a YouTube-limit pause is probed right away")
     bulk_resume.add_argument("name")
     for parser_ in (bulk_add, bulk_run, bulk_status, bulk_dest, bulk_pause, bulk_resume, bulk_asr, bulk_summary,
-                    bulk_pace, bulk_import, bulk_youtube, bulk_archive):
+                    bulk_pace, bulk_import, bulk_youtube, bulk_archive, bulk_learn):
         parser_.add_argument("--config", type=Path, default=None)
 
     watchdog = sub.add_parser("watchdog", help="One self-check: API, bulk jobs, disk; restarts what is stuck")
@@ -364,6 +370,24 @@ def cmd_bulk(config: AppConfig, args: argparse.Namespace) -> int:
         store.event("import", f"官方资料已归档到 {dest}：{stats['talks']} 个演讲，{stats['slides'] + stats['slides_copied']} 张幻灯片")
         print(json.dumps(stats))
         return 0
+    if command == "learn":
+        from media_pipeline.learning import LEARN_DIR, generate_fn, run_learning
+
+        logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+                            handlers=[logging.StreamHandler(sys.stdout)])
+        notes = config.notes_dir()
+        if notes is None:
+            print("Obsidian vault is not configured", file=sys.stderr)
+            return 1
+        if args.wait:
+            _wait_for_summaries(store)
+        library = _aie_library_index(store)
+        out_dir = notes / str(store.meta("title", "") or args.name) / LEARN_DIR
+        stats = run_learning(config, store, library, out_dir, generate=generate_fn(config, args.model),
+                             min_topic_talks=args.min_topic_talks)
+        store.event("import", f"学习材料已生成：{stats['topics']} 份主题综述 + 学习路线（{out_dir}）")
+        print(json.dumps(stats, ensure_ascii=False))
+        return 0
     if command == "youtube":
         on = args.switch == "on"
         store.set_meta("downloads", on)
@@ -400,6 +424,45 @@ def cmd_bulk(config: AppConfig, args: argparse.Namespace) -> int:
         print(f"{args.name}: {state}")
         return 0
     return 2
+
+
+def _wait_for_summaries(store, poll: float = 300.0) -> None:
+    """Until the half-price window is open and the job's summaries have finished (or stopped moving)."""
+    import time
+
+    from media_pipeline.bulk import DEFAULT_SUMMARY_WINDOW, in_window
+
+    last_done, still_since = -1, time.time()
+    while True:
+        summary = store.summary()
+        counts = summary["summary_counts"]
+        done = counts.get("done", 0)
+        waiting = counts.get("pending", 0) + counts.get("queued", 0) + counts.get("running", 0)
+        if done != last_done:
+            last_done, still_since = done, time.time()
+        window = store.meta("summary_window", DEFAULT_SUMMARY_WINDOW)
+        settled = waiting == 0 or (done > 0 and time.time() - still_since > 2700)
+        if in_window(window, time.time()) and settled:
+            return
+        logging.info("waiting: %s summaries done, %s to go, window open: %s", done, waiting, in_window(window, time.time()))
+        time.sleep(poll)
+
+
+def _aie_library_index(store) -> dict:
+    """talks + topics of the official library: from the NAS archive when it is there, else fetched once."""
+    from media_pipeline.aie_library import BASE, Library, _rows
+    from media_pipeline.bulk import dest_ready
+
+    base = dest_ready(store.meta("dest", ""))
+    index = base / "official" / "index" if base else None
+    data = {}
+    for name in ("talks", "topics"):
+        path = index / f"{name}.json" if index else None
+        if path is not None and path.is_file():
+            data[name] = _rows(json.loads(path.read_text(encoding="utf-8")))
+        else:
+            data[name] = _rows(Library().json(f"{BASE}/{name}?format=json"))
+    return data
 
 
 def cmd_cleanup(config: AppConfig, *, dry_run: bool) -> int:

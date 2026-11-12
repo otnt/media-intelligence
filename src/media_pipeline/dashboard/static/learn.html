@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)" />
+<link rel="manifest" href="/manifest.webmanifest" />
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png" />
+<link rel="icon" type="image/png" href="/static/favicon.png" />
+<title>学习</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #ffffff; --bg-2: #f2f2f7; --fill: rgba(118, 118, 128, 0.12); --text: #1c1c1e; --text-2: #5c5c63;
+    --text-3: #8e8e93; --line: rgba(60, 60, 67, 0.16); --accent: #0a66d8; --accent-soft: rgba(10, 102, 216, 0.1);
+    --bar: rgba(255, 255, 255, 0.95);
+    --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+      "Noto Sans CJK SC", "Helvetica Neue", sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+    --gutter: 16px; --top: env(safe-area-inset-top, 0px); --bottom: env(safe-area-inset-bottom, 0px);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #000000; --bg-2: #1c1c1e; --fill: rgba(118, 118, 128, 0.24); --text: #f2f2f7; --text-2: #aeaeb2;
+      --text-3: #7c7c82; --line: rgba(84, 84, 88, 0.6); --accent: #4ea1ff; --accent-soft: rgba(78, 161, 255, 0.16);
+      --bar: rgba(0, 0, 0, 0.92);
+    }
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font); font-size: 15px; line-height: 1.5;
+    -webkit-font-smoothing: antialiased; }
+  a { color: var(--accent); text-decoration: none; }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 0 var(--gutter) calc(var(--bottom) + 48px); }
+  header.top { position: sticky; top: 0; z-index: 5; margin: 0 calc(-1 * var(--gutter));
+    padding: calc(var(--top) + 10px) var(--gutter) 10px; background: var(--bar);
+    -webkit-backdrop-filter: saturate(180%) blur(20px); backdrop-filter: saturate(180%) blur(20px);
+    border-bottom: 0.5px solid var(--line); display: flex; align-items: center; gap: 12px; }
+  header.top h1 { margin: 0; font-size: 20px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .back { white-space: nowrap; }
+  .plan { display: block; margin-top: 16px; padding: 16px; border-radius: 14px; background: var(--accent-soft); color: var(--text); }
+  .plan b { display: block; font-size: 18px; }
+  .plan span { color: var(--text-2); font-size: 14px; }
+  .search { margin-top: 14px; display: flex; align-items: center; height: 38px; padding: 0 10px; border-radius: 11px; background: var(--fill); }
+  .search input { flex: 1; border: 0; outline: 0; background: transparent; font-size: 16px; color: var(--text); }
+  .topic { display: flex; justify-content: space-between; gap: 12px; padding: 12px 2px; border-bottom: 0.5px solid var(--line); color: var(--text); }
+  .topic .n { color: var(--text-3); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .empty { padding: 48px 0; text-align: center; color: var(--text-3); }
+  article { font-size: 17px; line-height: 1.75; }
+  article h1, article h2 { font-size: 21px; line-height: 1.35; margin: 28px 0 8px; }
+  article h3 { font-size: 18px; margin: 22px 0 6px; }
+  article h4 { font-size: 16px; margin: 18px 0 4px; }
+  article p, article li { overflow-wrap: anywhere; }
+  article blockquote { margin: 12px 0; padding: 2px 14px; border-left: 3px solid var(--line); color: var(--text-2); font-size: 15px; }
+  article code { font-family: var(--mono); font-size: 0.88em; background: var(--fill); padding: 1px 5px; border-radius: 5px; }
+  article pre { overflow-x: auto; background: var(--bg-2); padding: 12px; border-radius: 10px; }
+  article .table-wrap { overflow-x: auto; }
+  article table { border-collapse: collapse; font-size: 15px; }
+  article th, article td { border: 0.5px solid var(--line); padding: 6px 8px; text-align: left; vertical-align: top; }
+  article a.talk { background: var(--accent-soft); padding: 0 4px; border-radius: 5px; }
+  article hr { border: 0; border-top: 0.5px solid var(--line); margin: 24px 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top"><a class="back" id="back" href="/">‹ 资料库</a><h1 id="title">学习</h1></header>
+  <main id="main"><div class="empty">加载中…</div></main>
+</div>
+<script>
+"use strict";
+const $ = (sel) => document.querySelector(sel);
+const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const state = { index: null, links: {}, q: "" };
+
+function inline(text) {
+  let html = esc(text);
+  const codes = [];
+  html = html.replace(/`([^`]+)`/g, (_, code) => { codes.push(code); return `\u0000${codes.length - 1}\u0000`; });
+  html = html.replace(/\[\[([^\]|]+)(?:\|([^\]]*))?\]\]/g, (_, name, label) => {
+    const href = state.links[name.trim()];
+    const text = label || name;
+    return href ? `<a class="talk" href="${esc(href)}">${text}</a>` : `<span>${text}</span>`;
+  });
+  html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  html = html.replace(/\*\*([^*]+?)\*\*|__([^_]+?)__/g, (_, a, b) => `<strong>${a || b}</strong>`);
+  html = html.replace(/(^|[^*\w])\*([^*\s][^*]*?)\*(?!\*)/g, "$1<em>$2</em>");
+  return html.replace(/\u0000(\d+)\u0000/g, (_, i) => `<code>${codes[Number(i)]}</code>`);
+}
+function mdList(items) {
+  let html = "";
+  const stack = [];
+  for (const item of items) {
+    while (stack.length && item.indent < stack[stack.length - 1].indent) html += `</li></${stack.pop().tag}>`;
+    const top = stack[stack.length - 1];
+    if (!top || item.indent > top.indent) {
+      const tag = item.ordered ? "ol" : "ul";
+      stack.push({ indent: item.indent, tag });
+      html += `<${tag}><li>`;
+    } else {
+      html += "</li><li>";
+    }
+    html += item.text.split("\n").map(inline).join("<br>");
+  }
+  while (stack.length) html += `</li></${stack.pop().tag}>`;
+  return html;
+}
+function markdown(source) {
+  const lines = String(source || "").replace(/\r\n?/g, "\n").split("\n");
+  const out = [];
+  let para = [];
+  const flush = () => { if (para.length) { out.push(`<p>${para.map(inline).join("<br>")}</p>`); para = []; } };
+  const isSep = (line) => /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(line);
+  const cells = (line) => line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (/^\s*```/.test(line)) {
+      flush();
+      const body = [];
+      for (i++; i < lines.length && !/^\s*```/.test(lines[i]); i++) body.push(lines[i]);
+      out.push(`<pre><code>${esc(body.join("\n"))}</code></pre>`);
+      continue;
+    }
+    if (!line.trim()) { flush(); continue; }
+    const heading = /^(#{1,6})\s+(.*)$/.exec(line);
+    if (heading) { flush(); const level = Math.min(4, heading[1].length); out.push(`<h${level}>${inline(heading[2])}</h${level}>`); continue; }
+    if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) { flush(); out.push("<hr>"); continue; }
+    if (/^\s*\|/.test(line) && i + 1 < lines.length && isSep(lines[i + 1])) {
+      flush();
+      const head = cells(line);
+      const rows = [];
+      for (i += 2; i < lines.length && /^\s*\|/.test(lines[i]); i++) rows.push(cells(lines[i]));
+      i--;
+      out.push(`<div class="table-wrap"><table><thead><tr>${head.map((c) => `<th>${inline(c)}</th>`).join("")}</tr></thead><tbody>${
+        rows.map((r) => `<tr>${head.map((_, k) => `<td>${inline(r[k] || "")}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`);
+      continue;
+    }
+    if (/^\s*>/.test(line)) {
+      flush();
+      const quote = [];
+      for (; i < lines.length && /^\s*>/.test(lines[i]); i++) quote.push(lines[i].replace(/^\s*>\s?/, ""));
+      i--;
+      out.push(`<blockquote>${markdown(quote.join("\n"))}</blockquote>`);
+      continue;
+    }
+    if (/^\s*([-*+]|\d+[.)])\s+/.test(line)) {
+      flush();
+      const items = [];
+      for (; i < lines.length; i++) {
+        const m = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/.exec(lines[i]);
+        if (m) { items.push({ indent: m[1].replace(/\t/g, "    ").length, ordered: /\d/.test(m[2]), text: m[3] }); continue; }
+        if (lines[i].trim() && items.length && /^\s{2,}/.test(lines[i])) { items[items.length - 1].text += "\n" + lines[i].trim(); continue; }
+        break;
+      }
+      i--;
+      out.push(mdList(items));
+      continue;
+    }
+    para.push(line.trim());
+  }
+  flush();
+  return out.join("");
+}
+
+async function api(path) {
+  const res = await fetch(path);
+  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+  return res.json();
+}
+
+function renderIndex() {
+  const { collections } = state.index;
+  $("#title").textContent = "学习";
+  $("#back").href = "/";
+  $("#back").textContent = "‹ 资料库";
+  document.title = "学习";
+  if (!collections.length) {
+    $("#main").innerHTML = `<div class="empty">学习材料还没有生成。<br>它会在当晚的总结完成后自动生成。</div>`;
+    return;
+  }
+  const q = state.q.toLowerCase();
+  $("#main").innerHTML = collections.map((c) => `
+    ${c.plan ? `<a class="plan" href="#/doc/${encodeURIComponent(c.collection)}/${encodeURIComponent(c.plan)}"><b>📘 ${esc(c.collection)} · 学习路线</b><span>为你定制的 8 周计划 · ${esc(c.updated || "")}</span></a>` : ""}
+    <label class="search"><input id="q" type="search" placeholder="搜索主题" value="${esc(state.q)}" autocomplete="off" /></label>
+    ${c.topics.filter((t) => !q || t.name.toLowerCase().includes(q)).map((t) => `
+      <a class="topic" href="#/doc/${encodeURIComponent(c.collection)}/${encodeURIComponent(t.path)}"><span>${esc(t.name)}</span><span class="n">${t.talks ? `${t.talks} 场` : ""}</span></a>`).join("")}
+  `).join("");
+  const input = $("#q");
+  if (input) input.addEventListener("input", (e) => { state.q = e.target.value; const pos = e.target.selectionStart; renderIndex(); const again = $("#q"); again.focus(); again.setSelectionRange(pos, pos); });
+}
+
+async function renderDoc(collection, path) {
+  $("#main").innerHTML = `<div class="empty">加载中…</div>`;
+  $("#back").href = "#/";
+  $("#back").textContent = "‹ 学习";
+  try {
+    const doc = await api(`/v1/learn/doc?collection=${encodeURIComponent(collection)}&path=${encodeURIComponent(path)}`);
+    state.links = doc.links || {};
+    $("#title").textContent = doc.title;
+    document.title = doc.title;
+    $("#main").innerHTML = `<article>${markdown(doc.markdown)}</article>`;
+    window.scrollTo(0, 0);
+  } catch (err) {
+    $("#main").innerHTML = `<div class="empty">读取失败：${esc(err.message)}</div>`;
+  }
+}
+
+async function route() {
+  const hash = decodeURIComponent(location.hash.replace(/^#/, "")) || "/";
+  const m = /^\/doc\/([^/]+)\/(.+)$/.exec(location.hash.replace(/^#/, ""));
+  if (m) return renderDoc(decodeURIComponent(m[1]), decodeURIComponent(m[2]));
+  if (!state.index) state.index = await api("/v1/learn");
+  if (hash === "/" || hash === "") renderIndex();
+}
+window.addEventListener("hashchange", route);
+route().catch((err) => { $("#main").innerHTML = `<div class="empty">读取失败：${esc(err.message)}</div>`; });
+</script>
+</body>
+</html>

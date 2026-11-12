@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import ipaddress
+import re
 import logging
+import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -152,6 +154,64 @@ def create_app(config: AppConfig, store: TaskStore | None = None, worker: TaskWo
         if Path(filename).name != filename or media_type is None or not path.is_file():
             raise HTTPException(status_code=404, detail="Not found")
         return FileResponse(path, media_type=media_type, headers={"Cache-Control": "public, max-age=86400"})
+
+    @app.get("/learn")
+    def learn_page():
+        return FileResponse(DASHBOARD_DIR / "learn.html", media_type="text/html")
+
+    def _learn_dirs() -> dict[str, Path]:
+        """{collection: <notes>/<collection>/_学习} for every collection that has study material."""
+        from media_pipeline.learning import LEARN_DIR
+
+        notes = config.notes_dir()
+        found: dict[str, Path] = {}
+        if notes is None:
+            return found
+        for name in bulk_jobs.list_jobs(config):
+            try:
+                title = str(bulk_jobs.open_job(config, name).meta("title", "") or name)
+            except Exception:  # noqa: BLE001
+                continue
+            folder = notes / title / LEARN_DIR
+            if folder.is_dir():
+                found[title] = folder
+        return found
+
+    @app.get("/v1/learn")
+    def learn_index() -> dict[str, Any]:
+        from media_pipeline.learning import PLAN_NAME, TOPICS_DIR
+
+        out = []
+        for collection, folder in _learn_dirs().items():
+            topics = []
+            for path in sorted((folder / TOPICS_DIR).glob("*.md")):
+                head = path.read_text(encoding="utf-8")[:400]
+                count = re.search(r"(\d+) 场演讲", head)
+                topics.append({"name": path.stem, "path": f"{TOPICS_DIR}/{path.name}",
+                               "talks": int(count.group(1)) if count else 0})
+            topics.sort(key=lambda t: -t["talks"])
+            plan = folder / f"{PLAN_NAME}.md"
+            out.append({
+                "collection": collection,
+                "plan": plan.name if plan.is_file() else "",
+                "updated": time.strftime("%m-%d %H:%M", time.localtime(plan.stat().st_mtime)) if plan.is_file() else "",
+                "topics": topics,
+            })
+        return {"collections": out}
+
+    @app.get("/v1/learn/doc")
+    def learn_doc(collection: str, path: str) -> dict[str, Any]:
+        folder = _learn_dirs().get(collection)
+        if folder is None:
+            raise HTTPException(status_code=404, detail="No study material for this collection")
+        target = (folder / path).resolve()
+        if folder.resolve() not in target.parents or target.suffix != ".md" or not target.is_file():
+            raise HTTPException(status_code=404, detail="No such document")
+        links = {}
+        for task in store.list_all(limit=100_000):
+            if str(task.extra.get("collection") or "") == collection and task.note_path:
+                links[Path(task.note_path).stem] = f"/#/n/{task.id}"
+        return {"title": target.stem, "markdown": target.read_text(encoding="utf-8"), "links": links}
 
     @app.get("/bulk")
     def bulk_page():
