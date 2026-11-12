@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>com.media-pipeline.watchdog</string>
+    <key>ProgramArguments</key>
+    <array>
+      <string>__VENV_PYTHON__</string>
+      <string>-m</string>
+      <string>media_pipeline</string>
+      <string>watchdog</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>__REPO_ROOT__</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+      <key>PATH</key>
+      <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <!-- Every 5 minutes: local checks only; a problem must show twice before anything is restarted. -->
+    <key>StartInterval</key>
+    <integer>300</integer>
+    <key>StandardOutPath</key>
+    <string>__HOME__/AIContent/logs/watchdog.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/AIContent/logs/watchdog.log</string>
+  </dict>
+</plist>

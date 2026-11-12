@@ -88,6 +88,11 @@ def main(argv: list[str] | None = None) -> int:
     bulk_run.add_argument("--max", type=int, default=None, help="Stop after this many videos (a trial run)")
     bulk_run.add_argument("--workers", type=int, default=1)
     bulk_run.add_argument("--min-free-gb", type=float, default=40.0, help="Pause while the Mac has less free space")
+    bulk_run.add_argument("--asr-workers", type=int, default=3, help="Videos transcribed at the same time")
+    bulk_asr = bulk_sub.add_parser("asr", help="Transcribe downloaded videos as part of the job (or --off)")
+    bulk_asr.add_argument("name")
+    bulk_asr.add_argument("--model", default=None, help="ASR model id; default is asr.default from the config")
+    bulk_asr.add_argument("--off", action="store_true", help="Stop transcribing (downloads continue)")
     bulk_status = bulk_sub.add_parser("status", help="Show a job's progress (all jobs without a name)")
     bulk_status.add_argument("name", nargs="?")
     bulk_dest = bulk_sub.add_parser("dest", help="Set where finished files go ('' = keep them on the Mac)")
@@ -97,8 +102,11 @@ def main(argv: list[str] | None = None) -> int:
     bulk_pause.add_argument("name")
     bulk_resume = bulk_sub.add_parser("resume", help="Undo a pause; a YouTube-limit pause is probed right away")
     bulk_resume.add_argument("name")
-    for parser_ in (bulk_add, bulk_run, bulk_status, bulk_dest, bulk_pause, bulk_resume):
+    for parser_ in (bulk_add, bulk_run, bulk_status, bulk_dest, bulk_pause, bulk_resume, bulk_asr):
         parser_.add_argument("--config", type=Path, default=None)
+
+    watchdog = sub.add_parser("watchdog", help="One self-check: API, bulk jobs, disk; restarts what is stuck")
+    watchdog.add_argument("--config", type=Path, default=None)
 
     init = sub.add_parser("init", help="Write a default config file")
     init.add_argument("--config", type=Path, default=None)
@@ -130,6 +138,14 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_cleanup(config, dry_run=args.dry_run)
     if args.command == "bulk":
         return cmd_bulk(config, args)
+    if args.command == "watchdog":
+        from media_pipeline.watchdog import check
+
+        logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+                            handlers=[logging.StreamHandler(sys.stdout)])
+        result = check(config)
+        print(json.dumps({key: result[key] for key in ("ok", "problems", "notes", "actions")}, ensure_ascii=False))
+        return 0
     parser.error(f"Unknown command {args.command}")
     return 2
 
@@ -223,6 +239,13 @@ def cmd_bulk(config: AppConfig, args: argparse.Namespace) -> int:
                 f"  dest: {summary['dest'] or '(Mac only)'} {'ready' if summary['dest_ready'] else 'not mounted'}"
                 f" · staging {summary['staging']} · free {summary['free_gb']} GB"
             )
+            if summary["asr_model"]:
+                asr = summary["asr_counts"]
+                print(
+                    f"  asr ({summary['asr_model']}): done {asr.get('done', 0)} · running {asr.get('running', 0)} · "
+                    f"waiting {asr.get('pending', 0)} · failed {asr.get('failed', 0)} · "
+                    f"{summary['asr_hours']} h ≈ ${summary['asr_cost_usd']}"
+                )
         return 0
     store = open_job(config, args.name, create=command == "add")
     if command == "add":
@@ -242,6 +265,21 @@ def cmd_bulk(config: AppConfig, args: argparse.Namespace) -> int:
         ready = dest_ready(dest) is not None
         print(f"dest = {dest or '(Mac only)'}: {'ready' if ready else 'not mounted yet; files move there once it is'}")
         return 0
+    if command == "asr":
+        if args.off:
+            store.set_meta("asr_model", "")
+            print(f"{args.name}: transcription off (restart the job to apply)")
+            return 0
+        from media_pipeline.models import ASR_MODELS
+
+        model = args.model or config.asr.default
+        if model not in ASR_MODELS:
+            print(f"Unknown ASR model {model!r}. Choices: {', '.join(ASR_MODELS)}", file=sys.stderr)
+            return 2
+        store.set_meta("asr_model", model)
+        print(f"{args.name}: transcribing with {model} (restart the job to apply: "
+              f"launchctl kickstart -k gui/$(id -u)/com.media-pipeline.bulk.{args.name})")
+        return 0
     if command == "pause":
         store.set_meta("control", "pause")
         print(f"{args.name}: pausing after the current video")
@@ -255,7 +293,7 @@ def cmd_bulk(config: AppConfig, args: argparse.Namespace) -> int:
     if command == "run":
         logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s",
                             handlers=[logging.StreamHandler(sys.stdout)])
-        limits = Limits(workers=max(1, args.workers), min_free_gb=args.min_free_gb)
+        limits = Limits(workers=max(1, args.workers), min_free_gb=args.min_free_gb, asr_workers=max(0, args.asr_workers))
         state = BulkRunner(config, store, limits=limits).run(max_videos=args.max)
         print(f"{args.name}: {state}")
         return 0

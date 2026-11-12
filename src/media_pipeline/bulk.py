@@ -1,21 +1,28 @@
-"""Bulk downloads (a whole YouTube channel) with a per-video progress table.
+"""Bulk jobs (a whole YouTube channel): download, then transcribe, with a per-video, per-stage table.
 
 ``media-pipeline bulk add NAME --source URL|FILE`` lists the videos once; ``bulk run NAME`` (normally a
-LaunchAgent, see ``scripts/install-bulk-agent.sh``) downloads them one after another and records every
-video's state in ``<paths.bulk>/NAME/progress.sqlite3``. The web UI shows the table at ``/bulk``.
+LaunchAgent, see ``scripts/install-bulk-agent.sh``) works through them and records every video's state
+for each stage in ``<paths.bulk>/NAME/progress.sqlite3``. The web UI shows the table at ``/bulk``.
 
-Downloads are polite on purpose: one at a time, a random pause between videos, and no browser cookies
-(a guest session cannot get the owner's Google account flagged). YouTube limits are watched all the time:
+**Download stage.** Polite on purpose: one at a time, a random pause between videos, and no browser
+cookies (a guest session cannot get the owner's Google account flagged). YouTube limits are watched all
+the time:
 
-* bot checks, HTTP 429 and "rate-limited / try again later" pause the job (15 min, doubling up to 4 h);
-  one probe request must succeed before downloading resumes;
+* bot checks, HTTP 429 and "rate-limited / try again later" pause downloading (15 min, doubling up to
+  4 h); one probe request must succeed before it resumes;
 * several failures in a row, or a sustained drop in download speed (throttling), also pause it;
 * private, removed, members-only or age-restricted videos are marked ``skipped`` (not a block).
 
-Videos always download into a local staging folder, then move to ``dest`` (e.g. a NAS share) once it is
-mounted, so a half-written file never sits on the NAS. Downloading pauses while the Mac has less than
-``min_free_gb`` free. The pipeline finds finished downloads through :func:`find_bulk_media`, wherever
-they are now.
+Videos download into a local staging folder and move to ``dest`` (e.g. a NAS share) once it is mounted,
+so a half-written file never sits on the NAS. Downloading pauses while the Mac has less than
+``min_free_gb`` free.
+
+**Transcription stage** (when the job has an ``asr_model``, e.g. ``fun-asr``). Runs alongside the
+downloads on finished files, a few at a time. Transcripts are saved exactly where the pipeline keeps
+them (``artifacts/<video_id>/asr/<model>.json``), so processing a video later (summary, note) reuses
+the transcript instead of paying for ASR again; the pipeline also finds the downloaded file through
+:func:`find_bulk_media`. A file moves to the NAS after it has been transcribed (sooner if the disk is
+low).
 """
 
 from __future__ import annotations
@@ -41,8 +48,10 @@ logger = logging.getLogger(__name__)
 
 DB_NAME = "progress.sqlite3"
 # 720p is where slide text stays readable for the keyframe/vision steps; H.264 + AAC merge into mp4
-# without re-encoding. With a JS runtime YouTube's DASH files are small (~130 MB per hour of talk).
+# without re-encoding. With a JS runtime YouTube's DASH files are small (~150 MB per hour of talk).
 DEFAULT_FORMAT = "bv*[height<=720][vcodec^=avc1]+ba[ext=m4a]/bv*[height<=720]+ba/b[height<=720]/b"
+# List prices (Alibaba Cloud international), only for the running cost estimate on the page.
+ASR_USD_PER_SEC = {"fun-asr": 0.000035}
 BLOCK_MARKERS = (
     "not a bot",
     "http error 429",
@@ -68,6 +77,18 @@ SKIP_MARKERS = (
     "live event will begin",
 )
 ACTIVE_STATES = ("running", "paused", "limited")
+# Columns added after the first jobs were created; added in place when an older table is opened.
+LATER_COLUMNS = (
+    ("asr_status", "TEXT DEFAULT 'pending'"),
+    ("asr_attempts", "INTEGER DEFAULT 0"),
+    ("asr_error", "TEXT DEFAULT ''"),
+    ("asr_started_at", "REAL"),
+    ("asr_finished_at", "REAL"),
+    ("asr_seconds", "REAL"),
+    ("segments", "INTEGER"),
+    ("speakers", "INTEGER"),
+    ("language", "TEXT DEFAULT ''"),
+)
 
 
 @dataclass
@@ -83,6 +104,11 @@ class Limits:
     max_blocks_per_video: int = 3
     first_backoff: float = 15 * 60
     max_backoff: float = 4 * 3600
+    asr_workers: int = 3
+    asr_max_attempts: int = 3
+    asr_retry_after: float = 5 * 60
+    asr_fail_streak: int = 5
+    asr_backoff: float = 10 * 60
 
 
 def classify(error: str) -> str:
@@ -114,6 +140,10 @@ class BulkStore:
                 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
                 """
             )
+            have = {row["name"] for row in conn.execute("PRAGMA table_info(videos)")}
+            for name, spec in LATER_COLUMNS:
+                if name not in have:
+                    conn.execute(f"ALTER TABLE videos ADD COLUMN {name} {spec}")
 
     def _conn(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db, timeout=30)
@@ -161,22 +191,45 @@ class BulkStore:
                 added += cursor.rowcount
         return added
 
+    def work_left(self, limits: "Limits | None" = None) -> tuple[int, int]:
+        """(downloads, transcriptions) that a runner would still do; retries that are used up do not count."""
+        limits = limits or Limits()
+        downloads = self.query(
+            "SELECT COUNT(*) n FROM videos WHERE status IN ('pending','downloading') OR "
+            "(status='failed' AND attempts < ?)", (limits.max_attempts,))[0]["n"]
+        if not self.meta("asr_model", ""):
+            return downloads, 0
+        asr = self.query(
+            "SELECT COUNT(*) n FROM videos WHERE status='done' AND (asr_status IN ('pending','running') OR "
+            "(asr_status='failed' AND asr_attempts < ?))", (limits.asr_max_attempts,))[0]["n"]
+        return downloads, asr
+
+    def video(self, video_id: str) -> dict[str, Any] | None:
+        rows = self.query("SELECT * FROM videos WHERE id=?", (video_id,))
+        return dict(rows[0]) if rows else None
+
     def rows(self) -> list[dict[str, Any]]:
         return [dict(row) for row in self.query(
             "SELECT id, position, title, duration, url, status, bytes, speed, location, attempts, error, "
-            "started_at, finished_at FROM videos ORDER BY position")]
+            "started_at, finished_at, asr_status, asr_attempts, asr_error, asr_started_at, asr_finished_at, "
+            "segments, speakers, language FROM videos ORDER BY position")]
 
     def events(self, limit: int = 40) -> list[dict[str, Any]]:
-        return [dict(row) for row in self.query("SELECT at, kind, detail FROM events ORDER BY at DESC, rowid DESC LIMIT ?", (limit,))]
+        return [dict(row) for row in self.query(
+            "SELECT at, kind, detail FROM events ORDER BY at DESC, rowid DESC LIMIT ?", (limit,))]
 
     def summary(self, now: float | None = None) -> dict[str, Any]:
         now = time.time() if now is None else now
         meta = self.all_meta()
         counts = {row["status"]: row["n"] for row in self.query("SELECT status, COUNT(*) n FROM videos GROUP BY status")}
+        asr_counts = {row["asr_status"]: row["n"] for row in self.query(
+            "SELECT asr_status, COUNT(*) n FROM videos WHERE status='done' GROUP BY asr_status")}
         totals = self.query(
             "SELECT COUNT(*) n, COALESCE(SUM(duration),0) dur, COALESCE(SUM(CASE WHEN status='done' THEN bytes END),0) "
             "bytes, COALESCE(SUM(CASE WHEN status='done' THEN duration END),0) done_dur, "
-            "COALESCE(SUM(CASE WHEN status='done' AND location='nas' THEN 1 END),0) on_nas FROM videos"
+            "COALESCE(SUM(CASE WHEN status='done' AND location='nas' THEN 1 END),0) on_nas, "
+            "COALESCE(SUM(CASE WHEN asr_status='done' THEN COALESCE(asr_seconds, duration) END),0) asr_secs "
+            "FROM videos"
         )[0]
         speeds = [row["speed"] for row in self.query(
             "SELECT speed FROM videos WHERE status='done' AND speed IS NOT NULL AND bytes >= 5000000 "
@@ -189,6 +242,9 @@ class BulkStore:
         done_bytes = int(totals["bytes"])
         done_dur = float(totals["done_dur"])
         staging = meta.get("staging", "")
+        asr_model = meta.get("asr_model", "")
+        price = ASR_USD_PER_SEC.get(asr_model, 0.0)
+        asr_pause_until = float(meta.get("asr_pause_until") or 0)
         return {
             "name": meta.get("name", self.db.parent.name),
             "title": meta.get("title", "") or meta.get("name", self.db.parent.name),
@@ -215,16 +271,26 @@ class BulkStore:
             "staging": staging,
             "free_gb": round(_free_gb(Path(staging)), 1) if staging else None,
             "min_free_gb": meta.get("min_free_gb"),
+            "asr_model": asr_model,
+            "asr_counts": asr_counts,
+            "asr_hours": round(float(totals["asr_secs"]) / 3600, 1),
+            "asr_cost_usd": round(float(totals["asr_secs"]) * price, 2),
+            "asr_estimated_total_usd": round(float(totals["dur"]) * price, 0) if price else None,
+            "asr_pause_until": asr_pause_until if asr_pause_until > now else 0.0,
+            "asr_pause_reason": meta.get("asr_pause_reason", "") if asr_pause_until > now else "",
         }
 
     def to_csv(self) -> str:
         buffer = io.StringIO()
         writer = csv.writer(buffer)
-        writer.writerow(["#", "id", "title", "minutes", "status", "MB", "location", "attempts", "error", "url"])
+        writer.writerow(["#", "id", "title", "minutes", "download", "MB", "location", "attempts", "download error",
+                         "asr", "segments", "speakers", "language", "asr attempts", "asr error", "url"])
         for row in self.rows():
             writer.writerow([
                 row["position"] + 1, row["id"], row["title"], round((row["duration"] or 0) / 60, 1), row["status"],
-                round((row["bytes"] or 0) / 1e6, 1), row["location"], row["attempts"], row["error"], row["url"],
+                round((row["bytes"] or 0) / 1e6, 1), row["location"], row["attempts"], row["error"],
+                row["asr_status"] if row["status"] == "done" else "", row["segments"] or "", row["speakers"] or "",
+                row["language"] or "", row["asr_attempts"] or 0, row["asr_error"], row["url"],
             ])
         return buffer.getvalue()
 
@@ -271,6 +337,37 @@ def find_bulk_media(config: AppConfig, video_id: str) -> Path | None:
             except OSError:
                 continue
     return None
+
+
+def transcript_text(config: AppConfig, store: BulkStore, video_id: str) -> str | None:
+    """A bulk video's transcript as plain text (speaker turns with timestamps), or None."""
+    from media_pipeline.artifacts import ArtifactStore
+    from media_pipeline.models import format_timestamp
+
+    video = store.video(video_id)
+    model = store.meta("asr_model", "")
+    if video is None or not model:
+        return None
+    if not (config.paths.artifacts / video_id / "asr" / f"{model}.json").is_file():
+        return None
+    transcript = ArtifactStore(config.paths.artifacts, video_id).load_transcript(model)
+    if transcript is None:
+        return None
+    lines = [video["title"] or video_id, video["url"], ""]
+    speaker, block, start = None, [], 0.0
+    for segment in transcript.segments:
+        text = segment.text.strip()
+        if not text:
+            continue
+        if segment.speaker != speaker and block:
+            lines += [f"[{format_timestamp(start)}] {speaker or ''}".rstrip(), " ".join(block), ""]
+            block = []
+        if not block:
+            speaker, start = segment.speaker, segment.start
+        block.append(text)
+    if block:
+        lines += [f"[{format_timestamp(start)}] {speaker or ''}".rstrip(), " ".join(block), ""]
+    return "\n".join(lines)
 
 
 def read_list(source: str) -> list[dict[str, Any]]:
@@ -331,6 +428,8 @@ def dest_ready(raw: str) -> Path | None:
 
 # --------------------------------------------------------------------------------------------- runner
 Downloader = Callable[[str, str, Path, Callable[[int], None]], tuple[Path, int, float]]
+# (media file, video row, ASR model id) -> {"segments", "speakers", "language", "seconds"}
+Transcriber = Callable[[Path, dict[str, Any], str], dict[str, Any]]
 
 
 class BulkRunner:
@@ -343,6 +442,7 @@ class BulkRunner:
         fmt: str = DEFAULT_FORMAT,
         downloader: Downloader | None = None,
         prober: Callable[[], None] | None = None,
+        transcriber: Transcriber | None = None,
         clock: Callable[[], float] = time.time,
         sleep: Callable[[float], None] | None = None,
         free_gb: Callable[[Path], float] | None = None,
@@ -354,16 +454,20 @@ class BulkRunner:
         self.staging = store.db.parent / "media"
         self.download = downloader or self._yt_dlp_download
         self.probe = prober or self._yt_dlp_probe
+        self.transcribe = transcriber or self._asr_transcribe
         self.clock = clock
         self._stop = threading.Event()
         self.sleep = sleep or (lambda seconds: self._stop.wait(max(0.0, seconds)))
         self.free_gb = free_gb or _free_gb
         self._backoff = self.limits.first_backoff
         self._fail_streak = 0
+        self._asr_streak = 0
         self._claim_lock = threading.Lock()
         self._probe_lock = threading.Lock()
         self._move_lock = threading.Lock()
-        self._last_beat = 0.0
+        self._asr_lock = threading.Lock()
+        self._downloads_done = threading.Event()
+        self._last_beat: dict[str, float] = {}
         self._done = 0
 
     # ------------------------------------------------------------------ main loop
@@ -373,22 +477,36 @@ class BulkRunner:
         self.store.set_meta("min_free_gb", self.limits.min_free_gb)
         self.store.set_meta("pid", os.getpid())
         self.store.execute("UPDATE videos SET status='pending' WHERE status='downloading'")
-        self._beat(force=True)
-        self.store.event("start", f"workers={self.limits.workers} dest={self.store.meta('dest', '') or '(Mac)'}",
-                         at=self.clock())
-        threads = [threading.Thread(target=self._worker, args=(max_videos,), daemon=True)
-                   for _ in range(max(1, self.limits.workers))]
-        for thread in threads:
+        self.store.execute("UPDATE videos SET asr_status='pending' WHERE asr_status='running'")
+        self._beat("download", force=True)
+        self._beat("asr", force=True)
+        asr_model = self.store.meta("asr_model", "")
+        self.store.event(
+            "start",
+            f"downloads={self.limits.workers} asr={asr_model or 'off'}x{self.limits.asr_workers if asr_model else 0} "
+            f"dest={self.store.meta('dest', '') or '(Mac)'}",
+            at=self.clock(),
+        )
+        downloads = [threading.Thread(target=self._worker, args=(max_videos,), daemon=True)
+                     for _ in range(max(1, self.limits.workers))]
+        transcribers = [threading.Thread(target=self._asr_worker, args=(asr_model,), daemon=True)
+                        for _ in range(self.limits.asr_workers if asr_model else 0)]
+        for thread in downloads + transcribers:
             thread.start()
-        for thread in threads:
+        for thread in downloads:
             thread.join()
-        self._move_staged()
+        self._downloads_done.set()
+        for thread in transcribers:
+            thread.join()
+        self._move_staged(force=True)
         left = self.store.query(
             "SELECT COUNT(*) n FROM videos WHERE status='pending' OR (status='failed' AND attempts < ?)",
             (self.limits.max_attempts,))[0]["n"]
-        state = "finished" if not left else "stopped"
-        self._set_state(state, "" if not left else f"还剩 {left} 个")
-        self.store.event("stop", f"left={left}", at=self.clock())
+        asr_left = self._asr_left() if asr_model else 0
+        state = "finished" if not left and not asr_left else "stopped"
+        detail = "" if state == "finished" else f"还剩 {left} 个待下载、{asr_left} 个待转写"
+        self._set_state(state, detail)
+        self.store.event("stop", f"left={left} asr_left={asr_left}", at=self.clock())
         return state
 
     def stop(self) -> None:
@@ -430,7 +548,7 @@ class BulkRunner:
 
         def progress(downloaded: int) -> None:
             self.store.execute("UPDATE videos SET bytes=? WHERE id=?", (int(downloaded), vid))
-            self._beat()
+            self._beat("download")
 
         try:
             path, size, seconds = self.download(row["url"], vid, self.staging, progress)
@@ -474,10 +592,121 @@ class BulkRunner:
             self._fail_streak = 0
             self._limit(f"连续 {self.limits.fail_streak} 个视频下载失败（最近一个：{message[:120]}）")
 
+    # ------------------------------------------------------------------ transcription
+    def _asr_worker(self, model: str) -> None:
+        while not self._stop.is_set():
+            self._beat("asr")
+            if self.store.meta("control", "") == "pause":
+                self.sleep(15)
+                continue
+            until = float(self.store.meta("asr_pause_until", 0) or 0)
+            if until > self.clock():
+                self.sleep(min(30.0, until - self.clock()))
+                continue
+            row = self._claim_asr()
+            if row is None:
+                if self._downloads_done.is_set() and not self._asr_left(waiting_only=True):
+                    return
+                self.sleep(15)
+                continue
+            self._asr_one(row, model)
+
+    def _claim_asr(self) -> dict[str, Any] | None:
+        with self._claim_lock:
+            rows = self.store.query(
+                "SELECT * FROM videos WHERE status='done' AND (asr_status='pending' OR "
+                "(asr_status='failed' AND asr_attempts < ? AND COALESCE(asr_finished_at, 0) <= ?)) "
+                "ORDER BY asr_status='failed', position LIMIT 1",
+                (self.limits.asr_max_attempts, self.clock() - self.limits.asr_retry_after),
+            )
+            if not rows:
+                return None
+            self.store.execute(
+                "UPDATE videos SET asr_status='running', asr_started_at=?, asr_attempts=asr_attempts+1, asr_error='' "
+                "WHERE id=?",
+                (self.clock(), rows[0]["id"]),
+            )
+            return dict(rows[0])
+
+    def _asr_left(self, waiting_only: bool = False) -> int:
+        """Downloaded videos still to transcribe (``waiting_only``: not counting ones in progress)."""
+        statuses = "('pending')" if waiting_only else "('pending','running')"
+        return self.store.query(
+            f"SELECT COUNT(*) n FROM videos WHERE status='done' AND (asr_status IN {statuses} OR "
+            "(asr_status='failed' AND asr_attempts < ?))",
+            (self.limits.asr_max_attempts,),
+        )[0]["n"]
+
+    def _asr_one(self, row: dict[str, Any], model: str) -> None:
+        vid = row["id"]
+        path = Path(row["path"] or "")
+        if not path.is_file():  # e.g. moved to a NAS that is not mounted right now
+            self.store.execute(
+                "UPDATE videos SET asr_status='pending', asr_attempts=asr_attempts-1 WHERE id=?", (vid,))
+            self.sleep(60)
+            return
+        try:
+            stats = self.transcribe(path, row, model)
+        except Exception as exc:  # noqa: BLE001 - recorded per video, retried later
+            message = _short(exc)
+            logger.warning("asr failed %s (#%s): %s", vid, row["position"] + 1, message[:300])
+            self.store.execute("UPDATE videos SET asr_status='failed', asr_error=?, asr_finished_at=? WHERE id=?",
+                               (message, self.clock(), vid))
+            with self._asr_lock:
+                self._asr_streak += 1
+                if self._asr_streak >= self.limits.asr_fail_streak:
+                    self._asr_streak = 0
+                    resume = self.clock() + self.limits.asr_backoff
+                    reason = f"连续 {self.limits.asr_fail_streak} 个视频转写失败（最近一个：{message[:120]}）"
+                    self.store.set_meta("asr_pause_until", resume)
+                    self.store.set_meta("asr_pause_reason", reason)
+                    self.store.event("asr-pause", f"{reason}，{round(self.limits.asr_backoff / 60)} 分钟后继续",
+                                     at=self.clock())
+            return
+        seconds = row.get("duration") or stats.get("seconds")
+        self.store.execute(
+            "UPDATE videos SET asr_status='done', asr_error='', asr_finished_at=?, asr_seconds=?, segments=?, "
+            "speakers=?, language=? WHERE id=?",
+            (self.clock(), seconds, stats.get("segments"), stats.get("speakers"), stats.get("language") or "", vid),
+        )
+        with self._asr_lock:
+            self._asr_streak = 0
+        self._beat("asr", force=True)
+        logger.info("asr done %s (#%s) %s segments, %s speakers", vid, row["position"] + 1,
+                    stats.get("segments"), stats.get("speakers"))
+
+    def _asr_transcribe(self, path: Path, row: dict[str, Any], model: str) -> dict[str, Any]:
+        """The pipeline's own ASR step, saved where the pipeline looks for it later."""
+        from media_pipeline.artifacts import ArtifactStore
+        from media_pipeline.asr.language import resolve_provider_language
+        from media_pipeline.asr.registry import require_provider
+        from media_pipeline.models import ASR_MODELS, ASROptions
+        from media_pipeline.transcript import clean_transcript
+
+        artifacts = ArtifactStore(self.config.paths.artifacts, row["id"])
+        transcript = artifacts.load_transcript(model)
+        if not (transcript and transcript.segments):
+            provider = require_provider(model)
+            bind = getattr(provider, "bind_config", None)
+            if callable(bind):
+                bind(self.config)
+            language = resolve_provider_language(ASR_MODELS[model]["provider"], self.config.asr.language or "auto")
+            context = "\n".join(part for part in (row.get("title"), self.store.meta("title", "")) if part)
+            transcript = clean_transcript(provider.transcribe(path, ASROptions(context=context, language=language)))
+            if not transcript.segments:
+                raise RuntimeError("ASR returned no speech")
+            artifacts.save_transcript(model, transcript)
+        return {
+            "segments": len(transcript.segments),
+            "speakers": len({segment.speaker for segment in transcript.segments if segment.speaker}),
+            "language": transcript.language or "",
+            "seconds": max((segment.end for segment in transcript.segments), default=0.0),
+        }
+
     # ------------------------------------------------------------ limits & pauses
     def _wait_until_clear(self) -> bool:
         while not self._stop.is_set():
-            self._beat()
+            self._beat("download")
             if self.store.meta("control", "") == "pause":
                 self._set_state("paused", "已手动暂停")
                 self.sleep(15)
@@ -492,7 +721,7 @@ class BulkRunner:
                 continue
             free = self.free_gb(self.staging)
             if free < self.limits.min_free_gb:
-                self._move_staged()
+                self._move_staged(force=True)
                 free = self.free_gb(self.staging)
             if free < self.limits.min_free_gb:
                 self._set_state("paused", f"Mac 只剩 {free:.0f} GB；NAS 挂上后已下载的会自动移过去，然后继续")
@@ -550,19 +779,33 @@ class BulkRunner:
             self.store.set_meta("state", state)
             self.store.set_meta("state_detail", detail)
 
-    def _beat(self, force: bool = False) -> None:
+    def _beat(self, kind: str = "", force: bool = False) -> None:
+        """Liveness for the page and the watchdog; downloads and ASR beat separately, so one stuck
+        stage is visible even while the other keeps the job looking alive."""
         now = self.clock()
-        if force or now - self._last_beat >= 10:
-            self._last_beat = now
+        if force or now - self._last_beat.get(kind, 0.0) >= 10:
+            self._last_beat[kind] = now
             self.store.set_meta("heartbeat", now)
+            if kind:
+                self.store.set_meta(f"heartbeat_{kind}", now)
 
     # ---------------------------------------------------------------- storage
-    def _move_staged(self) -> None:
+    def _move_staged(self, force: bool = False) -> None:
+        """Copy finished files to the NAS. With ASR on, a file waits until it is transcribed (read locally,
+        faster) unless ``force`` (the disk is low, or the run is ending); never while it is being read."""
         dest = dest_ready(self.store.meta("dest", ""))
         if dest is None:
             return
+        waiting = not force and bool(self.store.meta("asr_model", ""))
         with self._move_lock:
-            for row in self.store.query("SELECT id, path FROM videos WHERE status='done' AND location='mac'"):
+            for row in self.store.query(
+                "SELECT id, path, asr_status, asr_attempts FROM videos WHERE status='done' AND location='mac'"
+            ):
+                if row["asr_status"] == "running":
+                    continue
+                if waiting and (row["asr_status"] == "pending" or (
+                        row["asr_status"] == "failed" and row["asr_attempts"] < self.limits.asr_max_attempts)):
+                    continue
                 source = Path(row["path"])
                 if not source.is_file():
                     continue
@@ -572,8 +815,13 @@ class BulkRunner:
                 except OSError as exc:
                     self.store.event("move-failed", f"{source.name}: {exc}", at=self.clock())
                     return
-                source.unlink()
-                self.store.execute("UPDATE videos SET path=?, location='nas' WHERE id=?", (str(target), row["id"]))
+                with self._claim_lock:  # an ASR worker may have claimed it while it was copying
+                    current = self.store.query("SELECT asr_status FROM videos WHERE id=?", (row["id"],))
+                    if current and current[0]["asr_status"] == "running":
+                        continue
+                    source.unlink()
+                    self.store.execute("UPDATE videos SET path=?, location='nas' WHERE id=?",
+                                       (str(target), row["id"]))
 
     # ---------------------------------------------------------------- yt-dlp
     def _guest_opts(self) -> dict[str, Any]:

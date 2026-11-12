@@ -106,6 +106,9 @@
   .yt.bad { background: var(--warn-soft); }
   .yt b { font-weight: 600; }
   .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  .dog { margin-top: 10px; font-size: 13px; color: var(--text-3); }
+  .dog.bad { color: var(--warn); }
+  td.title .sub .st { font-size: 12px; padding: 0 6px; }
 
   .tools { position: sticky; top: calc(var(--top) + 55px); z-index: 4; background: var(--bg); padding: 12px 0 6px; }
   .search {
@@ -156,7 +159,7 @@
     table, tbody, tr, td { display: block; }
     tr { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; padding: 10px 0; border-bottom: 0.5px solid var(--line); }
     td { padding: 0; border: 0; }
-    td.idx, td.dur, td.size, td.loc, td.proc-cell { display: none; }
+    td.idx, td.dur, td.size, td.loc, td.asr-cell, td.proc-cell { display: none; }
     td.title { grid-column: 1; }
     td.status { grid-column: 2; grid-row: 1; text-align: right; }
     td.title .sub { display: block; margin-top: 2px; font-size: 13px; color: var(--text-3); }
@@ -183,7 +186,7 @@
     <nav class="chips" id="chips" aria-label="筛选"></nav>
   </div>
   <table>
-    <thead><tr><th>#</th><th>标题</th><th class="num">时长</th><th>下载</th><th class="num">大小</th><th>位置</th><th>处理</th></tr></thead>
+    <thead><tr><th>#</th><th>标题</th><th class="num">时长</th><th>下载</th><th class="num">大小</th><th>位置</th><th>转写</th><th>处理</th></tr></thead>
     <tbody id="rows"></tbody>
   </table>
   <button class="pill more" id="more" type="button" hidden>显示更多</button>
@@ -197,7 +200,9 @@ const PAGE = 200;
 const STATUS = { pending: "待下载", downloading: "下载中", done: "已下载", failed: "失败", skipped: "跳过" };
 const STATE = { running: "下载中", limited: "YouTube 限制中", paused: "已暂停", finished: "已完成", stopped: "未运行", idle: "未开始" };
 const PROC = { completed: "已处理", failed: "处理失败", queued: "排队中" };
-const CHIPS = [["all", "全部"], ["downloading", "下载中"], ["pending", "待下载"], ["done", "已下载"], ["failed", "失败"], ["skipped", "跳过"], ["processed", "已处理"]];
+const ASR = { pending: "待转写", running: "转写中", done: "已转写", failed: "转写失败" };
+const CHIPS = [["all", "全部"], ["downloading", "下载中"], ["pending", "待下载"], ["done", "已下载"], ["failed", "下载失败"], ["skipped", "跳过"],
+  ["asr:running", "转写中"], ["asr:done", "已转写"], ["asr:failed", "转写失败"], ["processed", "已处理"]];
 const state = { jobs: [], name: "", data: null, chip: "all", q: "", shown: PAGE, sig: "" };
 
 function minutes(seconds) {
@@ -268,7 +273,7 @@ function paint() {
   $("#title").textContent = s.title;
   $("#csv").href = `/v1/bulk/${encodeURIComponent(s.name)}/csv`;
   paintSummary(s);
-  const sig = JSON.stringify([state.chip, state.q, state.shown, videos.map((v) => [v.status, v.bytes, v.location, v.task && v.task.status])]);
+  const sig = JSON.stringify([state.chip, state.q, state.shown, videos.map((v) => [v.status, v.bytes, v.location, v.asr_status, v.task && v.task.status])]);
   if (sig !== state.sig) {
     state.sig = sig;
     paintChips(videos);
@@ -296,32 +301,47 @@ function paintSummary(s) {
     ? `<button class="pill primary" type="button" data-act="resume">继续</button>`
     : `<button class="pill" type="button" data-act="pause" ${s.alive ? "" : "disabled"}>暂停</button>`;
   const retry = limited ? `<button class="pill" type="button" data-act="resume">立即探测</button>` : "";
+  const a = s.asr_counts || {};
+  const asrValue = s.asr_model
+    ? `${a.done || 0} / ${done} 已下载${a.running ? ` · ${a.running} 个转写中` : ""}<br>≈ $${s.asr_cost_usd}${s.asr_estimated_total_usd ? `（全部约 $${s.asr_estimated_total_usd}）` : ""}`
+    : "未开启";
+  const asrPause = s.asr_pause_until
+    ? `<div class="yt bad">⚠️ <b>转写暂停</b>：${esc(s.asr_pause_reason)} · ${clock(s.asr_pause_until)} 继续</div>` : "";
+  const dog = s.watchdog || {};
+  const dogLine = dog.at
+    ? `<div class="dog ${dog.ok ? "" : "bad"}">自检 ${clock(dog.at)} · ${dog.ok ? "全部正常" : esc(dog.problems.join("；"))}${dog.actions && dog.actions.length ? ` · 已处理：${esc(dog.actions.join("；"))}` : ""}</div>`
+    : "";
   $("#summary").innerHTML = `
     <div class="state"><span class="badge ${esc(s.state)}">${esc(STATE[s.state] || s.state)}</span>
       <span class="state-detail">${esc(limited ? "" : s.state_detail || "")}</span></div>
     <div class="big">${done}<small>/ ${s.total} 已下载</small></div>
     <div class="bar"><i class="done" style="width:${pct(done)}%"></i><i class="skipped" style="width:${pct(skipped)}%"></i><i class="failed" style="width:${pct(failed)}%"></i></div>
-    ${yt}
+    ${yt}${asrPause}
     <div class="grid">
       <div class="kv"><div class="k">时长</div><div class="v">${s.done_hours} / ${s.hours} 小时</div></div>
       <div class="kv"><div class="k">已下载大小</div><div class="v">${s.gigabytes} GB${s.estimated_total_gb ? ` · 预计共 ${s.estimated_total_gb} GB` : ""}</div></div>
       <div class="kv"><div class="k">最近速度</div><div class="v">${s.recent_speed_mb_s != null ? `${s.recent_speed_mb_s} MB/s` : "—"}</div></div>
       <div class="kv"><div class="k">存储</div><div class="v">${esc(storage)}</div></div>
       <div class="kv"><div class="k">Mac 剩余空间${s.min_free_gb ? `（低于 ${s.min_free_gb} GB 暂停）` : ""}</div><div class="v">${s.free_gb != null ? `${s.free_gb} GB` : "—"}</div></div>
-      <div class="kv"><div class="k">失败 / 跳过</div><div class="v">${failed} / ${skipped}</div></div>
+      <div class="kv"><div class="k">转写${s.asr_model ? ` · ${esc(s.asr_model)}` : ""}</div><div class="v">${asrValue}</div></div>
+      <div class="kv"><div class="k">下载失败 / 跳过 / 转写失败</div><div class="v">${failed} / ${skipped} / ${a.failed || 0}</div></div>
     </div>
-    <div class="actions">${control}${retry}</div>`;
+    <div class="actions">${control}${retry}</div>${dogLine}`;
 }
 
+function inChip(v, key) {
+  if (key === "all") return true;
+  if (key === "processed") return Boolean(v.task && v.task.status === "completed");
+  if (key.startsWith("asr:")) return v.status === "done" && v.asr_status === key.slice(4);
+  return v.status === key;
+}
 function matches(v) {
   if (state.q && !v.title.toLowerCase().includes(state.q) && !v.id.toLowerCase().includes(state.q)) return false;
-  if (state.chip === "all") return true;
-  if (state.chip === "processed") return v.task && v.task.status === "completed";
-  return v.status === state.chip;
+  return inChip(v, state.chip);
 }
 
 function paintChips(videos) {
-  const count = (key) => videos.filter((v) => (key === "all" ? true : key === "processed" ? v.task && v.task.status === "completed" : v.status === key)).length;
+  const count = (key) => videos.filter((v) => inChip(v, key)).length;
   $("#chips").innerHTML = CHIPS.map(([key, label]) => {
     const n = count(key);
     if (!n && key !== "all" && key !== state.chip) return "";
@@ -332,7 +352,7 @@ function paintChips(videos) {
 function paintRows(videos) {
   const list = videos.filter(matches);
   const shown = list.slice(0, state.shown);
-  $("#rows").innerHTML = shown.length ? shown.map(row).join("") : `<tr><td colspan="7"><div class="empty">没有符合条件的视频</div></td></tr>`;
+  $("#rows").innerHTML = shown.length ? shown.map(row).join("") : `<tr><td colspan="8"><div class="empty">没有符合条件的视频</div></td></tr>`;
   const more = $("#more");
   more.hidden = list.length <= state.shown;
   more.textContent = `显示更多（还有 ${list.length - state.shown} 个）`;
@@ -345,21 +365,36 @@ function row(v) {
   const proc = task
     ? `<a class="proc ${esc(task.status)}" href="/#/n/${encodeURIComponent(task.id)}">${esc(PROC[task.status] || "处理中")}</a>`
     : `<span class="proc">—</span>`;
+  const asr = asrCell(v);
+  const asrText = v.status === "done" && state.data.summary.asr_model ? (ASR[v.asr_status] || "") : "";
   const sub = [`#${v.position + 1}`, minutes(v.duration), size, loc, task ? (PROC[task.status] || "处理中") : ""].filter(Boolean).join(" · ");
-  const err = v.error && v.status !== "done" ? `<div class="err">${esc(v.error)}</div>` : "";
+  const subAsr = asrText ? ` · ${v.asr_status === "done" ? asr : esc(asrText)}` : "";
+  const err = v.error && v.status !== "done" ? `<div class="err">${esc(v.error)}</div>`
+    : v.asr_error && v.asr_status === "failed" ? `<div class="err">转写：${esc(v.asr_error)}</div>` : "";
   return `<tr>
     <td class="idx">${v.position + 1}</td>
-    <td class="title"><a href="${esc(v.url)}" target="_blank" rel="noopener">${esc(v.title || v.id)}</a><div class="sub">${esc(sub)}</div>${err}</td>
+    <td class="title"><a href="${esc(v.url)}" target="_blank" rel="noopener">${esc(v.title || v.id)}</a><div class="sub">${esc(sub)}${subAsr}</div>${err}</td>
     <td class="num dur">${minutes(v.duration)}</td>
     <td class="status"><span class="st ${esc(v.status)}">${STATUS[v.status] || esc(v.status)}</span></td>
     <td class="num size">${size}</td>
     <td class="loc">${loc}</td>
+    <td class="asr-cell">${asr}</td>
     <td class="proc-cell">${proc}</td>
   </tr>`;
 }
 
+function asrCell(v) {
+  if (v.status !== "done" || !state.data.summary.asr_model) return `<span class="proc">—</span>`;
+  if (v.asr_status === "done") {
+    const who = v.speakers ? ` · ${v.speakers} 人` : "";
+    return `<a class="st done" href="/v1/bulk/${encodeURIComponent(state.name)}/transcript/${encodeURIComponent(v.id)}" target="_blank" rel="noopener">已转写${who}</a>`;
+  }
+  const cls = { running: "downloading", failed: "failed" }[v.asr_status] || "";
+  return `<span class="st ${cls}">${ASR[v.asr_status] || esc(v.asr_status)}</span>`;
+}
+
 function paintEvents(events) {
-  const label = { start: "启动", stop: "停止", pause: "暂停", resume: "恢复", "move-failed": "移动失败" };
+  const label = { start: "启动", stop: "停止", pause: "暂停", resume: "恢复", "move-failed": "移动失败", "asr-pause": "转写暂停", watchdog: "自检" };
   $("#events").innerHTML = events.length ? `<h2>事件</h2>` + events.map((e) => `
     <div class="event"><time>${clock(e.at)}</time><span class="kind ${esc(e.kind)}">${esc(label[e.kind] || e.kind)}</span><span class="detail">${esc(e.detail)}</span></div>`).join("") : "";
 }

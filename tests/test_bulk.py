@@ -1,3 +1,4 @@
+import time
 from pathlib import Path
 
 import pytest
@@ -30,6 +31,7 @@ class Clock:
 
     def sleep(self, seconds: float) -> None:
         self.t += max(seconds, 0.001)
+        time.sleep(0)  # let the other stage's threads run
 
 
 class FakeYouTube:
@@ -61,9 +63,28 @@ def _job(config: AppConfig, ids=("a", "b", "c"), **meta) -> bulk.BulkStore:
     return store
 
 
-def _runner(config, store, clock, youtube, probe=lambda: None, free=lambda path: 500.0, **limits):
+def _runner(config, store, clock, youtube, probe=lambda: None, free=lambda path: 500.0, transcriber=None, **limits):
     return BulkRunner(config, store, limits=Limits(pause_between=(0, 0), **limits), downloader=youtube,
-                      prober=probe, clock=clock, sleep=clock.sleep, free_gb=free)
+                      prober=probe, transcriber=transcriber, clock=clock, sleep=clock.sleep, free_gb=free)
+
+
+class FakeASR:
+    """Stands in for Fun-ASR; `fail` maps a video id to errors raised on its first calls ("*" = every video)."""
+
+    def __init__(self, fail=None, on_call=None):
+        self.fail = {vid: list(errors) for vid, errors in (fail or {}).items()}
+        self.on_call = on_call
+        self.calls: list[str] = []
+
+    def __call__(self, path, row, model):
+        assert model == "fun-asr" and path.is_file()
+        self.calls.append(row["id"])
+        if self.on_call:
+            self.on_call(path, row)
+        errors = self.fail.get(row["id"]) or self.fail.get("*")
+        if errors:
+            raise RuntimeError(errors[0] if "*" in self.fail else errors.pop(0))
+        return {"segments": 12, "speakers": 2, "language": "en", "seconds": 1790.0}
 
 
 def _row(store, vid):
@@ -316,3 +337,101 @@ def test_find_media_file_ignores_pieces_of_a_split_download(tmp_path: Path):
     assert find_media_file(tmp_path, "BV1d7W26SEkb_p1") == tmp_path / "BV1d7W26SEkb_p1.flv"
     (tmp_path / "BV1d7W26SEkb_p1.mp4").write_bytes(b"merged")
     assert find_media_file(tmp_path, "BV1d7W26SEkb_p1") == tmp_path / "BV1d7W26SEkb_p1.mp4"
+
+
+
+def test_transcription_runs_alongside_downloads_and_records_each_stage(tmp_path: Path):
+    config = _config(tmp_path)
+    store = _job(config, asr_model="fun-asr")
+    clock, asr = Clock(), FakeASR()
+    assert _runner(config, store, clock, FakeYouTube(), transcriber=asr).run() == "finished"
+    assert sorted(asr.calls) == ["a", "b", "c"]
+    for vid in "abc":
+        row = _row(store, vid)
+        assert row["status"] == "done" and row["asr_status"] == "done"
+        assert row["segments"] == 12 and row["speakers"] == 2 and row["language"] == "en"
+        assert row["finished_at"] <= row["asr_started_at"] <= row["asr_finished_at"]  # download, then ASR
+    summary = store.summary(now=clock.t)
+    assert summary["asr_counts"] == {"done": 3} and summary["asr_hours"] == 1.5
+    assert summary["asr_cost_usd"] == round(3 * 1800 * 0.000035, 2)
+    assert store.work_left() == (0, 0)
+
+
+def test_transcription_failures_are_retried_then_paused_after_a_streak(tmp_path: Path):
+    config = _config(tmp_path)
+    store = _job(config, ids=tuple(f"v{i}" for i in range(5)), asr_model="fun-asr")
+    clock, asr = Clock(), FakeASR(fail={"*": ["DashScope task failed: Throttling.RateQuota"]})
+    assert _runner(config, store, clock, FakeYouTube(), transcriber=asr, asr_fail_streak=5).run() == "finished"
+    assert len(asr.calls) == 15  # every video, three attempts each
+    rows = store.rows()
+    assert all(row["asr_status"] == "failed" and row["asr_attempts"] == 3 for row in rows)
+    assert "Throttling" in rows[0]["asr_error"]
+    assert any("连续 5 个视频转写失败" in event["detail"] for event in _events(store, "asr-pause"))
+    assert store.work_left() == (0, 0)
+
+
+def test_a_video_moves_to_the_nas_only_after_it_is_transcribed(tmp_path: Path):
+    config = _config(tmp_path)
+    nas = tmp_path / "nas"
+    store = _job(config, ids=("a", "b"), asr_model="fun-asr", dest=str(nas))
+    reads = []
+    asr = FakeASR(on_call=lambda path, row: reads.append((row["id"], path.parent.name, (nas / path.name).exists())))
+    _runner(config, store, Clock(), FakeYouTube(), transcriber=asr).run()
+    assert sorted(reads) == [("a", "media", False), ("b", "media", False)]  # read locally, not yet copied
+    assert {row["location"] for row in store.rows()} == {"nas"}
+    assert sorted(p.name for p in nas.iterdir()) == ["a.mp4", "b.mp4"]
+
+
+def test_bulk_transcriber_saves_where_the_pipeline_looks(tmp_path: Path, monkeypatch):
+    from media_pipeline.artifacts import ArtifactStore
+    from media_pipeline.models import Transcript, TranscriptSegment
+
+    config = _config(tmp_path)
+    store = _job(config, ids=("talk1",), asr_model="fun-asr", title="AI Engineer")
+    calls = []
+
+    class Provider:
+        def bind_config(self, cfg):
+            calls.append("bind")
+
+        def transcribe(self, path, options):
+            calls.append(options.context)
+            return Transcript(language="en", provider="dashscope", model="fun-asr", segments=[
+                TranscriptSegment(0.0, 3.0, "Welcome to the talk.", speaker="SPEAKER_00"),
+                TranscriptSegment(3.0, 6.0, "Thanks for having me.", speaker="SPEAKER_01"),
+                TranscriptSegment(6.0, 9.0, "Let us start with evals.", speaker="SPEAKER_01"),
+            ])
+
+    monkeypatch.setattr("media_pipeline.asr.registry.require_provider", lambda model: Provider())
+    runner = BulkRunner(config, store, limits=Limits(pause_between=(0, 0)), downloader=FakeYouTube(),
+                        prober=lambda: None, clock=Clock(), sleep=Clock().sleep, free_gb=lambda path: 500.0)
+    assert runner.run() == "finished"
+    row = _row(store, "talk1")
+    assert row["asr_status"] == "done" and row["segments"] == 3 and row["speakers"] == 2
+    assert calls == ["bind", "Talk talk1\nAI Engineer"]
+    saved = ArtifactStore(config.paths.artifacts, "talk1").load_transcript("fun-asr")
+    assert saved is not None and len(saved.segments) == 3
+
+    # The pipeline reuses it: no audio, no provider call.
+    from media_pipeline.diarization import NullDiarizationProvider
+    from media_pipeline.pipeline import Pipeline
+    from tests.test_pipeline import FakeVision, FakeVisual
+
+    tasks = TaskStore(config.paths.db)
+    pipeline = Pipeline(config, tasks, diarization=NullDiarizationProvider(), visual=FakeVisual(), vision=FakeVision())
+    task = tasks.insert(Task(id="t", url="https://www.youtube.com/watch?v=talk1", asr_model="fun-asr", video_id="talk1"))
+    metadata = VideoMetadata(url=task.url, title="t", platform="YouTube", author="a", video_id="talk1",
+                             duration=9.0, published="", description="", thumbnail_url="", asr_model="fun-asr")
+    reused = pipeline._transcribe(task, metadata, ArtifactStore(config.paths.artifacts, "talk1"), None)
+    assert len(reused.segments) == 3 and len(calls) == 2
+
+    from media_pipeline.api import create_app
+    from tests.test_api import DummyWorker
+
+    client = TestClient(create_app(config, store=tasks, worker=DummyWorker()))
+    text = client.get("/v1/bulk/aie/transcript/talk1").text
+    assert "[00:00:00] SPEAKER_00\nWelcome to the talk." in text
+    assert "[00:00:03] SPEAKER_01\nThanks for having me. Let us start with evals." in text
+    assert client.get("/v1/bulk/aie/transcript/unknown").status_code == 404
+    summary = client.get("/v1/bulk/aie").json()["summary"]
+    assert summary["asr_counts"] == {"done": 1} and summary["asr_model"] == "fun-asr"

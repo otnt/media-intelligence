@@ -180,7 +180,19 @@ def create_app(config: AppConfig, store: TaskStore | None = None, worker: TaskWo
         processed = store.status_by_video([video["id"] for video in videos])
         for video in videos:
             video["task"] = processed.get(video["id"])
-        return {"summary": job.summary(), "videos": videos, "events": job.events()}
+        from media_pipeline.watchdog import last_result
+
+        summary = job.summary()
+        dog = last_result(config)
+        summary["watchdog"] = {key: dog.get(key) for key in ("at", "ok", "problems", "notes", "actions")} if dog else {}
+        return {"summary": summary, "videos": videos, "events": job.events()}
+
+    @app.get("/v1/bulk/{name}/transcript/{video_id}")
+    def bulk_transcript(name: str, video_id: str) -> Response:
+        text = bulk_jobs.transcript_text(config, _bulk_job(name), video_id)
+        if text is None:
+            raise HTTPException(status_code=404, detail="No transcript yet")
+        return Response(text, media_type="text/plain; charset=utf-8")
 
     @app.get("/v1/bulk/{name}/csv")
     def bulk_csv(name: str) -> Response:

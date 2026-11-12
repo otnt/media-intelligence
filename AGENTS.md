@@ -36,9 +36,10 @@ Local access: `http://127.0.0.1:8875/`.
 |-------|----------------|--------------|
 | `com.media-pipeline.server` | `./scripts/install-launch-agent.sh` | `media-pipeline serve --host 127.0.0.1 --port 8875` |
 | `com.tailscale.serve` | `./scripts/tailscale/install.sh` | `python3 ~/.config/tailscale/apply-serve.py` (login + every 5 min) |
-| `com.media-pipeline.bulk.<job>` | `./scripts/install-bulk-agent.sh <job>` (`--remove` to stop) | `media-pipeline bulk run <job>`; restarts after a crash, stays stopped once the job is finished |
+| `com.media-pipeline.bulk.<job>` | `./scripts/install-bulk-agent.sh <job>` (`--remove` to stop) | `media-pipeline bulk run <job>` (downloads + ASR); restarts after a crash, stays stopped once the job is finished |
+| `com.media-pipeline.watchdog` | `./scripts/install-watchdog.sh` (`--remove` to stop) | `media-pipeline watchdog` every 5 min: API health, bulk heartbeats, disk; restarts what is stuck after two bad checks |
 
-Logs: `~/AIContent/logs/launchd.out.log`, `launchd.err.log`, `tailscale-serve.out.log`, `tailscale-serve.err.log`, `bulk-<job>.log`.
+Logs: `~/AIContent/logs/launchd.out.log`, `launchd.err.log`, `tailscale-serve.out.log`, `tailscale-serve.err.log`, `bulk-<job>.log`, `watchdog.log` (latest result in `watchdog.json`).
 
 Bulk jobs live in `~/AIContent/bulk/<job>/` (`progress.sqlite3` + `media/` staging). The staging folder is outside
 `paths.videos` on purpose, so the storage sweep never archives half-finished bulk downloads to iCloud.
