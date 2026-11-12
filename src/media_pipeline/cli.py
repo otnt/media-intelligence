@@ -432,17 +432,19 @@ def _wait_for_summaries(store, poll: float = 300.0) -> None:
 
     from media_pipeline.bulk import DEFAULT_SUMMARY_WINDOW, in_window
 
-    last_done, still_since = -1, time.time()
+    last_done, still_since, was_open = -1, time.time(), False
     while True:
         summary = store.summary()
         counts = summary["summary_counts"]
         done = counts.get("done", 0)
         waiting = counts.get("pending", 0) + counts.get("queued", 0) + counts.get("running", 0)
-        if done != last_done:
-            last_done, still_since = done, time.time()
         window = store.meta("summary_window", DEFAULT_SUMMARY_WINDOW)
-        settled = waiting == 0 or (done > 0 and time.time() - still_since > 2700)
-        if in_window(window, time.time()) and settled:
+        is_open = in_window(window, time.time())
+        if done != last_done or (is_open and not was_open):  # stalls only count once summaries could run
+            last_done, still_since = done, time.time()
+        was_open = is_open
+        settled = waiting == 0 or time.time() - still_since > 2700
+        if is_open and settled:
             return
         logging.info("waiting: %s summaries done, %s to go, window open: %s", done, waiting, in_window(window, time.time()))
         time.sleep(poll)
