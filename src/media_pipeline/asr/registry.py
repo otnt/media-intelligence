@@ -42,6 +42,8 @@ def get_provider(model_id: str) -> ASRProvider:
 def list_models() -> list[ModelInfo]:
     models: list[ModelInfo] = []
     for model_id, info in ASR_MODELS.items():
+        if info.get("hidden"):
+            continue
         available, detail = probe_model(model_id)
         models.append(
             ModelInfo(
@@ -62,6 +64,8 @@ def probe_model(model_id: str) -> tuple[bool, str]:
         return False, "unknown model"
     if info["provider"] == "dashscope":
         return _probe_dashscope()
+    if info["provider"] == "youtube":
+        return False, "YouTube captions are saved by bulk downloads; they cannot be made from audio"
     if info["provider"] == "agy":
         import shutil
 

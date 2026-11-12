@@ -675,6 +675,7 @@ def test_summary_models_endpoint(tmp_path: Path, monkeypatch):
         "gemini",
         "openai",
         "deepseek-v4-pro",
+        "deepseek-v4.1-flash",
         "qwen3.8-max",
         "agy-gemini",
     }

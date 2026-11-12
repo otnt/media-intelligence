@@ -177,6 +177,13 @@ def fetch_metadata(url: str, asr_model: str, config: AppConfig) -> VideoMetadata
 
         return fetch_threads_metadata(page_url, asr_model, config)
     info = _yt_dlp_info(page_url, config, download=False)
+    return metadata_from_info(info, page_url, asr_model, fallback_id=fallback_id, platform=platform)
+
+
+def metadata_from_info(
+    info: dict[str, Any], page_url: str, asr_model: str, *, fallback_id: str = "", platform: str = ""
+) -> VideoMetadata:
+    """VideoMetadata from a yt-dlp info dict (also used by bulk downloads, which already have one)."""
     video_id = str(info.get("id") or fallback_id)
     extractor = str(info.get("extractor_key") or info.get("extractor") or "").lower()
     if "bili" in extractor:

@@ -379,6 +379,9 @@ const desktop = window.matchMedia("(min-width: 900px)");
 const state = {
   tasks: [],
   chip: localStorage.getItem("mi.chip") || "all",
+  // A collection is a whole channel from a bulk job; it has its own list so the library stays yours.
+  collection: localStorage.getItem("mi.collection") || "",
+  collections: [],
   query: "",
   route: { view: "library" },
   note: null,
@@ -582,7 +585,9 @@ function filteredTasks() {
 }
 function renderChips() {
   const tasks = state.tasks;
-  const chips = [["all", "全部", tasks.length]];
+  const chips = state.collection
+    ? [["col:", "‹ 我的资料库", ""], ["all", `📚 ${state.collection}`, tasks.length]]
+    : [["all", "全部", tasks.length]];
   const active = tasks.filter(isActive).length;
   const failed = tasks.filter((t) => t.status === "failed").length;
   if (active) chips.push(["active", "处理中", active]);
@@ -593,6 +598,7 @@ function renderChips() {
   const tags = new Map();
   for (const t of tasks) for (const tag of t.tags || []) tags.set(tag, (tags.get(tag) || 0) + 1);
   for (const [tag, n] of tags) chips.push([`tag:${tag}`, `#${tag}`, n]);
+  if (!state.collection) for (const c of state.collections) chips.push([`col:${c.name}`, `📚 ${c.name}`, c.count]);
   if (!chips.some(([key]) => key === state.chip)) state.chip = "all";
   $("#chips").innerHTML = chips.map(([key, label, n, cls]) =>
     `<button class="chip ${cls || ""}" type="button" data-chip="${esc(key)}" aria-pressed="${key === state.chip}">${esc(label)}<span class="n">${n}</span></button>`).join("");
@@ -658,7 +664,12 @@ function onePerVideo(tasks) {
 async function loadTasks() {
   clearTimeout(state.listTimer);
   try {
-    const data = await api("/v1/tasks?filter=all&group=none&order=requested_desc");
+    const scope = state.collection ? `&collection=${encodeURIComponent(state.collection)}` : "";
+    const [data, cols] = await Promise.all([
+      api(`/v1/tasks?filter=all&group=none&order=requested_desc${scope}`),
+      api("/v1/collections").catch(() => ({ collections: [] })),
+    ]);
+    state.collections = cols.collections || [];
     state.tasks = onePerVideo(data.tasks || []);
     renderList();
   } catch (error) {
@@ -1072,6 +1083,16 @@ async function onRoute() {
 /* ================================================================== events */
 document.addEventListener("click", (event) => {
   const chip = event.target.closest("[data-chip]");
+  if (chip && chip.dataset.chip.startsWith("col:")) {
+    state.collection = chip.dataset.chip.slice(4);
+    localStorage.setItem("mi.collection", state.collection);
+    state.chip = "all";
+    localStorage.setItem("mi.chip", state.chip);
+    state.tasks = [];
+    $("#list").innerHTML = `<div class="empty">加载中…</div>`;
+    loadTasks();
+    return;
+  }
   if (chip) {
     state.chip = chip.dataset.chip;
     localStorage.setItem("mi.chip", state.chip);

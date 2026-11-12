@@ -128,7 +128,7 @@ def check(
             problems.append(f"{name}: 读取进度失败（{exc}）")
             continue
         label = bulk_label(name)
-        downloads_left, asr_left = job.work_left()
+        downloads_left, asr_left, summaries_left = job.work_left()
         if summary["state"] == "limited":
             notes.append(f"{name}: YouTube 限制中，{time.strftime('%H:%M', time.localtime(summary['pause_until']))} 自动探测")
         if summary["asr_pause_until"]:
@@ -137,7 +137,7 @@ def check(
             problems.append(f"{name}: Mac 只剩 {summary['free_gb']} GB")
         if not launchd.installed(label) or summary["control"] == "pause":
             continue  # not run as a LaunchAgent (e.g. a manual trial), or paused on purpose
-        if not (downloads_left or asr_left):
+        if not (downloads_left or asr_left or summaries_left):
             continue
         if not launchd.running(label):
             seen.add(f"{name}:agent")

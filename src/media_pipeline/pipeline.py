@@ -464,7 +464,7 @@ class Pipeline:
             if task.note_path:
                 self.notes.update_summary(Path(task.note_path), markdown)
             return
-        backends = resolve_summary_backends(self.config, self.vision)
+        backends = resolve_summary_backends(self.config, self.vision, selection=task.extra.get("summary_model") or None)
         if not backends:
             logger.warning("Skipping summary for task %s: no summary model is available", task.id)
             return

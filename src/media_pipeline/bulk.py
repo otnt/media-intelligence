@@ -17,8 +17,23 @@ Videos download into a local staging folder and move to ``dest`` (e.g. a NAS sha
 so a half-written file never sits on the NAS. Downloading pauses while the Mac has less than
 ``min_free_gb`` free.
 
-**Transcription stage** (when the job has an ``asr_model``, e.g. ``fun-asr``). Runs alongside the
-downloads on finished files, a few at a time. Transcripts are saved exactly where the pipeline keeps
+**YouTube extras** (``youtube_extras``, on for YouTube jobs). The extraction that downloads a video also
+yields its metadata and chapters (saved as ``metadata.json`` and ``youtube.json``); captions need one more
+request and become a ``youtube-captions`` transcript. YouTube rate-limits the captions endpoint on its own
+(HTTP 429 after a few dozen requests), so captions are fetched at most once every 45 s by their own worker,
+and a 429 only cools captions down (30 min, doubling up to 4 h) while videos keep downloading. Videos
+downloaded before this existed are backfilled; ones that already have a transcript only get their
+metadata and chapters.
+
+**Transcription stage** (when the job has an ``asr_model``, e.g. ``fun-asr``). With the default
+``transcript_policy`` ``captions-first``, a video with captions is already transcribed (free, one speaker);
+the ASR model only runs on videos without captions, or whose captions are still missing 6 hours after the
+download (rate limits). It runs alongside the downloads, a few at a time.
+
+**Summary stage** (when the job has a ``summary_model``). Each transcribed video becomes a normal task
+through the local server (``/v1/bulk/<job>/videos/<id>/process``): a note in ``<notes>/<collection>/``
+and a summary, reusing the file, metadata and transcript. Tasks are only submitted inside
+``summary_window`` (default 22:00-08:00 UTC+8, Alibaba Cloud's half-price hours), a few at a time. Transcripts are saved exactly where the pipeline keeps
 them (``artifacts/<video_id>/asr/<model>.json``), so processing a video later (summary, note) reuses
 the transcript instead of paying for ASR again; the pipeline also finds the downloaded file through
 :func:`find_bulk_media`. A file moves to the NAS after it has been transcribed (sooner if the disk is
@@ -39,6 +54,7 @@ import statistics
 import threading
 import time
 from dataclasses import dataclass, replace
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -77,6 +93,10 @@ SKIP_MARKERS = (
     "live event will begin",
 )
 ACTIVE_STATES = ("running", "paused", "limited")
+# Alibaba Cloud bills DeepSeek models at half price from 22:00 to 08:00 Beijing time.
+DEFAULT_SUMMARY_WINDOW = "22:00-08:00@+08:00"
+# Measured: a 42-minute talk with DeepSeek V4.1 Flash, 16k tokens in, 4.4k out (thinking included).
+SUMMARY_USD_PER_VIDEO = {"deepseek-v4.1-flash": 0.005}
 # Columns added after the first jobs were created; added in place when an older table is opened.
 LATER_COLUMNS = (
     ("asr_status", "TEXT DEFAULT 'pending'"),
@@ -88,13 +108,26 @@ LATER_COLUMNS = (
     ("segments", "INTEGER"),
     ("speakers", "INTEGER"),
     ("language", "TEXT DEFAULT ''"),
+    ("transcript_source", "TEXT DEFAULT ''"),
+    ("captions_status", "TEXT DEFAULT 'pending'"),
+    ("captions_attempts", "INTEGER DEFAULT 0"),
+    ("captions_error", "TEXT DEFAULT ''"),
+    ("captions_kind", "TEXT DEFAULT ''"),
+    ("captions_at", "REAL"),
+    ("chapters", "INTEGER"),
+    ("task_id", "TEXT DEFAULT ''"),
+    ("summary_status", "TEXT DEFAULT ''"),
+    ("summary_error", "TEXT DEFAULT ''"),
+    ("summary_at", "REAL"),
+    ("summary_attempts", "INTEGER DEFAULT 0"),
 )
 
 
 @dataclass
 class Limits:
     workers: int = 1
-    pause_between: tuple[float, float] = (8.0, 20.0)
+    # ~70-90 videos an hour. 8-20 s pauses plus captions ran into YouTube's bot check after ~85 videos.
+    pause_between: tuple[float, float] = (20.0, 40.0)
     min_free_gb: float = 40.0
     slow_bytes_per_sec: float = 150_000.0
     slow_window: int = 5
@@ -109,6 +142,14 @@ class Limits:
     asr_retry_after: float = 5 * 60
     asr_fail_streak: int = 5
     asr_backoff: float = 10 * 60
+    captions_min_interval: float = 90.0  # captions right after a download (one extra request)
+    backfill_min_interval: float = 180.0  # a separate metadata extraction for an older download
+    captions_wait: float = 6 * 3600
+    captions_first_backoff: float = 30 * 60
+    captions_max_backoff: float = 4 * 3600
+    summary_inflight: int = 4
+    summary_max_attempts: int = 2
+    summary_retry_after: float = 10 * 60
 
 
 def classify(error: str) -> str:
@@ -119,6 +160,46 @@ def classify(error: str) -> str:
     if any(marker in text for marker in SKIP_MARKERS):
         return "skipped"
     return "failed"
+
+
+def _window(window: str) -> tuple[int, int, timezone] | None:
+    """"22:00-08:00@+08:00" -> (start minute, end minute, tz); "" means any time."""
+    if not window:
+        return None
+    spec, _, zone = window.partition("@")
+    start, _, end = spec.partition("-")
+    sign = -1 if zone.startswith("-") else 1
+    hours, _, minutes = zone.lstrip("+-").partition(":")
+    tz = timezone(sign * timedelta(hours=int(hours or 0), minutes=int(minutes or 0)))
+
+    def minute(text: str) -> int:
+        h, _, m = text.strip().partition(":")
+        return int(h) * 60 + int(m or 0)
+
+    return minute(start), minute(end), tz
+
+
+def in_window(window: str, now: float) -> bool:
+    parsed = _window(window)
+    if parsed is None:
+        return True
+    start, end, tz = parsed
+    moment = datetime.fromtimestamp(now, tz)
+    minute = moment.hour * 60 + moment.minute
+    return start <= minute < end if start < end else (minute >= start or minute < end)
+
+
+def next_window_start(window: str, now: float) -> float:
+    """When the window opens next (now if it is open)."""
+    parsed = _window(window)
+    if parsed is None or in_window(window, now):
+        return now
+    start, _end, tz = parsed
+    moment = datetime.fromtimestamp(now, tz)
+    opening = moment.replace(hour=start // 60, minute=start % 60, second=0, microsecond=0)
+    if opening <= moment:
+        opening += timedelta(days=1)
+    return opening.timestamp()
 
 
 # ---------------------------------------------------------------------------------------------- store
@@ -144,6 +225,8 @@ class BulkStore:
             for name, spec in LATER_COLUMNS:
                 if name not in have:
                     conn.execute(f"ALTER TABLE videos ADD COLUMN {name} {spec}")
+            # Transcripts made before sources were recorded came from the job's ASR model.
+            conn.execute("UPDATE videos SET transcript_source='fun-asr' WHERE asr_status='done' AND transcript_source=''")
 
     def _conn(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db, timeout=30)
@@ -191,18 +274,29 @@ class BulkStore:
                 added += cursor.rowcount
         return added
 
-    def work_left(self, limits: "Limits | None" = None) -> tuple[int, int]:
-        """(downloads, transcriptions) that a runner would still do; retries that are used up do not count."""
+    def work_left(self, limits: "Limits | None" = None) -> tuple[int, int, int]:
+        """(downloads, transcriptions, summaries) a runner would still do; used-up retries do not count."""
         limits = limits or Limits()
         downloads = self.query(
             "SELECT COUNT(*) n FROM videos WHERE status IN ('pending','downloading') OR "
             "(status='failed' AND attempts < ?)", (limits.max_attempts,))[0]["n"]
-        if not self.meta("asr_model", ""):
-            return downloads, 0
-        asr = self.query(
-            "SELECT COUNT(*) n FROM videos WHERE status='done' AND (asr_status IN ('pending','running') OR "
-            "(asr_status='failed' AND asr_attempts < ?))", (limits.asr_max_attempts,))[0]["n"]
-        return downloads, asr
+        if self.meta("youtube_extras", False):
+            downloads += self.query(
+                "SELECT COUNT(*) n FROM videos WHERE status='done' AND (captions_status IN ('pending','fetching') OR "
+                "(captions_status='failed' AND captions_attempts < ?))", (limits.max_attempts,))[0]["n"]
+        asr = 0
+        if self.meta("asr_model", ""):
+            asr = self.query(
+                "SELECT COUNT(*) n FROM videos WHERE status='done' AND (asr_status IN ('pending','running') OR "
+                "(asr_status='failed' AND asr_attempts < ?))", (limits.asr_max_attempts,))[0]["n"]
+        summaries = 0
+        if self.meta("summary_model", ""):
+            summaries = self.query(
+                "SELECT COUNT(*) n FROM videos WHERE status IN ('pending','downloading','done') AND "
+                "(summary_status IN ('', 'queued', 'running') OR (summary_status='failed' AND summary_attempts < ?)) "
+                "AND NOT (status='done' AND asr_status='failed' AND asr_attempts >= ?)",
+                (limits.summary_max_attempts, limits.asr_max_attempts))[0]["n"]
+        return downloads, asr, summaries
 
     def video(self, video_id: str) -> dict[str, Any] | None:
         rows = self.query("SELECT * FROM videos WHERE id=?", (video_id,))
@@ -212,7 +306,8 @@ class BulkStore:
         return [dict(row) for row in self.query(
             "SELECT id, position, title, duration, url, status, bytes, speed, location, attempts, error, "
             "started_at, finished_at, asr_status, asr_attempts, asr_error, asr_started_at, asr_finished_at, "
-            "segments, speakers, language FROM videos ORDER BY position")]
+            "segments, speakers, language, transcript_source, captions_status, captions_kind, captions_error, "
+            "chapters, task_id, summary_status, summary_error FROM videos ORDER BY position")]
 
     def events(self, limit: int = 40) -> list[dict[str, Any]]:
         return [dict(row) for row in self.query(
@@ -224,11 +319,19 @@ class BulkStore:
         counts = {row["status"]: row["n"] for row in self.query("SELECT status, COUNT(*) n FROM videos GROUP BY status")}
         asr_counts = {row["asr_status"]: row["n"] for row in self.query(
             "SELECT asr_status, COUNT(*) n FROM videos WHERE status='done' GROUP BY asr_status")}
+        sources = {row["transcript_source"]: row["n"] for row in self.query(
+            "SELECT transcript_source, COUNT(*) n FROM videos WHERE asr_status='done' GROUP BY transcript_source")}
+        captions = {row["captions_status"]: row["n"] for row in self.query(
+            "SELECT captions_status, COUNT(*) n FROM videos WHERE status='done' GROUP BY captions_status")}
+        with_chapters = self.query("SELECT COUNT(*) n FROM videos WHERE chapters > 0")[0]["n"]
+        summary_counts = {row["summary_status"] or "pending": row["n"] for row in self.query(
+            "SELECT summary_status, COUNT(*) n FROM videos WHERE asr_status='done' GROUP BY summary_status")}
         totals = self.query(
             "SELECT COUNT(*) n, COALESCE(SUM(duration),0) dur, COALESCE(SUM(CASE WHEN status='done' THEN bytes END),0) "
             "bytes, COALESCE(SUM(CASE WHEN status='done' THEN duration END),0) done_dur, "
             "COALESCE(SUM(CASE WHEN status='done' AND location='nas' THEN 1 END),0) on_nas, "
-            "COALESCE(SUM(CASE WHEN asr_status='done' THEN COALESCE(asr_seconds, duration) END),0) asr_secs "
+            "COALESCE(SUM(CASE WHEN asr_status='done' AND transcript_source!='youtube' "
+            "THEN COALESCE(asr_seconds, duration) END),0) asr_secs "
             "FROM videos"
         )[0]
         speeds = [row["speed"] for row in self.query(
@@ -275,7 +378,24 @@ class BulkStore:
             "asr_counts": asr_counts,
             "asr_hours": round(float(totals["asr_secs"]) / 3600, 1),
             "asr_cost_usd": round(float(totals["asr_secs"]) * price, 2),
-            "asr_estimated_total_usd": round(float(totals["dur"]) * price, 0) if price else None,
+            "asr_estimated_total_usd": None if meta.get("youtube_extras") else (
+                round(float(totals["dur"]) * price, 0) if price else None),
+            "transcript_sources": sources,
+            "captions_counts": captions if meta.get("youtube_extras") else {},
+            "with_chapters": with_chapters,
+            "youtube_extras": bool(meta.get("youtube_extras")),
+            "captions_pause_until": float(meta.get("captions_pause_until") or 0)
+            if float(meta.get("captions_pause_until") or 0) > now else 0.0,
+            "captions_pause_reason": meta.get("captions_pause_reason", "")
+            if float(meta.get("captions_pause_until") or 0) > now else "",
+            "transcript_policy": meta.get("transcript_policy", "captions-first"),
+            "summary_model": meta.get("summary_model", ""),
+            "summary_counts": summary_counts if meta.get("summary_model") else {},
+            "summary_window": meta.get("summary_window", DEFAULT_SUMMARY_WINDOW),
+            "summary_in_window": in_window(meta.get("summary_window", DEFAULT_SUMMARY_WINDOW), now),
+            "summary_next_window": next_window_start(meta.get("summary_window", DEFAULT_SUMMARY_WINDOW), now),
+            "summary_cost_usd": round(summary_counts.get("done", 0)
+                                      * SUMMARY_USD_PER_VIDEO.get(meta.get("summary_model", ""), 0.0), 2),
             "asr_pause_until": asr_pause_until if asr_pause_until > now else 0.0,
             "asr_pause_reason": meta.get("asr_pause_reason", "") if asr_pause_until > now else "",
         }
@@ -284,13 +404,16 @@ class BulkStore:
         buffer = io.StringIO()
         writer = csv.writer(buffer)
         writer.writerow(["#", "id", "title", "minutes", "download", "MB", "location", "attempts", "download error",
-                         "asr", "segments", "speakers", "language", "asr attempts", "asr error", "url"])
+                         "transcript", "source", "segments", "speakers", "language", "asr attempts", "asr error",
+                         "captions", "chapters", "url"])
         for row in self.rows():
             writer.writerow([
                 row["position"] + 1, row["id"], row["title"], round((row["duration"] or 0) / 60, 1), row["status"],
                 round((row["bytes"] or 0) / 1e6, 1), row["location"], row["attempts"], row["error"],
-                row["asr_status"] if row["status"] == "done" else "", row["segments"] or "", row["speakers"] or "",
-                row["language"] or "", row["asr_attempts"] or 0, row["asr_error"], row["url"],
+                row["asr_status"] if row["status"] == "done" else "", row["transcript_source"] or "",
+                row["segments"] or "", row["speakers"] or "", row["language"] or "", row["asr_attempts"] or 0,
+                row["asr_error"], row["captions_status"] if row["status"] == "done" else "", row["chapters"] or "",
+                row["url"],
             ])
         return buffer.getvalue()
 
@@ -443,6 +566,9 @@ class BulkRunner:
         downloader: Downloader | None = None,
         prober: Callable[[], None] | None = None,
         transcriber: Transcriber | None = None,
+        extras: Callable[[str, str, bool], None] | None = None,
+        submit_summary: Callable[[str, str], str] | None = None,
+        task_status: Callable[[str], tuple[str, str]] | None = None,
         clock: Callable[[], float] = time.time,
         sleep: Callable[[float], None] | None = None,
         free_gb: Callable[[Path], float] | None = None,
@@ -455,6 +581,14 @@ class BulkRunner:
         self.download = downloader or self._yt_dlp_download
         self.probe = prober or self._yt_dlp_probe
         self.transcribe = transcriber or self._asr_transcribe
+        self.fetch_extras = extras or self._yt_dlp_extras
+        self.submit_summary = submit_summary or self._submit_to_server
+        self.task_status = task_status or self._task_status_from_store
+        self._asr_done = threading.Event()
+        self._captions_done = threading.Event()
+        self._caption_lock = threading.Lock()
+        self._last_caption_at = 0.0
+        self._captions_backoff = self.limits.captions_first_backoff
         self.clock = clock
         self._stop = threading.Event()
         self.sleep = sleep or (lambda seconds: self._stop.wait(max(0.0, seconds)))
@@ -478,6 +612,7 @@ class BulkRunner:
         self.store.set_meta("pid", os.getpid())
         self.store.execute("UPDATE videos SET status='pending' WHERE status='downloading'")
         self.store.execute("UPDATE videos SET asr_status='pending' WHERE asr_status='running'")
+        self.store.execute("UPDATE videos SET captions_status='pending' WHERE captions_status='fetching'")
         self._beat("download", force=True)
         self._beat("asr", force=True)
         asr_model = self.store.meta("asr_model", "")
@@ -491,22 +626,32 @@ class BulkRunner:
                      for _ in range(max(1, self.limits.workers))]
         transcribers = [threading.Thread(target=self._asr_worker, args=(asr_model,), daemon=True)
                         for _ in range(self.limits.asr_workers if asr_model else 0)]
-        for thread in downloads + transcribers:
+        summarizers = [threading.Thread(target=self._summary_worker, daemon=True)] \
+            if self.store.meta("summary_model", "") else []
+        captioners = [threading.Thread(target=self._captions_worker, daemon=True)] if self._extras_on() else []
+        for thread in downloads + captioners + transcribers + summarizers:
             thread.start()
         for thread in downloads:
             thread.join()
         self._downloads_done.set()
+        for thread in captioners:
+            thread.join()
+        self._captions_done.set()
         for thread in transcribers:
+            thread.join()
+        self._asr_done.set()
+        for thread in summarizers:
             thread.join()
         self._move_staged(force=True)
         left = self.store.query(
             "SELECT COUNT(*) n FROM videos WHERE status='pending' OR (status='failed' AND attempts < ?)",
             (self.limits.max_attempts,))[0]["n"]
         asr_left = self._asr_left() if asr_model else 0
-        state = "finished" if not left and not asr_left else "stopped"
-        detail = "" if state == "finished" else f"还剩 {left} 个待下载、{asr_left} 个待转写"
+        summary_left = self.store.work_left(self.limits)[2]
+        state = "finished" if not left and not asr_left and not summary_left else "stopped"
+        detail = "" if state == "finished" else f"还剩 {left} 个待下载、{asr_left} 个待转写、{summary_left} 个待总结"
         self._set_state(state, detail)
-        self.store.event("stop", f"left={left} asr_left={asr_left}", at=self.clock())
+        self.store.event("stop", f"left={left} asr_left={asr_left} summary_left={summary_left}", at=self.clock())
         return state
 
     def stop(self) -> None:
@@ -592,6 +737,296 @@ class BulkRunner:
             self._fail_streak = 0
             self._limit(f"连续 {self.limits.fail_streak} 个视频下载失败（最近一个：{message[:120]}）")
 
+    # ------------------------------------------------------------------ YouTube extras
+    def _extras_on(self) -> bool:
+        return bool(self.store.meta("youtube_extras", False))
+
+    def _captions_worker(self) -> None:
+        while not self._stop.is_set():
+            self._beat("captions")
+            if self.store.meta("control", "") == "pause":
+                self.sleep(15)
+                continue
+            until = max(float(self.store.meta("captions_pause_until", 0) or 0),
+                        float(self.store.meta("pause_until", 0) or 0))  # a YouTube limit stops captions too
+            if until > self.clock():
+                self.sleep(min(60.0, until - self.clock()))
+                continue
+            wait = self._caption_wait(self.limits.backfill_min_interval)
+            if wait > 0:
+                self.sleep(wait)
+                continue
+            row = self._claim_extras()
+            if row is None:
+                if self._downloads_done.is_set() and not self._extras_left():
+                    return
+                self.sleep(30)
+                continue
+            self._take_caption_slot(force=True)
+            self._extras_one(row)
+
+    def _caption_wait(self, interval: float | None = None) -> float:
+        with self._caption_lock:
+            gap = self.limits.captions_min_interval if interval is None else interval
+            return max(0.0, self._last_caption_at + gap - self.clock())
+
+    def _take_caption_slot(self, force: bool = False) -> bool:
+        """May a captions request go out now? (spaced out, and never during a captions cooldown)"""
+        with self._caption_lock:
+            if max(float(self.store.meta("captions_pause_until", 0) or 0),
+                   float(self.store.meta("pause_until", 0) or 0)) > self.clock():
+                return False
+            if not force and self.clock() - self._last_caption_at < self.limits.captions_min_interval:
+                return False
+            self._last_caption_at = self.clock()
+            return True
+
+    def _captions_cooldown(self, message: str) -> None:
+        with self._probe_lock:
+            if float(self.store.meta("captions_pause_until", 0) or 0) > self.clock():
+                return
+            wait = self._captions_backoff
+            self._captions_backoff = min(self._captions_backoff * 2, self.limits.captions_max_backoff)
+            self.store.set_meta("captions_pause_until", self.clock() + wait)
+            reason = "YouTube 字幕接口限流：" + message[:120]
+            self.store.set_meta("captions_pause_reason", reason)
+            self.store.event("captions-pause", f"{reason}（字幕暂停 {round(wait / 60)} 分钟，视频照常下载）",
+                             at=self.clock())
+
+    def _claim_extras(self) -> sqlite3.Row | None:
+        """A downloaded video whose captions/metadata were never fetched (backfill) or are due a retry.
+        Videos still without a transcript come first: their captions save an ASR run."""
+        if not self._extras_on():
+            return None
+        with self._claim_lock:
+            rows = self.store.query(
+                "SELECT * FROM videos WHERE status='done' AND (captions_status='pending' OR "
+                "(captions_status='failed' AND captions_attempts < ? AND COALESCE(captions_at, 0) <= ?)) "
+                "ORDER BY asr_status='done', captions_status='failed', position LIMIT 1",
+                (self.limits.max_attempts, self.clock() - 600),
+            )
+            if not rows:
+                return None
+            self.store.execute("UPDATE videos SET captions_status='fetching' WHERE id=?", (rows[0]["id"],))
+            return rows[0]
+
+    def _extras_left(self) -> int:
+        if not self._extras_on():
+            return 0
+        return self.store.query(
+            "SELECT COUNT(*) n FROM videos WHERE status='done' AND (captions_status IN ('pending','fetching') OR "
+            "(captions_status='failed' AND captions_attempts < ?))",
+            (self.limits.max_attempts,))[0]["n"]
+
+    def _extras_one(self, row: sqlite3.Row) -> None:
+        # A video that already has a transcript only needs its metadata and chapters (no captions request).
+        captions = row["asr_status"] != "done"
+        try:
+            self.fetch_extras(row["url"], row["id"], captions)
+        except Exception as exc:  # noqa: BLE001 - recorded; captions are retried, then Fun-ASR takes over
+            self._extras_failed(row["id"], _short(exc))
+
+    def _extras_failed(self, video_id: str, message: str) -> None:
+        kind = classify(message)
+        logger.warning("captions %s %s: %s", kind, video_id, message[:300])
+        if kind == "skipped":
+            self.store.execute("UPDATE videos SET captions_status='none', captions_error=? WHERE id=?", (message, video_id))
+            return
+        if kind == "blocked":  # YouTube is limiting us, not this video: try it again later
+            self.store.execute("UPDATE videos SET captions_status='pending', captions_error=? WHERE id=?",
+                               (message, video_id))
+            text = message.lower()
+            if "not a bot" in text or "sign in to confirm" in text:
+                self._limit("YouTube 限制（补抓元数据时）：" + message[:160])  # IP-wide: downloads stop too
+            else:
+                self._captions_cooldown(message)  # only the captions endpoint (HTTP 429)
+            return
+        self.store.execute(
+            "UPDATE videos SET captions_status='failed', captions_attempts=captions_attempts+1, captions_error=?, "
+            "captions_at=? WHERE id=?", (message, self.clock(), video_id))
+
+    def _yt_dlp_extras(self, url: str, video_id: str, captions: bool = True) -> None:
+        from media_pipeline.media import _ydl
+
+        opts = self._guest_opts()
+        opts["skip_download"] = True
+        with _ydl(opts) as ydl:
+            info = ydl.extract_info(url, download=False) or {}
+            self._save_extras(ydl, info, video_id, captions=captions)
+
+    def _save_extras(self, ydl: Any, info: dict[str, Any], video_id: str, captions: bool = True) -> None:
+        """Metadata, chapters and (unless ``captions`` is False) captions from an extraction, saved where
+        the pipeline reads them. Without captions the video stays 'pending' for the captions worker,
+        or becomes 'skipped' if it already has a transcript."""
+        from media_pipeline import youtube_captions as yc
+        from media_pipeline.artifacts import ArtifactStore
+        from media_pipeline.media import metadata_from_info
+
+        artifacts = ArtifactStore(self.config.paths.artifacts, video_id)
+        chapters = yc.chapters(info)
+        transcript, kind, error = None, "", ""
+        if captions:
+            try:
+                transcript, kind = yc.fetch_captions(ydl, info)
+            except Exception as exc:  # noqa: BLE001
+                error = _short(exc)
+        if not artifacts.metadata_path.exists():
+            model = yc.CAPTIONS_MODEL if transcript else (self.store.meta("asr_model", "") or self.config.asr.default)
+            artifacts.save_metadata(metadata_from_info(
+                info, f"https://www.youtube.com/watch?v={video_id}", model, fallback_id=video_id, platform="YouTube"))
+        artifacts.write_json(artifacts.root / "youtube.json", {
+            "chapters": chapters,
+            "captions": {"kind": kind, "language": transcript.language if transcript else ""},
+            "channel": info.get("channel") or info.get("uploader") or "",
+            "upload_date": info.get("upload_date") or "",
+            "view_count": info.get("view_count"),
+            "like_count": info.get("like_count"),
+            "tags": info.get("tags") or [],
+        })
+        self.store.execute("UPDATE videos SET chapters=? WHERE id=?", (len(chapters), video_id))
+        if not captions:
+            row = self.store.video(video_id) or {}
+            if row.get("asr_status") == "done":
+                self.store.execute("UPDATE videos SET captions_status='skipped', captions_at=? WHERE id=?",
+                                   (self.clock(), video_id))
+            elif row.get("captions_status") == "fetching":
+                self.store.execute("UPDATE videos SET captions_status='pending' WHERE id=?", (video_id,))
+            return
+        if transcript is not None:
+            self._captions_backoff = self.limits.captions_first_backoff
+            artifacts.save_transcript(yc.CAPTIONS_MODEL, transcript)
+            self.store.execute(
+                "UPDATE videos SET captions_status='done', captions_kind=?, captions_error='', captions_at=? WHERE id=?",
+                (kind, self.clock(), video_id))
+            # A free transcript: this video's transcription stage is done (unless Fun-ASR already ran).
+            self.store.execute(
+                "UPDATE videos SET asr_status='done', transcript_source='youtube', segments=?, speakers=1, language=?, "
+                "asr_error='', asr_finished_at=? WHERE id=? AND asr_status!='done'",
+                (len(transcript.segments), transcript.language or "", self.clock(), video_id))
+        elif error:
+            self._extras_failed(video_id, error)
+        else:
+            self.store.execute("UPDATE videos SET captions_status='none', captions_at=? WHERE id=?",
+                               (self.clock(), video_id))
+
+    def _asr_gate(self) -> str:
+        """With captions first, the ASR model only gets videos without usable captions, or whose captions are
+        still missing ``captions_wait`` after the download (YouTube kept rate-limiting them)."""
+        if self._extras_on() and self.store.meta("transcript_policy", "captions-first") == "captions-first":
+            return (" AND (captions_status IN ('none','skipped') OR (captions_status='failed' AND captions_attempts >= %d)"
+                    " OR (finished_at IS NOT NULL AND finished_at <= %f))" % (self.limits.max_attempts,
+                                                              self.clock() - self.limits.captions_wait))
+        return ""
+
+    # ------------------------------------------------------------------ summaries
+    def _summary_worker(self) -> None:
+        while not self._stop.is_set():
+            self._beat("summary")
+            self._refresh_summaries()
+            if self.store.meta("control", "") == "pause":
+                self.sleep(15)
+                continue
+            inflight = self._summaries_inflight()
+            window = self.store.meta("summary_window", DEFAULT_SUMMARY_WINDOW)
+            if not in_window(window, self.clock()):
+                if self._asr_done.is_set() and not inflight and not self.store.work_left(self.limits)[2]:
+                    return
+                self.sleep(60)
+                continue
+            if inflight >= self.limits.summary_inflight:
+                self.sleep(15)
+                continue
+            row = self._claim_summary()
+            if row is None:
+                if self._asr_done.is_set() and not inflight and not self._summaries_waiting():
+                    return
+                self.sleep(30)
+                continue
+            try:
+                task_id = self.submit_summary(self.store.db.parent.name, row["id"])
+            except Exception as exc:  # noqa: BLE001 - e.g. the server is restarting; try again later
+                self.store.execute(
+                    "UPDATE videos SET summary_status='failed', summary_error=?, summary_at=? WHERE id=?",
+                    (_short(exc), self.clock(), row["id"]))
+                self.sleep(60)
+                continue
+            self.store.execute("UPDATE videos SET summary_status='queued', task_id=?, summary_error='' WHERE id=?",
+                               (task_id, row["id"]))
+
+    def _claim_summary(self) -> sqlite3.Row | None:
+        with self._claim_lock:
+            rows = self.store.query(
+                "SELECT * FROM videos WHERE asr_status='done' AND (summary_status='' OR (summary_status='failed' "
+                "AND summary_attempts < ? AND COALESCE(summary_at, 0) <= ?)) ORDER BY summary_status='failed', position "
+                "LIMIT 1",
+                (self.limits.summary_max_attempts, self.clock() - self.limits.summary_retry_after),
+            )
+            if not rows:
+                return None
+            self.store.execute(
+                "UPDATE videos SET summary_status='queued', summary_attempts=summary_attempts+1, summary_at=? WHERE id=?",
+                (self.clock(), rows[0]["id"]))
+            return rows[0]
+
+    def _summaries_inflight(self) -> int:
+        return self.store.query(
+            "SELECT COUNT(*) n FROM videos WHERE summary_status IN ('queued','running')")[0]["n"]
+
+    def _summaries_waiting(self) -> int:
+        """Transcribed videos not summarized yet, plus ones that may still be transcribed in this run."""
+        ready = self.store.query(
+            "SELECT COUNT(*) n FROM videos WHERE asr_status='done' AND (summary_status='' OR "
+            "(summary_status='failed' AND summary_attempts < ?))", (self.limits.summary_max_attempts,))[0]["n"]
+        return ready
+
+    def _refresh_summaries(self) -> None:
+        for row in self.store.query(
+            "SELECT id, task_id FROM videos WHERE summary_status IN ('queued','running') AND task_id != ''"
+        ):
+            status, error = self.task_status(row["task_id"])
+            if status in ("queued", "running"):
+                if status == "running":
+                    self.store.execute("UPDATE videos SET summary_status='running' WHERE id=? AND summary_status='queued'",
+                                       (row["id"],))
+                continue
+            if status == "done":
+                self.store.execute(
+                    "UPDATE videos SET summary_status='done', summary_error='', summary_at=? WHERE id=?",
+                    (self.clock(), row["id"]))
+            else:
+                self.store.execute(
+                    "UPDATE videos SET summary_status='failed', summary_error=?, summary_at=? WHERE id=?",
+                    (error or status, self.clock(), row["id"]))
+                logger.warning("summary failed %s: %s", row["id"], (error or status)[:300])
+
+    def _submit_to_server(self, job: str, video_id: str) -> str:
+        import urllib.request
+
+        url = f"http://127.0.0.1:{self.config.server.port}/v1/bulk/{job}/videos/{video_id}/process"
+        request = urllib.request.Request(url, data=b"", method="POST")
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return str(json.loads(response.read())["id"])
+
+    def _task_status_from_store(self, task_id: str) -> tuple[str, str]:
+        """("queued"|"running"|"done"|"failed", error) of a pipeline task, read from the task database."""
+        from media_pipeline.artifacts import ArtifactStore
+        from media_pipeline.store import TaskStore
+
+        task = TaskStore(self.config.paths.db).get(task_id)
+        if task is None:
+            return "failed", "task disappeared"
+        status = task.status.value
+        if status == "queued":
+            return "queued", ""
+        if status == "failed":
+            return "failed", f"{task.error_stage}: {task.error}"[:400]
+        if status != "completed":
+            return "running", ""
+        summary = ArtifactStore(self.config.paths.artifacts, task.video_id).load_summary() or {}
+        if summary.get("status") == "completed" and str(summary.get("markdown") or "").strip():
+            return "done", ""
+        return "failed", str(summary.get("error") or "no summary was written")[:400]
+
     # ------------------------------------------------------------------ transcription
     def _asr_worker(self, model: str) -> None:
         while not self._stop.is_set():
@@ -615,8 +1050,8 @@ class BulkRunner:
         with self._claim_lock:
             rows = self.store.query(
                 "SELECT * FROM videos WHERE status='done' AND (asr_status='pending' OR "
-                "(asr_status='failed' AND asr_attempts < ? AND COALESCE(asr_finished_at, 0) <= ?)) "
-                "ORDER BY asr_status='failed', position LIMIT 1",
+                "(asr_status='failed' AND asr_attempts < ? AND COALESCE(asr_finished_at, 0) <= ?))"
+                + self._asr_gate() + " ORDER BY asr_status='failed', position LIMIT 1",
                 (self.limits.asr_max_attempts, self.clock() - self.limits.asr_retry_after),
             )
             if not rows:
@@ -631,9 +1066,11 @@ class BulkRunner:
     def _asr_left(self, waiting_only: bool = False) -> int:
         """Downloaded videos still to transcribe (``waiting_only``: not counting ones in progress)."""
         statuses = "('pending')" if waiting_only else "('pending','running')"
+        # Once the captions worker is done, a video still waiting on captions will not get them in this run.
+        gate = self._asr_gate() if self._captions_done.is_set() else ""
         return self.store.query(
             f"SELECT COUNT(*) n FROM videos WHERE status='done' AND (asr_status IN {statuses} OR "
-            "(asr_status='failed' AND asr_attempts < ?))",
+            "(asr_status='failed' AND asr_attempts < ?))" + gate,
             (self.limits.asr_max_attempts,),
         )[0]["n"]
 
@@ -666,8 +1103,9 @@ class BulkRunner:
         seconds = row.get("duration") or stats.get("seconds")
         self.store.execute(
             "UPDATE videos SET asr_status='done', asr_error='', asr_finished_at=?, asr_seconds=?, segments=?, "
-            "speakers=?, language=? WHERE id=?",
-            (self.clock(), seconds, stats.get("segments"), stats.get("speakers"), stats.get("language") or "", vid),
+            "speakers=?, language=?, transcript_source=? WHERE id=?",
+            (self.clock(), seconds, stats.get("segments"), stats.get("speakers"), stats.get("language") or "",
+             model, vid),
         )
         with self._asr_lock:
             self._asr_streak = 0
@@ -857,7 +1295,12 @@ class BulkRunner:
             "progress_hooks": [hook],
         })
         with _ydl(opts) as ydl:
-            ydl.download([url])
+            info = ydl.extract_info(url, download=True) or {}
+            if self._extras_on():
+                try:
+                    self._save_extras(ydl, info, video_id, captions=self._take_caption_slot())
+                except Exception as exc:  # noqa: BLE001 - never fail a finished download over extras
+                    self._extras_failed(video_id, _short(exc))
         path = find_media_file(target_dir, video_id)
         if path is None or path.suffix in (".part", ".ytdl"):
             raise RuntimeError("yt-dlp finished but the video file was not found")

@@ -26,11 +26,12 @@ class NoteWriter:
         self.notes_dir.mkdir(parents=True, exist_ok=True)
 
     def create_or_open(self, metadata: VideoMetadata, task: Task) -> Path:
-        path = self._path_for(metadata)
+        folder = sanitize_filename(str(task.extra.get("collection") or ""))
+        path = self._path_for(metadata, folder=folder)
         if path.exists():
             existing = NoteDocument.parse(path.read_text(encoding="utf-8"))
             if existing.fields.get("URL") and existing.fields.get("URL") != metadata.url:
-                path = self._path_for(metadata, disambiguate=True)
+                path = self._path_for(metadata, disambiguate=True, folder=folder)
         created = now_stamp()
         if path.exists():
             document = NoteDocument.parse(path.read_text(encoding="utf-8"))
@@ -65,11 +66,14 @@ class NoteWriter:
         document.transcript_markdown = strip_summary_section(document.transcript_markdown)
         path.write_text(document.render(), encoding="utf-8")
 
-    def _path_for(self, metadata: VideoMetadata, disambiguate: bool = False) -> Path:
+    def _path_for(self, metadata: VideoMetadata, disambiguate: bool = False, folder: str = "") -> Path:
+        """``<notes>/<title>.md``; videos of a collection (a bulk job) go to ``<notes>/<collection>/``."""
         title = sanitize_filename(metadata.title) or metadata.video_id or "untitled"
         if disambiguate and metadata.video_id:
             title = f"{title} [{metadata.video_id}]"
-        return self.notes_dir / f"{title}.md"
+        directory = self.notes_dir / folder if folder else self.notes_dir
+        directory.mkdir(parents=True, exist_ok=True)
+        return directory / f"{title}.md"
 
 
 def load_note(path: Path, *, rewrite_layout: bool = False) -> NoteDocument:

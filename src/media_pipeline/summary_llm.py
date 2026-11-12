@@ -42,6 +42,7 @@ ALL_BACKEND_KEYS = (
     "gemini",
     "openai",
     "deepseek-v4-pro",
+    "deepseek-v4.1-flash",
     "qwen3.8-max",
     "agy-gemini",
 )
@@ -50,6 +51,9 @@ THINKING_MAX_TOKENS = 8192
 CLOUD_SOURCE_CHARS = 400_000
 AGY_SOURCE_CHARS = 150_000
 DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+# DeepSeek V4.1 Flash served by Alibaba Cloud (same DashScope key as qwen3.8-max). Unlike DeepSeek's own
+# API it takes images, so slides and keyframes reach it. Off-peak (22:00-08:00 UTC+8) costs half.
+DASHSCOPE_FLASH_MODEL = "deepseek-v4.1-flash"
 # Mainland China DashScope default. Match key region:
 # Singapore intl: https://dashscope-intl.aliyuncs.com/compatible-mode/v1
 # US (Virginia):  https://dashscope-us.aliyuncs.com/compatible-mode/v1
@@ -77,6 +81,11 @@ _KEY_ALIASES = {
     "deepseek-pro": "deepseek-v4-pro",
     "deepseek_v4_pro": "deepseek-v4-pro",
     "deepseek-v4": "deepseek-v4-pro",
+    "flash": "deepseek-v4.1-flash",
+    "deepseek-flash": "deepseek-v4.1-flash",
+    "ds-flash": "deepseek-v4.1-flash",
+    "deepseek-v4.1": "deepseek-v4.1-flash",
+    "deepseek_v4_1_flash": "deepseek-v4.1-flash",
     "qwen-max": "qwen3.8-max",
     "qwen_max": "qwen3.8-max",
     "qwen3.8max": "qwen3.8-max",
@@ -181,6 +190,15 @@ def catalog_summary_backends(config: AppConfig, vision: object | None = None) ->
     )
     qwen_max_key = _qwen_max_key(config)
     qwen_max_model = _qwen_max_model(config)
+    rows.append(
+        _catalog_row(
+            "deepseek-v4.1-flash",
+            "DeepSeek V4.1 Flash (Alibaba Cloud, sees images)",
+            DASHSCOPE_FLASH_MODEL,
+            bool(qwen_max_key),
+            "" if qwen_max_key else "set DASHSCOPE_API_KEY or QWEN_API_KEY",
+        )
+    )
     rows.append(
         _catalog_row(
             "qwen3.8-max",
@@ -330,6 +348,29 @@ def _available_backends(
         )
     qwen_max_key = _qwen_max_key(config)
     if qwen_max_key:
+        base_url = _qwen_max_base_url(config)
+        backends.append(
+            SummaryBackend(
+                key="deepseek-v4.1-flash",
+                label="DeepSeek V4.1 Flash (Alibaba Cloud)",
+                model_id=DASHSCOPE_FLASH_MODEL,
+                max_source_chars=CLOUD_SOURCE_CHARS,
+                generate_fn=lambda prompt, images, max_tokens, _key=qwen_max_key, _base=base_url: strip_think(
+                    _openai_compatible_generate(
+                        api_key=_key,
+                        model=DASHSCOPE_FLASH_MODEL,
+                        prompt=prompt,
+                        images=images,
+                        max_tokens=max(int(max_tokens or 0), THINKING_MAX_TOKENS),
+                        base_url=_base,
+                        extra={"enable_thinking": True},
+                        timeout=300,
+                        stream=True,
+                    )
+                ),
+            )
+        )
+    if qwen_max_key:
         model = _qwen_max_model(config)
         base_url = _qwen_max_base_url(config)
         backends.append(
@@ -367,6 +408,15 @@ def _available_backends(
             )
         )
     return backends
+
+
+def strip_think(text: str) -> str:
+    """Drop a reasoning block some models (DeepSeek on DashScope) put inline as <think>...</think>."""
+    if not isinstance(text, str):
+        return text
+    if "</think>" in text:
+        text = text.rsplit("</think>", 1)[1]
+    return text.strip()
 
 
 def _agy_summary_model(config: AppConfig) -> str:

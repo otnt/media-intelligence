@@ -93,16 +93,30 @@ def main(argv: list[str] | None = None) -> int:
     bulk_asr.add_argument("name")
     bulk_asr.add_argument("--model", default=None, help="ASR model id; default is asr.default from the config")
     bulk_asr.add_argument("--off", action="store_true", help="Stop transcribing (downloads continue)")
+    bulk_asr.add_argument(
+        "--policy",
+        choices=("captions-first", "asr"),
+        default=None,
+        help="captions-first (default): YouTube captions where they exist, the ASR model for the rest; asr: always ASR",
+    )
     bulk_status = bulk_sub.add_parser("status", help="Show a job's progress (all jobs without a name)")
     bulk_status.add_argument("name", nargs="?")
     bulk_dest = bulk_sub.add_parser("dest", help="Set where finished files go ('' = keep them on the Mac)")
     bulk_dest.add_argument("name")
     bulk_dest.add_argument("path")
+    bulk_summary = bulk_sub.add_parser(
+        "summary", help="Summarize transcribed videos (a note + summary each), inside the half-price window"
+    )
+    bulk_summary.add_argument("name")
+    bulk_summary.add_argument("--model", default="deepseek-v4.1-flash", help="Summary model key")
+    bulk_summary.add_argument("--window", default=None, help="HH:MM-HH:MM@+08:00 (default 22:00-08:00 Beijing)")
+    bulk_summary.add_argument("--any-time", action="store_true", help="No time window")
+    bulk_summary.add_argument("--off", action="store_true")
     bulk_pause = bulk_sub.add_parser("pause", help="Pause a running job after the current video")
     bulk_pause.add_argument("name")
     bulk_resume = bulk_sub.add_parser("resume", help="Undo a pause; a YouTube-limit pause is probed right away")
     bulk_resume.add_argument("name")
-    for parser_ in (bulk_add, bulk_run, bulk_status, bulk_dest, bulk_pause, bulk_resume, bulk_asr):
+    for parser_ in (bulk_add, bulk_run, bulk_status, bulk_dest, bulk_pause, bulk_resume, bulk_asr, bulk_summary):
         parser_.add_argument("--config", type=Path, default=None)
 
     watchdog = sub.add_parser("watchdog", help="One self-check: API, bulk jobs, disk; restarts what is stuck")
@@ -239,6 +253,11 @@ def cmd_bulk(config: AppConfig, args: argparse.Namespace) -> int:
                 f"  dest: {summary['dest'] or '(Mac only)'} {'ready' if summary['dest_ready'] else 'not mounted'}"
                 f" · staging {summary['staging']} · free {summary['free_gb']} GB"
             )
+            if summary["summary_model"]:
+                done = summary["summary_counts"]
+                print(f"  summaries ({summary['summary_model']}, {summary['summary_window'] or 'any time'}): "
+                      f"done {done.get('done', 0)} · running {done.get('running', 0) + done.get('queued', 0)} · "
+                      f"failed {done.get('failed', 0)} · ≈ ${summary['summary_cost_usd']}")
             if summary["asr_model"]:
                 asr = summary["asr_counts"]
                 print(
@@ -255,6 +274,8 @@ def cmd_bulk(config: AppConfig, args: argparse.Namespace) -> int:
         if args.title or not store.meta("title"):
             store.set_meta("title", args.title or args.name)
         store.set_meta("source", args.source)
+        if store.meta("youtube_extras") is None:  # captions, chapters and metadata come with each download
+            store.set_meta("youtube_extras", all(len(entry["id"]) == 11 for entry in entries[:20]) and bool(entries))
         if args.dest is not None:
             store.set_meta("dest", str(Path(args.dest).expanduser()) if args.dest else "")
         print(f"{args.name}: {added} new of {len(entries)} listed; {store.summary()['total']} in the job")
@@ -277,7 +298,24 @@ def cmd_bulk(config: AppConfig, args: argparse.Namespace) -> int:
             print(f"Unknown ASR model {model!r}. Choices: {', '.join(ASR_MODELS)}", file=sys.stderr)
             return 2
         store.set_meta("asr_model", model)
-        print(f"{args.name}: transcribing with {model} (restart the job to apply: "
+        if args.policy:
+            store.set_meta("transcript_policy", args.policy)
+        print(f"{args.name}: transcribing with {model}, {store.meta('transcript_policy', 'captions-first')} "
+              f"(restart the job to apply: "
+              f"launchctl kickstart -k gui/$(id -u)/com.media-pipeline.bulk.{args.name})")
+        return 0
+    if command == "summary":
+        from media_pipeline.bulk import DEFAULT_SUMMARY_WINDOW
+        from media_pipeline.summary_llm import normalize_summary_key
+
+        if args.off:
+            store.set_meta("summary_model", "")
+            print(f"{args.name}: summaries off (restart the job to apply)")
+            return 0
+        store.set_meta("summary_model", normalize_summary_key(args.model))
+        store.set_meta("summary_window", "" if args.any_time else (args.window or DEFAULT_SUMMARY_WINDOW))
+        window = store.meta("summary_window") or "any time"
+        print(f"{args.name}: summaries with {store.meta('summary_model')} during {window} (restart the job to apply: "
               f"launchctl kickstart -k gui/$(id -u)/com.media-pipeline.bulk.{args.name})")
         return 0
     if command == "pause":

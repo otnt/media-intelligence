@@ -181,6 +181,7 @@ def build_model_prompt(
     metadata: VideoMetadata | None,
     source_text: str,
     attached: list[SummaryStill] | None = None,
+    chapters: list[dict] | None = None,
 ) -> str:
     title = (metadata.title if metadata else "") or (metadata.video_id if metadata else "")
     author = metadata.author if metadata else ""
@@ -205,6 +206,7 @@ def build_model_prompt(
         f"Title: {title}",
         f"Author: {author}",
         f"URL: {url}",
+        *(_chapter_lines(chapters) if chapters else []),
         "",
         f"{source_label}:",
         source_text.strip() or "(no source text)",
@@ -213,6 +215,25 @@ def build_model_prompt(
         lines.append("")
         lines.append(f"Attached images: {len(attached)} (visual context only; do not insert them).")
     return "\n".join(lines).strip() + "\n"
+
+
+def _chapter_lines(chapters: list[dict]) -> list[str]:
+    from media_pipeline.models import format_timestamp
+
+    lines = ["", "Chapters (the video's own outline; use them to structure, but trust the transcript):"]
+    for chapter in chapters:
+        lines.append(f"- [{format_timestamp(float(chapter.get('start') or 0))}] {chapter.get('title', '')}")
+    return lines
+
+
+def _load_chapters(artifacts: ArtifactStore) -> list[dict]:
+    path = artifacts.root / "youtube.json"
+    if not path.is_file():
+        return []
+    try:
+        return list(artifacts.read_json(path).get("chapters") or [])
+    except (OSError, ValueError, AttributeError):
+        return []
 
 
 def summarize_task(
@@ -238,7 +259,8 @@ def summarize_task(
     if len(source_text) > limit:
         logger.warning("Transcript of %s is %s chars; %s gets the first %s", artifacts.video_id, len(source_text),
                        getattr(provider, "key", "model"), limit)
-    packed = build_model_prompt(user_prompt, metadata, _truncate(source_text, limit), attached)
+    packed = build_model_prompt(user_prompt, metadata, _truncate(source_text, limit), attached,
+                                chapters=_load_chapters(artifacts))
     logger.info("Summarizing %s with %s attached images; output is text-only", artifacts.video_id, len(attached))
     raw = provider.generate(packed, [item.path for item in attached], max_tokens)
     thinking, markdown = parse_summary_output(raw)

@@ -203,6 +203,50 @@ def create_app(config: AppConfig, store: TaskStore | None = None, worker: TaskWo
             headers={"Content-Disposition": f'attachment; filename="{name}.csv"'},
         )
 
+    @app.post("/v1/bulk/{name}/videos/{video_id}/process", status_code=202)
+    def bulk_process(name: str, video_id: str) -> dict[str, Any]:
+        """Turn a transcribed bulk video into a normal task (note + summary), reusing its download,
+        metadata and transcript; the task belongs to the job's collection."""
+        job = _bulk_job(name)
+        video = job.video(video_id)
+        if video is None:
+            raise HTTPException(status_code=404, detail="No such video in this job")
+        if video.get("asr_status") != "done":
+            raise HTTPException(status_code=409, detail="Not transcribed yet")
+        if config.notes_dir() is None:
+            raise HTTPException(status_code=500, detail="Obsidian vault is not configured")
+        source = str(video.get("transcript_source") or "")
+        asr_model = "youtube-captions" if source == "youtube" else (source or job.meta("asr_model", "") or config.asr.default)
+        _validate_model(asr_model)
+        task = Task(
+            id=str(uuid.uuid4()),
+            url=str(video["url"]),
+            asr_model=asr_model,
+            status=TaskStatus.queued,
+            platform="YouTube",
+            video_id=video_id,
+            title=str(video.get("title") or ""),
+            extra={
+                "language": config.asr.language or "auto",
+                "extract_keyframes": False,
+                "summary_model": str(job.meta("summary_model", "") or ""),
+                "collection": str(job.meta("title", "") or name),
+                "bulk_job": name,
+            },
+        )
+        store.insert(task)
+        worker.submit(task)
+        return task.to_public()
+
+    @app.get("/v1/collections")
+    def collections() -> dict[str, Any]:
+        counts: dict[str, int] = {}
+        for task in store.list_all(limit=100_000):
+            name = str(task.extra.get("collection") or "")
+            if name:
+                counts[name] = counts.get(name, 0) + 1
+        return {"collections": [{"name": name, "count": n} for name, n in sorted(counts.items())]}
+
     @app.post("/v1/bulk/{name}/pause")
     def bulk_pause(name: str) -> dict[str, Any]:
         job = _bulk_job(name)
@@ -368,10 +412,17 @@ def create_app(config: AppConfig, store: TaskStore | None = None, worker: TaskWo
         group: str | None = None,
         order: str | None = None,
         tag: str | None = None,
+        collection: str | None = None,
     ) -> dict[str, Any]:
         organize = _resolve_organize(config, filter=filter, group=group, order=order)
         tag_filter = normalize_tag(tag)
-        payloads = [_enrich_task(item, config) for item in store.list_all()]
+        # A collection (a whole channel from a bulk job) has its own view; the library stays yours.
+        wanted = (collection or "").strip()
+        payloads = [
+            _enrich_task(item, config)
+            for item in store.list_all(limit=100_000 if wanted else 2000)
+            if str(item.extra.get("collection") or "") == wanted
+        ]
         groups = organize_task_payloads(
             payloads,
             time_filter=organize["filter"],

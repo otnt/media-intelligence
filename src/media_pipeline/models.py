@@ -59,6 +59,14 @@ ASR_MODELS: dict[str, dict[str, str]] = {
         "provider": "dashscope",
         "backend_model": "fun-asr",
     },
+    # Not a model you pick: the transcript a bulk download saved from YouTube's own captions.
+    "youtube-captions": {
+        "label": "YouTube captions",
+        "runtime": "YouTube",
+        "provider": "youtube",
+        "backend_model": "captions",
+        "hidden": "true",
+    },
 }
 
 MLX_WHISPER_REPOS = {

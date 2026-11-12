@@ -63,9 +63,11 @@ def _job(config: AppConfig, ids=("a", "b", "c"), **meta) -> bulk.BulkStore:
     return store
 
 
-def _runner(config, store, clock, youtube, probe=lambda: None, free=lambda path: 500.0, transcriber=None, **limits):
+def _runner(config, store, clock, youtube, probe=lambda: None, free=lambda path: 500.0, transcriber=None,
+            submit_summary=None, task_status=None, **limits):
     return BulkRunner(config, store, limits=Limits(pause_between=(0, 0), **limits), downloader=youtube,
-                      prober=probe, transcriber=transcriber, clock=clock, sleep=clock.sleep, free_gb=free)
+                      prober=probe, transcriber=transcriber, submit_summary=submit_summary, task_status=task_status,
+                      clock=clock, sleep=clock.sleep, free_gb=free)
 
 
 class FakeASR:
@@ -354,7 +356,7 @@ def test_transcription_runs_alongside_downloads_and_records_each_stage(tmp_path:
     summary = store.summary(now=clock.t)
     assert summary["asr_counts"] == {"done": 3} and summary["asr_hours"] == 1.5
     assert summary["asr_cost_usd"] == round(3 * 1800 * 0.000035, 2)
-    assert store.work_left() == (0, 0)
+    assert store.work_left() == (0, 0, 0)
 
 
 def test_transcription_failures_are_retried_then_paused_after_a_streak(tmp_path: Path):
@@ -367,7 +369,7 @@ def test_transcription_failures_are_retried_then_paused_after_a_streak(tmp_path:
     assert all(row["asr_status"] == "failed" and row["asr_attempts"] == 3 for row in rows)
     assert "Throttling" in rows[0]["asr_error"]
     assert any("连续 5 个视频转写失败" in event["detail"] for event in _events(store, "asr-pause"))
-    assert store.work_left() == (0, 0)
+    assert store.work_left() == (0, 0, 0)
 
 
 def test_a_video_moves_to_the_nas_only_after_it_is_transcribed(tmp_path: Path):
@@ -435,3 +437,179 @@ def test_bulk_transcriber_saves_where_the_pipeline_looks(tmp_path: Path, monkeyp
     assert client.get("/v1/bulk/aie/transcript/unknown").status_code == 404
     summary = client.get("/v1/bulk/aie").json()["summary"]
     assert summary["asr_counts"] == {"done": 1} and summary["asr_model"] == "fun-asr"
+
+
+JSON3 = {"events": [
+    {"tStartMs": 0, "dDurationMs": 4000, "segs": [{"utf8": "Hey everyone, welcome"}]},
+    {"tStartMs": 3500, "dDurationMs": 40, "aAppend": 1, "segs": [{"utf8": "\n"}]},
+    {"tStartMs": 4000, "dDurationMs": 5000, "segs": [{"utf8": "to the talk about evals."}]},
+    {"tStartMs": 9500, "dDurationMs": 1000, "segs": [{"utf8": "[Music]"}]},
+    {"tStartMs": 11000, "dDurationMs": 6000, "segs": [{"utf8": "First, "}, {"utf8": "what is an eval?"}]},
+]}
+
+
+class FakeYdl:
+    def __init__(self, payload):
+        self.payload = payload
+        self.opened = []
+
+    def urlopen(self, url):
+        import io
+        import json as _json
+
+        self.opened.append(url)
+        return io.BytesIO(_json.dumps(self.payload).encode())
+
+
+def _info(vid, captions=True, chapters=True):
+    return {
+        "id": vid, "title": f"Talk {vid}", "uploader": "AI Engineer", "duration": 1800, "upload_date": "20261101",
+        "description": "desc", "webpage_url": f"https://www.youtube.com/watch?v={vid}", "language": "en-US",
+        "extractor_key": "Youtube",
+        "automatic_captions": {"en-orig": [{"ext": "vtt", "url": "u.vtt"}, {"ext": "json3", "url": f"https://cap/{vid}"}]}
+        if captions else {},
+        "chapters": [{"start_time": 0, "end_time": 60, "title": "Intro"},
+                     {"start_time": 60, "end_time": 1800, "title": "What is an eval"}] if chapters else None,
+    }
+
+
+def test_captions_become_a_one_speaker_transcript_and_tracks_prefer_uploaded_ones():
+    from media_pipeline.youtube_captions import parse_json3, pick_track
+
+    transcript = parse_json3(JSON3, "en")
+    assert [s.text for s in transcript.segments] == ["Hey everyone, welcome to the talk about evals.",
+                                                     "First, what is an eval?"]
+    assert {s.speaker for s in transcript.segments} == {"SPEAKER_00"} and transcript.model == "youtube-captions"
+    assert transcript.segments[0].start == 0.0 and transcript.segments[1].start == 11.0
+    info = _info("x")
+    assert pick_track(info) == ("en", "auto", "https://cap/x")
+    info["subtitles"] = {"en": [{"ext": "json3", "url": "https://manual/x"}], "fr": [{"ext": "json3", "url": "f"}]}
+    assert pick_track(info) == ("en", "manual", "https://manual/x")
+    assert pick_track({"language": "en", "automatic_captions": {}}) is None
+
+
+def test_captions_first_skips_paid_asr_and_backfills_extras(tmp_path: Path):
+    from media_pipeline.artifacts import ArtifactStore
+
+    config = _config(tmp_path)
+    store = _job(config, ids=("cap1", "nocap"), asr_model="fun-asr", youtube_extras=True)
+    store.execute("UPDATE videos SET status='done', path=? WHERE id='cap1'",
+                  (str(store.db.parent / "media" / "cap1.mp4"),))  # downloaded before extras existed
+    (store.db.parent / "media").mkdir(parents=True, exist_ok=True)
+    (store.db.parent / "media" / "cap1.mp4").write_bytes(b"v")
+    fetched = []
+    holder = {}
+
+    def extras(url, vid, captions=True):  # what a metadata-only extraction would save
+        fetched.append(vid)
+        info = _info(vid, captions=vid != "nocap", chapters=vid == "cap1")
+        holder["runner"]._save_extras(FakeYdl(JSON3), info, vid, captions=captions)
+
+    class YouTubeWithExtras(FakeYouTube):
+        def __call__(self, url, video_id, target_dir, progress):
+            result = super().__call__(url, video_id, target_dir, progress)
+            extras(url, video_id)  # the real downloader saves extras from the same extraction
+            return result
+
+    asr = FakeASR()
+    runner = _runner(config, store, Clock(), YouTubeWithExtras(), transcriber=asr)
+    runner.fetch_extras = extras
+    holder["runner"] = runner
+    assert runner.run() == "finished"
+    cap1, nocap = _row(store, "cap1"), _row(store, "nocap")
+    assert sorted(fetched) == ["cap1", "nocap"]  # the backfill, and the new download's own extraction
+    assert cap1["captions_status"] == "done" and cap1["transcript_source"] == "youtube" and cap1["chapters"] == 2
+    assert cap1["asr_status"] == "done" and cap1["segments"] == 2 and cap1["speakers"] == 1
+    assert nocap["captions_status"] == "none" and nocap["transcript_source"] == "fun-asr"
+    assert asr.calls == ["nocap"]  # only the video without captions cost ASR money
+    artifacts = ArtifactStore(config.paths.artifacts, "cap1")
+    assert artifacts.load_transcript("youtube-captions").segments[0].text.startswith("Hey everyone")
+    assert artifacts.load_metadata().title == "Talk cap1" and artifacts.load_metadata().published == "2026-11-01"
+    assert artifacts.read_json(artifacts.root / "youtube.json")["chapters"][1]["title"] == "What is an eval"
+    summary = store.summary()
+    assert summary["transcript_sources"] == {"youtube": 1, "fun-asr": 1}
+    assert summary["asr_cost_usd"] == round(1800 * 0.000035, 2)  # only the Fun-ASR one is paid
+    assert summary["captions_counts"] == {"done": 1, "none": 1} and summary["with_chapters"] == 1
+
+
+def test_a_captions_rate_limit_cools_captions_down_but_never_stops_downloads(tmp_path: Path):
+    config = _config(tmp_path)
+    store = _job(config, ids=("v1", "v2", "v3"), youtube_extras=True)
+    store.execute("UPDATE videos SET status='done' WHERE id='v1'")
+    clock = Clock()
+    calls = []
+
+    def extras(url, vid, captions=True):
+        calls.append((vid, clock.t))
+        if len(calls) == 1:
+            raise RuntimeError("HTTP Error 429: Too Many Requests")
+        holder["runner"]._save_extras(FakeYdl(JSON3), _info(vid), vid, captions=captions)
+
+    holder = {}
+    youtube = FakeYouTube()
+    runner = _runner(config, store, clock, youtube)
+    runner.fetch_extras = extras
+    holder["runner"] = runner
+    assert runner.run() == "finished"
+    assert youtube.calls == ["v2", "v3"]  # downloads went on during the cooldown
+    v1 = [at for vid, at in calls if vid == "v1"]
+    assert calls[0][0] == "v1" and len(v1) == 2 and v1[1] - v1[0] >= 30 * 60  # retried after the cooldown
+    assert {vid for vid, _at in calls} == {"v1", "v2", "v3"}  # the new downloads got their captions too
+    assert _row(store, "v1")["captions_status"] == "done"
+    assert _events(store, "pause") == [] and len(_events(store, "captions-pause")) == 1
+
+
+def test_captions_that_never_come_fall_back_to_asr_after_six_hours(tmp_path: Path):
+    config = _config(tmp_path)
+    store = _job(config, ids=("v1",), asr_model="fun-asr", youtube_extras=True)
+    clock = Clock()
+    downloaded_at = clock.t
+    store.execute("UPDATE videos SET status='done', finished_at=?, path=? WHERE id='v1'",
+                  (downloaded_at, str(store.db.parent / "media" / "v1.mp4")))
+    (store.db.parent / "media").mkdir(parents=True, exist_ok=True)
+    (store.db.parent / "media" / "v1.mp4").write_bytes(b"v")
+    asked = []
+
+    def extras(url, vid, captions=True):
+        asked.append(captions)
+        if captions:
+            raise RuntimeError("HTTP Error 429: Too Many Requests")
+        holder["runner"]._save_extras(FakeYdl(JSON3), _info(vid), vid, captions=False)
+
+    holder = {}
+    asr = FakeASR(on_call=lambda path, row: asked.append(("asr", clock.t - downloaded_at)))
+    runner = _runner(config, store, clock, FakeYouTube(), transcriber=asr)
+    runner.fetch_extras = extras
+    holder["runner"] = runner
+    assert runner.run() == "finished"
+    row = _row(store, "v1")
+    assert asr.calls == ["v1"] and row["transcript_source"] == "fun-asr"
+    assert next(item for item in asked if isinstance(item, tuple))[1] >= 6 * 3600  # waited for captions first
+    assert row["captions_status"] == "skipped" and row["chapters"] == 2  # later: metadata and chapters only
+    assert asked[-1] is False
+
+
+def test_a_bot_check_seen_while_backfilling_pauses_downloads_and_captions_wait_for_it(tmp_path: Path):
+    config = _config(tmp_path)
+    store = _job(config, ids=("old", "new1"), youtube_extras=True)
+    store.execute("UPDATE videos SET status='done', finished_at=? WHERE id='old'", (1.0,))
+    clock = Clock()
+    seen = []
+
+    def extras(url, vid, captions=True):
+        seen.append((vid, clock.t))
+        if len(seen) == 1:
+            raise RuntimeError("[youtube] old: Sign in to confirm you’re not a bot.")
+        holder["runner"]._save_extras(FakeYdl(JSON3), _info(vid), vid, captions=captions)
+
+    holder = {}
+    youtube = FakeYouTube()
+    started = clock.t
+    runner = _runner(config, store, clock, youtube)
+    runner.fetch_extras = extras
+    holder["runner"] = runner
+    runner.run()
+    pauses = _events(store, "pause")
+    assert len(pauses) == 1 and "补抓元数据" in pauses[0]["detail"]
+    assert _row(store, "old")["captions_status"] == "done" and seen[1][1] - seen[0][1] >= 15 * 60
+    assert all(at - started >= 0 for _vid, at in seen)
