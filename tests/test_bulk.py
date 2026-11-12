@@ -613,3 +613,21 @@ def test_a_bot_check_seen_while_backfilling_pauses_downloads_and_captions_wait_f
     assert len(pauses) == 1 and "补抓元数据" in pauses[0]["detail"]
     assert _row(store, "old")["captions_status"] == "done" and seen[1][1] - seen[0][1] >= 15 * 60
     assert all(at - started >= 0 for _vid, at in seen)
+
+
+
+def test_finished_files_move_to_the_nas_while_youtube_has_the_job_paused(tmp_path: Path):
+    config = _config(tmp_path)
+    nas = tmp_path / "nas"
+    store = _job(config, ids=("a", "b"), dest=str(nas))
+    media = store.db.parent / "media"
+    media.mkdir(parents=True, exist_ok=True)
+    (media / "a.mp4").write_bytes(b"x" * 100)
+    store.execute("UPDATE videos SET status='done', path=?, location='mac', bytes=100 WHERE id='a'", (str(media / "a.mp4"),))
+    clock = Clock()
+    store.set_meta("pause_until", clock.t + 3600)  # YouTube said "not a bot" an hour ago
+    at_probe = []
+    runner = _runner(config, store, clock, FakeYouTube(), probe=lambda: at_probe.append((nas / "a.mp4").exists()))
+    runner.run()
+    assert at_probe == [True]  # copied during the pause, before downloading resumed
+    assert _row(store, "a")["location"] == "nas" and not (media / "a.mp4").exists()

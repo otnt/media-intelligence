@@ -602,6 +602,7 @@ class BulkRunner:
         self._asr_lock = threading.Lock()
         self._downloads_done = threading.Event()
         self._last_beat: dict[str, float] = {}
+        self._last_idle_move = 0.0
         self._done = 0
 
     # ------------------------------------------------------------------ main loop
@@ -1147,11 +1148,13 @@ class BulkRunner:
             self._beat("download")
             if self.store.meta("control", "") == "pause":
                 self._set_state("paused", "已手动暂停")
+                self._idle_move()
                 self.sleep(15)
                 continue
             until = float(self.store.meta("pause_until", 0) or 0)
             if until > self.clock():
                 self._set_state("limited", self.store.meta("pause_reason", ""))
+                self._idle_move()  # a YouTube pause is a good time to copy finished files to the NAS
                 self.sleep(min(30.0, until - self.clock()))
                 continue
             if until:
@@ -1228,6 +1231,11 @@ class BulkRunner:
                 self.store.set_meta(f"heartbeat_{kind}", now)
 
     # ---------------------------------------------------------------- storage
+    def _idle_move(self) -> None:
+        if self.clock() - self._last_idle_move >= 60:
+            self._last_idle_move = self.clock()
+            self._move_staged()
+
     def _move_staged(self, force: bool = False) -> None:
         """Copy finished files to the NAS. With ASR on, a file waits until it is transcribed (read locally,
         faster) unless ``force`` (the disk is low, or the run is ending); never while it is being read."""
