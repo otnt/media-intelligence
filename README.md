@@ -219,6 +219,7 @@ instead of downloading or paying for ASR again.
 ```bash
 uv run media-pipeline bulk add aie --source 'https://www.youtube.com/@aiDotEngineer/videos' --title 'AI Engineer'
 uv run media-pipeline bulk asr aie                   # also transcribe (asr.default, e.g. fun-asr; --off to stop)
+uv run media-pipeline bulk summary aie               # and summarize at half price (deepseek-v4.1-flash, 22:00-08:00 Beijing)
 uv run media-pipeline bulk run aie --max 3          # a trial in the foreground
 ./scripts/install-bulk-agent.sh aie                  # the whole job as a LaunchAgent (resumes after reboot)
 uv run media-pipeline bulk status aie
@@ -226,7 +227,9 @@ uv run media-pipeline bulk dest aie '/Volumes/<share>/Media Intelligence/AI Engi
 ```
 
 - **Progress table**: `http://<mac>.ts.net:8875/bulk` (phone-friendly, filters per stage, search, CSV export, pause/resume, each transcript one tap away).
-- **Transcription** runs alongside the downloads, 3 videos at a time (`--asr-workers`). Failures are retried twice, 5 minutes apart; five in a row pause transcription for 10 minutes. The page shows the running ASR cost.
+- **YouTube's own captions and chapters** come with each download (`youtube_extras`, on for YouTube jobs): metadata and chapters are saved with the video, and captions become a free `youtube-captions` transcript (no speaker turns). YouTube rate-limits its captions endpoint on its own (HTTP 429 after a few dozen requests), so captions are spaced out (≥ 90 s, older downloads ≥ 3 min) and a 429 only cools captions down while videos keep downloading.
+- **Transcription** (`bulk asr`, `--policy captions-first` by default) runs alongside the downloads, 3 at a time: the ASR model only gets videos without captions, or still without them 6 hours after the download. Failures are retried twice, 5 minutes apart; five in a row pause transcription for 10 minutes. The page shows what transcripts cost.
+- **Summaries** (`bulk summary aie`, DeepSeek V4.1 Flash by default) turn each transcribed video into a normal note + summary, reusing its file, metadata and transcript, only during Alibaba Cloud's half-price hours (22:00-08:00 Beijing time), 4 at a time. The chapters go into the prompt as the speaker's outline. Notes land in `<notes>/<collection>/` (e.g. `Transcripts/AI Engineer/`); in the reader the collection has its own 📚 chip, so the library itself stays yours.
 - **Polite by design**: one video at a time, 8–20 s apart, guest session (no browser cookies, so the Google account is never at risk), 720p H.264 + the original audio track (about 150 MB per hour of talk).
 - **YouTube limits are detected and handled**: bot checks, HTTP 429 or "rate-limited / try again later" pause the job for 15 minutes (doubling up to 4 hours), and one probe request must succeed before it resumes. Four failures in a row, or the last five downloads running below 150 KB/s (throttling), pause it too. Private, removed, members-only and age-restricted videos are marked *skipped*. Every pause and resume is listed under 事件 on the page.
 - **Storage**: files download into `~/AIContent/bulk/<job>/media/` and are copied (size-checked) to `dest` once its share is mounted; downloading pauses while the Mac has less than 40 GB free (`--min-free-gb`).

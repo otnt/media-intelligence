@@ -89,6 +89,7 @@ Never create sibling worktrees such as `../media-download-<name>`.
 
 - `/` is the reader (`dashboard/static/index.html`): mobile-first library + note view, one row per video, page-level scrolling, PWA manifest and icons under `/static/`.
   It reads `/v1/tasks/{id}/note` (task, summary, speaker transcript, frames) and polls only while a task or summary is running, never repainting under a text selection.
+- Tasks with `extra.collection` (made by bulk jobs) are left out of `GET /v1/tasks` unless `?collection=<name>` is given; the reader shows each collection as a 📚 chip (`/v1/collections`).
 - `/bulk` is the bulk download progress table (`bulk.html`), polling `/v1/bulk/{job}` every 10s and skipping repaints under a text selection.
 - `/classic` is the previous dashboard (`classic.html`): settings, concurrency, keyframe keep/drop, prompt editing, stage reruns.
 
