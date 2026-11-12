@@ -359,12 +359,14 @@ SOURCE_YOUTUBE = "youtube"
 SOURCE_BILIBILI = "bilibili"
 SOURCE_REDNOTE = "rednote"
 SOURCE_THREADS = "threads"
+SOURCE_LINKEDIN = "linkedin"
 SOURCE_OTHER = "other"
 SOURCE_LABELS = {
     SOURCE_YOUTUBE: "YouTube",
     SOURCE_BILIBILI: "Bilibili",
     SOURCE_REDNOTE: "RedNote",
     SOURCE_THREADS: "Threads",
+    SOURCE_LINKEDIN: "LinkedIn",
     SOURCE_OTHER: "Other",
 }
 
@@ -380,6 +382,8 @@ def source_key(platform: str | None = "", url: str | None = "") -> str:
         return SOURCE_REDNOTE
     if name in {"threads"}:
         return SOURCE_THREADS
+    if name in {"linkedin"}:
+        return SOURCE_LINKEDIN
     host = urlparse(url or "").netloc.lower()
     if host.startswith("www."):
         host = host[4:]
@@ -393,6 +397,8 @@ def source_key(platform: str | None = "", url: str | None = "") -> str:
         return SOURCE_REDNOTE
     if host in {"threads.com", "threads.net"} or host.endswith(".threads.com") or host.endswith(".threads.net"):
         return SOURCE_THREADS
+    if host in {"linkedin.com", "lnkd.in"} or host.endswith(".linkedin.com"):
+        return SOURCE_LINKEDIN
     return SOURCE_OTHER
 
 

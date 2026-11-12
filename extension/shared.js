@@ -199,10 +199,20 @@ function mdpIsSupportedVideoUrl(urlString) {
     if (host === "b23.tv") return url.pathname.replace(/\/$/, "").length > 1;
     if (mdpIsXiaohongshuHost(urlString)) return Boolean(mdpParseXiaohongshuNote(urlString));
     if (mdpIsThreadsHost(urlString)) return /^\/(?:@[^/]+\/post|share)\/[A-Za-z0-9_-]+/.test(url.pathname);
+    if (mdpIsLinkedinHost(urlString)) {
+      if (host === "lnkd.in") return url.pathname.replace(/\/$/, "").length > 1;
+      return /^\/posts\/[^/]+-(?:activity|share|ugcPost)-\d+/.test(url.pathname)
+        || /^\/feed\/update\/urn:li:(?:activity|share|ugcPost):\d+/.test(url.pathname);
+    }
     return false;
   } catch (_error) {
     return false;
   }
+}
+
+function mdpIsLinkedinHost(urlString) {
+  const host = mdpHostname(urlString);
+  return host === "lnkd.in" || host === "linkedin.com" || host.endsWith(".linkedin.com");
 }
 
 function mdpIsThreadsHost(urlString) {

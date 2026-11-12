@@ -1,10 +1,13 @@
 # Local Video → Obsidian Extraction Pipeline
 
-One-click capture from Bilibili, YouTube, Xiaohongshu, and RedNote.
+One-click capture from Bilibili, YouTube, Xiaohongshu, RedNote, Threads and LinkedIn.
 The local service downloads the media, then for video posts extracts a timestamped speaker-aware transcript and writes an Obsidian note.
 Keyframe extraction is off by default because it is slow.
 Check **Extract keyframes** in the extension, pass `--keyframes` on the CLI, or click **Extract keyframes** on the dashboard to add stills and `multimodal.json`.
-Image/text Xiaohongshu posts are downloaded into the vault without ASR or visual extraction.
+Image/text posts (Xiaohongshu, Threads, LinkedIn) are downloaded into the vault without ASR or visual extraction.
+LinkedIn posts (`linkedin.com/posts/...`, `/feed/update/...`, and `lnkd.in/p/...` share links) are read from the public
+post page: the text, the post it reshares, images or the video, with `lnkd.in` links in the text resolved to their
+destination. Posts that need a login are reported as such.
 
 ## What V1 does
 
@@ -278,7 +281,7 @@ chrome.storage.local.remove("apiBase")
 Then reload the extension again.
 The default base URL is `http://127.0.0.1:8875`.
 
-The button appears on Bilibili, YouTube, Xiaohongshu, and RedNote (`rednote.com`) post pages, including `xhslink.com` short links.
+The button appears on Bilibili, YouTube, Xiaohongshu, RedNote (`rednote.com`), Threads and LinkedIn post pages, including `xhslink.com` and `lnkd.in` short links.
 On the Explore feed, search, and profile grids, each post card also gets an **✨ Extract** button.
 One click queues that note; ASR model and keyframe settings come from the floating panel or the extension popup.
 The last ASR model you used is remembered.
