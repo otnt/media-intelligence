@@ -296,6 +296,8 @@ function paintSummary(s) {
     : s.last_ok
       ? `<div class="yt">✅ <b>YouTube 正常</b> · 最近一次成功下载 ${ago(s.last_ok)}${esc(lastProbe)}</div>`
       : "";
+  const ytOff = s.downloads_on === false
+    ? `<div class="yt">⏹ <b>已停止从 YouTube 下载</b>：转写和幻灯片来自 AI Engineer 官方资料；已下载的 ${done} 个照常转写、总结、存到 NAS</div>` : "";
   const storage = s.dest
     ? (s.dest_ready ? `NAS ✓ · ${s.on_nas} 个已在 NAS` : `NAS 未挂载 · 先存在 Mac`)
     : "Mac（未设置 NAS）";
@@ -333,7 +335,7 @@ function paintSummary(s) {
       <span class="state-detail">${esc(limited ? "" : s.state_detail || "")}</span></div>
     <div class="big">${done}<small>/ ${s.total} 已下载</small></div>
     <div class="bar"><i class="done" style="width:${pct(done)}%"></i><i class="skipped" style="width:${pct(skipped)}%"></i><i class="failed" style="width:${pct(failed)}%"></i></div>
-    ${yt}${asrPause}
+    ${ytOff || yt}${asrPause}
     <div class="grid">
       <div class="kv"><div class="k">时长</div><div class="v">${s.done_hours} / ${s.hours} 小时</div></div>
       <div class="kv"><div class="k">已下载大小</div><div class="v">${s.gigabytes} GB${s.estimated_total_gb ? ` · 预计共 ${s.estimated_total_gb} GB` : ""}</div></div>

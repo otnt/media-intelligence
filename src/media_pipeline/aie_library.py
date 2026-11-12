@@ -243,3 +243,95 @@ def _save_slide_images(library: Library, artifacts: Any, chosen: list[dict[str, 
         index.append({"file": target.name, "startMs": entry["startMs"], "title": entry["title"], "alt": entry["alt"]})
     artifacts.write_json(folder / "slides.json", index)
     return saved
+
+
+ARCHIVE_COLLECTIONS = ("talks", "speakers", "topics", "organizations", "chapters", "transcripts")
+
+
+def archive_library(
+    dest: Path,
+    *,
+    library: Library | None = None,
+    artifacts_root: Path | None = None,
+    log: Callable[[str], None] = logger.info,
+) -> dict[str, int]:
+    """Everything the organizers publish, saved as files under ``dest`` (resumable; existing files are kept):
+
+    index/  the six collections as JSON and CSV, the data status and the guide (data.md)
+    talks/<videoId>-<slug>/  talk.json (record), talk.md (write-up, slides and timestamped transcript),
+                             transcript.json, slides.json (manifest) and slides/<sha256>.webp (every slide)
+    Slide images already fetched for summaries (``artifacts_root``) are copied instead of downloaded.
+    """
+    library = library or Library()
+    index_dir = dest / "index"
+    index_dir.mkdir(parents=True, exist_ok=True)
+    for name in ARCHIVE_COLLECTIONS:
+        for fmt in ("json", "csv"):
+            _write_new(index_dir / f"{name}.{fmt}", lambda name=name, fmt=fmt: library.get(f"{BASE}/{name}?format={fmt}"))
+    _write_new(index_dir / "status.json", lambda: library.get(f"{BASE}/status"), refresh=True)
+    _write_new(index_dir / "data.md", lambda: library.get("https://ai.engineer/data.md"))
+    talks = _rows(json.loads((index_dir / "talks.json").read_text(encoding="utf-8")))
+    transcripts = {str(r.get("talkSlug")): r.get("jsonUrl")
+                   for r in _rows(json.loads((index_dir / "transcripts.json").read_text(encoding="utf-8")))}
+    stats = {"talks": len(talks), "markdown": 0, "transcripts": 0, "manifests": 0, "slides": 0,
+             "slides_copied": 0, "failed": 0}
+    for count, talk in enumerate(talks, start=1):
+        vid, slug = str(talk.get("videoId") or ""), str(talk.get("slug") or "")
+        folder = dest / "talks" / _safe(f"{vid}-{slug}" if vid else slug)
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            _write_new(folder / "talk.json", lambda: json.dumps(talk, ensure_ascii=False, indent=1).encode())
+            if talk.get("url") and _write_new(folder / "talk.md", lambda: library.get(str(talk["url"]) + ".md")):
+                stats["markdown"] += 1
+            if transcripts.get(slug) and _write_new(folder / "transcript.json", lambda: library.get(transcripts[slug])):
+                stats["transcripts"] += 1
+            manifest_url = (talk.get("slides") or {}).get("url") if isinstance(talk.get("slides"), dict) else None
+            if manifest_url:
+                if _write_new(folder / "slides.json", lambda: library.get(manifest_url, kind="asset")):
+                    stats["manifests"] += 1
+                manifest = json.loads((folder / "slides.json").read_text(encoding="utf-8"))
+                for entry in slide_entries(manifest):
+                    name = "".join(ch for ch in Path(entry["src"].split("?")[0]).name if ch.isalnum() or ch in "._-")
+                    target = folder / "slides" / name
+                    if target.is_file() and target.stat().st_size > 0:
+                        continue
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    local = artifacts_root / vid / SLIDES_DIR / name if artifacts_root and vid else None
+                    if local is not None and local.is_file() and local.stat().st_size > 0:
+                        _write_new(target, local.read_bytes)
+                        stats["slides_copied"] += 1
+                    else:
+                        _write_new(target, lambda src=entry["src"]: library.get(src, kind="asset"))
+                        stats["slides"] += 1
+        except Exception as exc:  # noqa: BLE001 - one talk must not stop the archive
+            stats["failed"] += 1
+            log(f"archive failed for {vid} {slug}: {exc}")
+        if count % 50 == 0:
+            log(f"archive {count}/{len(talks)} talks · {stats}")
+    (dest / "README.md").write_text(
+        "# AI Engineer official talk library (archive)\n\n"
+        "Downloaded from https://ai.engineer/data (public JSON published by the AI Engineer organizers; the guide\n"
+        "is in index/data.md). Transcripts are automated and may contain errors.\n\n"
+        "- index/: talks, speakers, topics, organizations, chapters and transcripts as JSON and CSV; status.json\n"
+        "- talks/<videoId>-<slug>/: talk.json, talk.md (write-up + slides + timestamped transcript),\n"
+        "  transcript.json, slides.json and slides/*.webp (every deduplicated slide)\n\n"
+        f"Last run: {time.strftime('%Y-%m-%d %H:%M')} · {json.dumps(stats)}\n",
+        encoding="utf-8",
+    )
+    log(f"archive done: {stats}")
+    return stats
+
+
+def _write_new(path: Path, produce: Callable[[], bytes], refresh: bool = False) -> bool:
+    """Write ``produce()`` to ``path`` atomically unless it is already there. True if written."""
+    if not refresh and path.is_file() and path.stat().st_size > 0:
+        return False
+    data = produce()
+    partial = path.with_name(path.name + ".part")
+    partial.write_bytes(data)
+    partial.replace(path)
+    return True
+
+
+def _safe(name: str) -> str:
+    return "".join(ch for ch in name if ch.isalnum() or ch in "._-")[:160] or "talk"

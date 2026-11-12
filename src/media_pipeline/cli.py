@@ -119,6 +119,14 @@ def main(argv: list[str] | None = None) -> int:
     bulk_import.add_argument("--slides", type=int, default=8, help="Slide images per talk for the summary")
     bulk_import.add_argument("--refresh", action="store_true", help="Fetch again even what is already saved")
     bulk_import.add_argument("--limit", type=int, default=None, help="Only the first N matching talks (a trial)")
+    bulk_archive = bulk_sub.add_parser(
+        "archive-aie", help="Save everything AI Engineer publishes (index, talk pages, transcripts, all slides)"
+    )
+    bulk_archive.add_argument("name")
+    bulk_archive.add_argument("--dest", default=None, help="Folder (default: <job dest>/official, e.g. on the NAS)")
+    bulk_youtube = bulk_sub.add_parser("youtube", help="Stop (--off) or restart (--on) downloads and captions from YouTube")
+    bulk_youtube.add_argument("name")
+    bulk_youtube.add_argument("switch", choices=("on", "off"))
     bulk_pace = bulk_sub.add_parser("pace", help="Seconds between downloads, e.g. 45-90 (applies while it runs)")
     bulk_pace.add_argument("name")
     bulk_pace.add_argument("seconds", help="MIN-MAX, or 'default'")
@@ -127,7 +135,7 @@ def main(argv: list[str] | None = None) -> int:
     bulk_resume = bulk_sub.add_parser("resume", help="Undo a pause; a YouTube-limit pause is probed right away")
     bulk_resume.add_argument("name")
     for parser_ in (bulk_add, bulk_run, bulk_status, bulk_dest, bulk_pause, bulk_resume, bulk_asr, bulk_summary,
-                    bulk_pace, bulk_import):
+                    bulk_pace, bulk_import, bulk_youtube, bulk_archive):
         parser_.add_argument("--config", type=Path, default=None)
 
     watchdog = sub.add_parser("watchdog", help="One self-check: API, bulk jobs, disk; restarts what is stuck")
@@ -338,6 +346,30 @@ def cmd_bulk(config: AppConfig, args: argparse.Namespace) -> int:
         store.event("import", f"AI Engineer 官方资料：{stats['transcripts']} 个转写、{stats['slides']} 个有幻灯片、"
                               f"{stats['images']} 张幻灯片图片，失败 {stats['failed']}")
         print(json.dumps(stats))
+        return 0
+    if command == "archive-aie":
+        from media_pipeline.aie_library import Library, archive_library
+
+        logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+                            handlers=[logging.StreamHandler(sys.stdout)])
+        if args.dest:
+            dest = Path(args.dest).expanduser()
+        else:
+            base = dest_ready(store.meta("dest", ""))
+            if base is None:
+                print("The job's dest (the NAS) is not mounted; pass --dest", file=sys.stderr)
+                return 1
+            dest = base / "official"
+        stats = archive_library(dest, library=Library(asset_interval=0.15), artifacts_root=config.paths.artifacts)
+        store.event("import", f"官方资料已归档到 {dest}：{stats['talks']} 个演讲，{stats['slides'] + stats['slides_copied']} 张幻灯片")
+        print(json.dumps(stats))
+        return 0
+    if command == "youtube":
+        on = args.switch == "on"
+        store.set_meta("downloads", on)
+        store.set_meta("captions", on)
+        print(f"{args.name}: YouTube downloads and captions {'on' if on else 'off'} "
+              f"(restart the job to apply: launchctl kickstart -k gui/$(id -u)/com.media-pipeline.bulk.{args.name})")
         return 0
     if command == "pace":
         if args.seconds == "default":

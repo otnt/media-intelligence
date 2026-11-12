@@ -278,10 +278,10 @@ class BulkStore:
     def work_left(self, limits: "Limits | None" = None) -> tuple[int, int, int]:
         """(downloads, transcriptions, summaries) a runner would still do; used-up retries do not count."""
         limits = limits or Limits()
-        downloads = self.query(
+        downloads = 0 if self.meta("downloads", True) is False else self.query(
             "SELECT COUNT(*) n FROM videos WHERE status IN ('pending','downloading') OR "
             "(status='failed' AND attempts < ?)", (limits.max_attempts,))[0]["n"]
-        if self.meta("youtube_extras", False):
+        if self.meta("youtube_extras", False) and self.meta("captions", True) is not False:
             downloads += self.query(
                 "SELECT COUNT(*) n FROM videos WHERE status='done' AND (captions_status IN ('pending','fetching') OR "
                 "(captions_status='failed' AND captions_attempts < ?))", (limits.max_attempts,))[0]["n"]
@@ -293,10 +293,10 @@ class BulkStore:
         summaries = 0
         if self.meta("summary_model", ""):
             summaries = self.query(
-                "SELECT COUNT(*) n FROM videos WHERE status IN ('pending','downloading','done') AND "
-                "(summary_status IN ('', 'queued', 'running') OR (summary_status='failed' AND summary_attempts < ?)) "
-                "AND NOT (status='done' AND asr_status='failed' AND asr_attempts >= ?)",
-                (limits.summary_max_attempts, limits.asr_max_attempts))[0]["n"]
+                "SELECT COUNT(*) n FROM videos WHERE (asr_status='done' OR (status IN ('pending','downloading','done') "
+                "AND ? AND NOT (status='done' AND asr_status='failed' AND asr_attempts >= ?))) AND "
+                "(summary_status IN ('', 'queued', 'running') OR (summary_status='failed' AND summary_attempts < ?))",
+                (self.meta("downloads", True) is not False, limits.asr_max_attempts, limits.summary_max_attempts))[0]["n"]
         return downloads, asr, summaries
 
     def video(self, video_id: str) -> dict[str, Any] | None:
@@ -385,6 +385,8 @@ class BulkStore:
             "captions_counts": captions if meta.get("youtube_extras") else {},
             "with_chapters": with_chapters,
             "youtube_extras": bool(meta.get("youtube_extras")),
+            "downloads_on": meta.get("downloads", True) is not False,
+            "captions_on": meta.get("captions", True) is not False,
             "captions_pause_until": float(meta.get("captions_pause_until") or 0)
             if float(meta.get("captions_pause_until") or 0) > now else 0.0,
             "captions_pause_reason": meta.get("captions_pause_reason", "")
@@ -646,9 +648,7 @@ class BulkRunner:
         for thread in summarizers:
             thread.join()
         self._move_staged(force=True)
-        left = self.store.query(
-            "SELECT COUNT(*) n FROM videos WHERE status='pending' OR (status='failed' AND attempts < ?)",
-            (self.limits.max_attempts,))[0]["n"]
+        left = self.store.work_left(self.limits)[0]
         asr_left = self._asr_left() if asr_model else 0
         summary_left = self.store.work_left(self.limits)[2]
         state = "finished" if not left and not asr_left and not summary_left else "stopped"
@@ -660,12 +660,20 @@ class BulkRunner:
     def stop(self) -> None:
         self._stop.set()
 
+    def _downloads_on(self) -> bool:
+        return self.store.meta("downloads", True) is not False
+
     def _worker(self, max_videos: int | None) -> None:
         while not self._stop.is_set():
+            if not self._downloads_on():
+                self._move_staged(force=True)  # what was downloaded still goes to the NAS
+                return
             if max_videos is not None and self._done >= max_videos:
                 return
             if not self._wait_until_clear():
                 return
+            if not self._downloads_on():
+                continue
             row = self._claim()
             if row is None:
                 return
@@ -754,6 +762,8 @@ class BulkRunner:
 
     def _captions_worker(self) -> None:
         while not self._stop.is_set():
+            if self.store.meta("captions", True) is False:
+                return
             self._beat("captions")
             if self.store.meta("control", "") == "pause":
                 self.sleep(15)
@@ -784,6 +794,8 @@ class BulkRunner:
     def _take_caption_slot(self, force: bool = False) -> bool:
         """May a captions request go out now? (spaced out, and never during a captions cooldown)"""
         with self._caption_lock:
+            if self.store.meta("captions", True) is False:
+                return False
             if max(float(self.store.meta("captions_pause_until", 0) or 0),
                    float(self.store.meta("pause_until", 0) or 0)) > self.clock():
                 return False

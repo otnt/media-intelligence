@@ -52,6 +52,14 @@ class FakeSite:
             raise urllib.error.HTTPError(url, 429, "Too Many Requests", {"Retry-After": "2"}, io.BytesIO(b""))
         if url.endswith(".webp"):
             return b"RIFF....WEBP" + url.encode()
+        if url.endswith("format=csv"):
+            return b"slug,title\n"
+        if url.endswith(".md"):
+            return b"# talk page"
+        if url.endswith("/status"):
+            return b'{"status": "available"}'
+        if url.endswith("format=json") and url.split("/")[-1].split("?")[0] in ("speakers", "topics", "organizations"):
+            return b"[]"
         return json.dumps(self.pages[url]).encode()
 
 
@@ -113,3 +121,29 @@ def test_import_saves_what_the_pipeline_reads_and_finishes_the_transcript_stage(
     assert created.status_code == 202 and tasks.get(created.json()["id"]).asr_model == "ai-engineer"
     text = client.get(f"/v1/bulk/aie/transcript/{VID}").text
     assert "[00:00:21] SPEAKER_00\nAlright, good morning. We used to think agents differ." in text
+
+
+
+def test_archive_keeps_every_published_file_and_reuses_downloaded_slides(tmp_path: Path):
+    from media_pipeline.aie_library import archive_library
+
+    artifacts_root = tmp_path / "artifacts"
+    (artifacts_root / VID / "slides").mkdir(parents=True)
+    (artifacts_root / VID / "slides" / "a.webp").write_bytes(b"already here")
+    site = FakeSite()
+    dest = tmp_path / "nas" / "official"
+    stats = archive_library(dest, library=Library(fetch=site, sleep=lambda s: None, api_interval=0, asset_interval=0),
+                            artifacts_root=artifacts_root)
+    talk = dest / "talks" / f"{VID}-agent-skills"
+    assert sorted(p.name for p in talk.iterdir()) == ["slides", "slides.json", "talk.json", "talk.md", "transcript.json"]
+    assert sorted(p.name for p in (talk / "slides").iterdir()) == ["a.webp", "b.webp", "c.webp"]
+    assert (talk / "slides" / "a.webp").read_bytes() == b"already here"  # copied, not fetched again
+    assert not any(url.endswith("a.webp") for url in site.calls)
+    assert {p.name for p in (dest / "index").iterdir()} >= {"talks.json", "talks.csv", "chapters.csv", "status.json", "data.md"}
+    assert stats["slides"] == 2 and stats["slides_copied"] == 1 and stats["markdown"] == 1 and stats["failed"] == 0
+    assert (dest / "README.md").read_text().startswith("# AI Engineer official talk library")
+
+    again = FakeSite()
+    archive_library(dest, library=Library(fetch=again, sleep=lambda s: None, api_interval=0, asset_interval=0),
+                    artifacts_root=artifacts_root)
+    assert again.calls == ["https://ai.engineer/api/data/status"]  # resumable: only the status is refreshed
