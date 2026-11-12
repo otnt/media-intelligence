@@ -73,6 +73,33 @@ def main(argv: list[str] | None = None) -> int:
     clean.add_argument("--dry-run", action="store_true", help="Only report what would be removed")
     clean.add_argument("--config", type=Path, default=None)
 
+    bulk = sub.add_parser(
+        "bulk",
+        help="Download a whole channel or playlist politely, with a per-video progress table at /bulk",
+    )
+    bulk_sub = bulk.add_subparsers(dest="bulk_command", required=True)
+    bulk_add = bulk_sub.add_parser("add", help="Create a job, or add videos that are new since the last add")
+    bulk_add.add_argument("name", help="Short job name, e.g. aie")
+    bulk_add.add_argument("--source", required=True, help="Channel/playlist URL, or a file of URLs or id|seconds|title lines")
+    bulk_add.add_argument("--title", default="", help="Display name, e.g. 'AI Engineer'")
+    bulk_add.add_argument("--dest", default=None, help="Where finished files go, e.g. a NAS share under /Volumes")
+    bulk_run = bulk_sub.add_parser("run", help="Download until done; pauses itself when YouTube limits it")
+    bulk_run.add_argument("name")
+    bulk_run.add_argument("--max", type=int, default=None, help="Stop after this many videos (a trial run)")
+    bulk_run.add_argument("--workers", type=int, default=1)
+    bulk_run.add_argument("--min-free-gb", type=float, default=40.0, help="Pause while the Mac has less free space")
+    bulk_status = bulk_sub.add_parser("status", help="Show a job's progress (all jobs without a name)")
+    bulk_status.add_argument("name", nargs="?")
+    bulk_dest = bulk_sub.add_parser("dest", help="Set where finished files go ('' = keep them on the Mac)")
+    bulk_dest.add_argument("name")
+    bulk_dest.add_argument("path")
+    bulk_pause = bulk_sub.add_parser("pause", help="Pause a running job after the current video")
+    bulk_pause.add_argument("name")
+    bulk_resume = bulk_sub.add_parser("resume", help="Undo a pause; a YouTube-limit pause is probed right away")
+    bulk_resume.add_argument("name")
+    for parser_ in (bulk_add, bulk_run, bulk_status, bulk_dest, bulk_pause, bulk_resume):
+        parser_.add_argument("--config", type=Path, default=None)
+
     init = sub.add_parser("init", help="Write a default config file")
     init.add_argument("--config", type=Path, default=None)
 
@@ -101,6 +128,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_status(config, args.limit)
     if args.command == "cleanup":
         return cmd_cleanup(config, dry_run=args.dry_run)
+    if args.command == "bulk":
+        return cmd_bulk(config, args)
     parser.error(f"Unknown command {args.command}")
     return 2
 
@@ -171,6 +200,66 @@ def cmd_serve(
         http=http_impl,
     )
     return 0
+
+
+def cmd_bulk(config: AppConfig, args: argparse.Namespace) -> int:
+    import time
+
+    from media_pipeline.bulk import BulkRunner, Limits, dest_ready, list_jobs, open_job, read_list
+
+    command = args.bulk_command
+    if command == "status":
+        names = [args.name] if args.name else list_jobs(config)
+        if not names:
+            print("No bulk jobs yet: media-pipeline bulk add NAME --source URL")
+        for name in names:
+            summary = open_job(config, name).summary()
+            counts = summary["counts"]
+            print(
+                f"{name} ({summary['title']}): {summary['state']} {summary['state_detail']}".rstrip() + "\n"
+                f"  done {counts.get('done', 0)}/{summary['total']} · pending {counts.get('pending', 0)} · "
+                f"failed {counts.get('failed', 0)} · skipped {counts.get('skipped', 0)} · "
+                f"{summary['gigabytes']} GB ({summary['on_nas']} on NAS)\n"
+                f"  dest: {summary['dest'] or '(Mac only)'} {'ready' if summary['dest_ready'] else 'not mounted'}"
+                f" · staging {summary['staging']} · free {summary['free_gb']} GB"
+            )
+        return 0
+    store = open_job(config, args.name, create=command == "add")
+    if command == "add":
+        entries = read_list(args.source)
+        added = store.add_videos(entries)
+        store.set_meta("name", args.name)
+        if args.title or not store.meta("title"):
+            store.set_meta("title", args.title or args.name)
+        store.set_meta("source", args.source)
+        if args.dest is not None:
+            store.set_meta("dest", str(Path(args.dest).expanduser()) if args.dest else "")
+        print(f"{args.name}: {added} new of {len(entries)} listed; {store.summary()['total']} in the job")
+        return 0
+    if command == "dest":
+        dest = str(Path(args.path).expanduser()) if args.path else ""
+        store.set_meta("dest", dest)
+        ready = dest_ready(dest) is not None
+        print(f"dest = {dest or '(Mac only)'}: {'ready' if ready else 'not mounted yet; files move there once it is'}")
+        return 0
+    if command == "pause":
+        store.set_meta("control", "pause")
+        print(f"{args.name}: pausing after the current video")
+        return 0
+    if command == "resume":
+        store.set_meta("control", "")
+        if float(store.meta("pause_until", 0) or 0) > time.time():
+            store.set_meta("pause_until", time.time())  # probe YouTube on the next loop
+        print(f"{args.name}: resumed")
+        return 0
+    if command == "run":
+        logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+                            handlers=[logging.StreamHandler(sys.stdout)])
+        limits = Limits(workers=max(1, args.workers), min_free_gb=args.min_free_gb)
+        state = BulkRunner(config, store, limits=limits).run(max_videos=args.max)
+        print(f"{args.name}: {state}")
+        return 0
+    return 2
 
 
 def cmd_cleanup(config: AppConfig, *, dry_run: bool) -> int:

@@ -9,3 +9,13 @@ def isolated_icloud(tmp_path_factory, monkeypatch):
     fake = tmp_path_factory.mktemp("icloud-drive")
     monkeypatch.setattr(config_module, "ICLOUD_DRIVE", fake)
     return fake
+
+
+@pytest.fixture(autouse=True)
+def isolated_bulk_jobs(tmp_path_factory, monkeypatch):
+    """The pipeline looks up bulk downloads; keep tests away from the real ~/AIContent/bulk jobs."""
+    import media_pipeline.config as config_module
+
+    fake = tmp_path_factory.mktemp("bulk-jobs")
+    monkeypatch.setattr(config_module, "BULK_ROOT", fake)
+    return fake

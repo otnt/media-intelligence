@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>com.media-pipeline.bulk.__JOB__</string>
+    <key>ProgramArguments</key>
+    <array>
+      <string>__VENV_PYTHON__</string>
+      <string>-m</string>
+      <string>media_pipeline</string>
+      <string>bulk</string>
+      <string>run</string>
+      <string>__JOB__</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>__REPO_ROOT__</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+      <key>PATH</key>
+      <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+      <key>PYTHONUNBUFFERED</key>
+      <string>1</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <!-- Restart after a crash; once the job is finished (exit 0) it stays stopped. -->
+    <key>KeepAlive</key>
+    <dict>
+      <key>SuccessfulExit</key>
+      <false/>
+    </dict>
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+    <key>Nice</key>
+    <integer>5</integer>
+    <key>StandardOutPath</key>
+    <string>__HOME__/AIContent/logs/bulk-__JOB__.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/AIContent/logs/bulk-__JOB__.log</string>
+  </dict>
+</plist>

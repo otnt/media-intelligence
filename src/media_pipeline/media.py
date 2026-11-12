@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 import shutil
 import subprocess
 from dataclasses import replace
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -385,7 +387,24 @@ def _base_ydl_opts(config: AppConfig) -> dict[str, Any]:
     browser = (config.download.cookies_from_browser or "").strip()
     if browser:
         opts["cookiesfrombrowser"] = (browser,)
+    runtimes = js_runtimes()
+    if runtimes:
+        opts["js_runtimes"] = runtimes
     return opts
+
+
+@lru_cache(maxsize=1)
+def js_runtimes() -> dict[str, dict[str, str]]:
+    """yt-dlp enables only deno by default. Without a JS runtime YouTube's challenges go unsolved and
+    only the HLS formats are left: ~6x bigger files, and extraction without one is deprecated."""
+    for name in ("deno", "node", "bun"):
+        found = shutil.which(name) or next(
+            (path for path in (f"/opt/homebrew/bin/{name}", f"/usr/local/bin/{name}") if os.access(path, os.X_OK)),
+            None,
+        )
+        if found:
+            return {name: {"path": found}}
+    return {}
 
 
 def _ydl(opts: dict[str, Any]):

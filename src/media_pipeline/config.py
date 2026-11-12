@@ -48,6 +48,8 @@ class PathsConfig:
     vault: Path | None = None
     notes_folder: str = "Transcripts"
     db: Path = field(default_factory=lambda: Path.home() / "AIContent" / "artifacts" / "tasks.sqlite3")
+    # Bulk download jobs (``media-pipeline bulk``): progress tables and the local staging folders.
+    bulk: Path = field(default_factory=lambda: BULK_ROOT)
 
 
 @dataclass
@@ -200,6 +202,7 @@ class DashScopeConfig:
 
 
 ICLOUD_DRIVE = Path.home() / "Library" / "Mobile Documents" / "com~apple~CloudDocs"
+BULK_ROOT = Path.home() / "AIContent" / "bulk"
 
 
 def _default_storage_mode() -> str:
@@ -373,6 +376,7 @@ def load_config(path: Path | None = None) -> AppConfig:
             vault=vault,
             notes_folder=str(paths_raw.get("notes_folder") or "Transcripts"),
             db=_as_path(paths_raw.get("db"), artifacts / "tasks.sqlite3"),
+            bulk=_as_path(paths_raw.get("bulk"), BULK_ROOT),
         ),
         asr=ASRConfig(
             default=str(asr_raw.get("default") or "qwen3-asr-1.7b"),

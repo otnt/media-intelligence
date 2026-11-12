@@ -18,6 +18,7 @@ from media_pipeline.diarization import (
     build_diarization_provider,
     diarization_from_transcript,
 )
+from media_pipeline.bulk import find_bulk_media
 from media_pipeline.storage import compact_audio_path, locate_archived, materialize
 from media_pipeline.media import (
     MediaError,
@@ -240,6 +241,9 @@ class Pipeline:
 
     def _download(self, task: Task, metadata: VideoMetadata, artifacts: ArtifactStore) -> Path:
         existing = find_media_file(self.config.paths.videos, metadata.video_id)
+        if existing is None:
+            # Downloaded earlier by a bulk job (staging folder or the NAS): use it where it is.
+            existing = find_bulk_media(self.config, metadata.video_id)
         archived = None if existing else locate_archived(self.config, metadata.video_id)
         if archived is not None:
             # The original was archived to iCloud after an earlier run: bring it back instead of re-downloading.

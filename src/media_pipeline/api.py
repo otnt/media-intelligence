@@ -9,11 +9,12 @@ from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from media_pipeline.artifacts import ArtifactStore
 from media_pipeline.asr.registry import list_models
+from media_pipeline import bulk as bulk_jobs
 from media_pipeline.config import (
     AppConfig,
     persist_dashboard_config,
@@ -151,6 +152,60 @@ def create_app(config: AppConfig, store: TaskStore | None = None, worker: TaskWo
         if Path(filename).name != filename or media_type is None or not path.is_file():
             raise HTTPException(status_code=404, detail="Not found")
         return FileResponse(path, media_type=media_type, headers={"Cache-Control": "public, max-age=86400"})
+
+    @app.get("/bulk")
+    def bulk_page():
+        return FileResponse(DASHBOARD_DIR / "bulk.html", media_type="text/html")
+
+    def _bulk_job(name: str) -> bulk_jobs.BulkStore:
+        try:
+            return bulk_jobs.open_job(config, name)
+        except (ValueError, FileNotFoundError):
+            raise HTTPException(status_code=404, detail="No such bulk job")
+
+    @app.get("/v1/bulk")
+    def bulk_list() -> dict[str, Any]:
+        jobs = []
+        for name in bulk_jobs.list_jobs(config):
+            try:
+                jobs.append(bulk_jobs.open_job(config, name).summary())
+            except Exception:  # noqa: BLE001 - one broken job must not hide the others
+                logger.exception("Could not read bulk job %s", name)
+        return {"jobs": jobs}
+
+    @app.get("/v1/bulk/{name}")
+    def bulk_detail(name: str) -> dict[str, Any]:
+        job = _bulk_job(name)
+        videos = job.rows()
+        processed = store.status_by_video([video["id"] for video in videos])
+        for video in videos:
+            video["task"] = processed.get(video["id"])
+        return {"summary": job.summary(), "videos": videos, "events": job.events()}
+
+    @app.get("/v1/bulk/{name}/csv")
+    def bulk_csv(name: str) -> Response:
+        job = _bulk_job(name)
+        return Response(
+            "\ufeff" + job.to_csv(),  # BOM so Numbers/Excel read the Chinese titles as UTF-8
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{name}.csv"'},
+        )
+
+    @app.post("/v1/bulk/{name}/pause")
+    def bulk_pause(name: str) -> dict[str, Any]:
+        job = _bulk_job(name)
+        job.set_meta("control", "pause")
+        return job.summary()
+
+    @app.post("/v1/bulk/{name}/resume")
+    def bulk_resume(name: str) -> dict[str, Any]:
+        import time as _time
+
+        job = _bulk_job(name)
+        job.set_meta("control", "")
+        if float(job.meta("pause_until", 0) or 0) > _time.time():
+            job.set_meta("pause_until", _time.time())  # probe YouTube on the runner's next loop
+        return job.summary()
 
     @app.get("/v1/health")
     def health() -> dict[str, Any]:

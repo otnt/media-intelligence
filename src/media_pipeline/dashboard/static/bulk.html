@@ -1,0 +1,408 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<link rel="manifest" href="/manifest.webmanifest" />
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png" />
+<link rel="icon" type="image/png" href="/static/favicon.png" />
+<title>批量下载</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #ffffff;
+    --bg-2: #f2f2f7;
+    --fill: rgba(118, 118, 128, 0.12);
+    --fill-2: rgba(118, 118, 128, 0.2);
+    --text: #1c1c1e;
+    --text-2: #5c5c63;
+    --text-3: #8e8e93;
+    --line: rgba(60, 60, 67, 0.16);
+    --accent: #0a66d8;
+    --accent-soft: rgba(10, 102, 216, 0.1);
+    --ok: #248a3d;
+    --ok-soft: rgba(36, 138, 61, 0.1);
+    --warn: #b25000;
+    --warn-soft: rgba(178, 80, 0, 0.1);
+    --err: #d70015;
+    --err-soft: rgba(215, 0, 21, 0.08);
+    --bar: rgba(255, 255, 255, 0.95);
+    --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB",
+      "Microsoft YaHei", "Noto Sans CJK SC", "Helvetica Neue", sans-serif;
+    --gutter: 16px;
+    --top: env(safe-area-inset-top, 0px);
+    --bottom: env(safe-area-inset-bottom, 0px);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #000000;
+      --bg-2: #1c1c1e;
+      --fill: rgba(118, 118, 128, 0.24);
+      --fill-2: rgba(118, 118, 128, 0.36);
+      --text: #f2f2f7;
+      --text-2: #aeaeb2;
+      --text-3: #7c7c82;
+      --line: rgba(84, 84, 88, 0.6);
+      --accent: #4ea1ff;
+      --accent-soft: rgba(78, 161, 255, 0.16);
+      --ok: #30d158;
+      --ok-soft: rgba(48, 209, 88, 0.14);
+      --warn: #ff9f0a;
+      --warn-soft: rgba(255, 159, 10, 0.14);
+      --err: #ff453a;
+      --err-soft: rgba(255, 69, 58, 0.14);
+      --bar: rgba(0, 0, 0, 0.92);
+    }
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text); font-family: var(--font);
+    font-size: 15px; line-height: 1.45; -webkit-font-smoothing: antialiased; -webkit-tap-highlight-color: transparent;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  button { font: inherit; cursor: pointer; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 var(--gutter) calc(var(--bottom) + 40px); }
+  header.top {
+    position: sticky; top: 0; z-index: 5; margin: 0 calc(-1 * var(--gutter));
+    padding: calc(var(--top) + 10px) var(--gutter) 10px; background: var(--bar);
+    -webkit-backdrop-filter: saturate(180%) blur(20px); backdrop-filter: saturate(180%) blur(20px);
+    border-bottom: 0.5px solid var(--line);
+  }
+  .top-row { display: flex; align-items: center; gap: 10px; }
+  .top-row h1 { margin: 0; font-size: 24px; line-height: 1.2; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .back { font-size: 15px; white-space: nowrap; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 5px; height: 32px; padding: 0 13px; border-radius: 16px;
+    border: 0; background: var(--fill); color: var(--text); font-size: 14px; white-space: nowrap;
+  }
+  .pill.primary { background: var(--accent); color: #fff; }
+  .pill[disabled] { opacity: 0.5; }
+  .jobs { display: flex; gap: 8px; margin-top: 8px; overflow-x: auto; }
+
+  .card { margin-top: 14px; padding: 14px; border-radius: 14px; background: var(--bg-2); }
+  .state { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .badge { display: inline-flex; align-items: center; height: 24px; padding: 0 9px; border-radius: 12px; font-size: 13px; font-weight: 600; }
+  .badge.running { background: var(--ok-soft); color: var(--ok); }
+  .badge.limited, .badge.paused { background: var(--warn-soft); color: var(--warn); }
+  .badge.finished { background: var(--accent-soft); color: var(--accent); }
+  .badge.stopped, .badge.idle { background: var(--fill); color: var(--text-2); }
+  .state-detail { color: var(--text-2); font-size: 14px; }
+  .big { margin-top: 10px; font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+  .big small { font-size: 15px; font-weight: 400; color: var(--text-3); margin-left: 4px; }
+  .bar { height: 6px; margin-top: 8px; border-radius: 3px; background: var(--fill-2); overflow: hidden; display: flex; }
+  .bar i { display: block; height: 100%; }
+  .bar .done { background: var(--ok); }
+  .bar .skipped { background: var(--text-3); }
+  .bar .failed { background: var(--err); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px 16px; margin-top: 14px; }
+  .kv .k { font-size: 12px; color: var(--text-3); }
+  .kv .v { font-size: 15px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .yt { margin-top: 12px; padding: 10px 12px; border-radius: 10px; font-size: 14px; background: var(--ok-soft); color: var(--text); }
+  .yt.bad { background: var(--warn-soft); }
+  .yt b { font-weight: 600; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+
+  .tools { position: sticky; top: calc(var(--top) + 55px); z-index: 4; background: var(--bg); padding: 12px 0 6px; }
+  .search {
+    display: flex; align-items: center; gap: 6px; height: 38px; padding: 0 10px; border-radius: 11px;
+    background: var(--fill); color: var(--text-3);
+  }
+  .search input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; font-size: 16px; color: var(--text); }
+  .chips { display: flex; gap: 8px; overflow-x: auto; padding: 10px 0 2px; scrollbar-width: none; }
+  .chips::-webkit-scrollbar { display: none; }
+  .chip {
+    flex: none; height: 30px; padding: 0 12px; border-radius: 15px; border: 0;
+    background: var(--fill); color: var(--text); font-size: 14px; white-space: nowrap;
+  }
+  .chip .n { color: var(--text-3); margin-left: 4px; font-variant-numeric: tabular-nums; }
+  .chip[aria-pressed="true"] { background: var(--text); color: var(--bg); }
+  .chip[aria-pressed="true"] .n { color: inherit; opacity: 0.7; }
+
+  table { width: 100%; border-collapse: collapse; margin-top: 4px; }
+  th { text-align: left; font-size: 12px; font-weight: 500; color: var(--text-3); padding: 6px 8px; border-bottom: 0.5px solid var(--line); white-space: nowrap; }
+  td { padding: 10px 8px; border-bottom: 0.5px solid var(--line); vertical-align: top; font-variant-numeric: tabular-nums; }
+  td.num, th.num { text-align: right; white-space: nowrap; }
+  td.idx { color: var(--text-3); width: 1%; }
+  td.title a { color: var(--text); }
+  td.title .err { margin-top: 3px; font-size: 12px; color: var(--err); overflow-wrap: anywhere; }
+  td.title .sub { display: none; }
+  .st { display: inline-block; font-size: 13px; padding: 1px 8px; border-radius: 10px; white-space: nowrap; background: var(--fill); color: var(--text-2); }
+  .st.done { background: var(--ok-soft); color: var(--ok); }
+  .st.downloading { background: var(--accent-soft); color: var(--accent); }
+  .st.failed { background: var(--err-soft); color: var(--err); }
+  .st.skipped { color: var(--text-3); }
+  .proc { font-size: 13px; color: var(--text-3); white-space: nowrap; }
+  .proc.completed { color: var(--ok); }
+  .proc.failed { color: var(--err); }
+  .more { display: block; margin: 14px auto 0; }
+  .empty { padding: 40px 0; text-align: center; color: var(--text-3); }
+
+  .events { margin-top: 26px; }
+  .events h2 { font-size: 17px; margin: 0 0 6px; }
+  .event { display: flex; gap: 10px; padding: 7px 0; border-bottom: 0.5px solid var(--line); font-size: 14px; }
+  .event time { color: var(--text-3); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .event .kind { white-space: nowrap; font-weight: 600; }
+  .event .kind.pause { color: var(--warn); }
+  .event .kind.resume { color: var(--ok); }
+  .event .detail { overflow-wrap: anywhere; color: var(--text-2); }
+
+  @media (max-width: 640px) {
+    thead { display: none; }
+    table, tbody, tr, td { display: block; }
+    tr { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; padding: 10px 0; border-bottom: 0.5px solid var(--line); }
+    td { padding: 0; border: 0; }
+    td.idx, td.dur, td.size, td.loc, td.proc-cell { display: none; }
+    td.title { grid-column: 1; }
+    td.status { grid-column: 2; grid-row: 1; text-align: right; }
+    td.title .sub { display: block; margin-top: 2px; font-size: 13px; color: var(--text-3); }
+    .tools { top: calc(var(--top) + 55px); }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="top-row">
+      <a class="back" href="/">‹ 资料库</a>
+      <h1 id="title">批量下载</h1>
+      <a class="pill" id="csv" href="#" download>导出 CSV</a>
+    </div>
+    <nav class="jobs" id="jobs" hidden></nav>
+  </header>
+  <section class="card" id="summary"><div class="empty">加载中…</div></section>
+  <div class="tools">
+    <label class="search">
+      <svg width="15" height="15" viewBox="0 0 20 20" aria-hidden="true"><path fill="currentColor" d="M8.5 2a6.5 6.5 0 0 1 5.18 10.43l4.45 4.44-1.42 1.42-4.44-4.45A6.5 6.5 0 1 1 8.5 2Zm0 2a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9Z"/></svg>
+      <input id="q" type="search" placeholder="搜索标题" autocomplete="off" enterkeyhint="search" />
+    </label>
+    <nav class="chips" id="chips" aria-label="筛选"></nav>
+  </div>
+  <table>
+    <thead><tr><th>#</th><th>标题</th><th class="num">时长</th><th>下载</th><th class="num">大小</th><th>位置</th><th>处理</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <button class="pill more" id="more" type="button" hidden>显示更多</button>
+  <section class="events" id="events"></section>
+</div>
+<script>
+"use strict";
+const $ = (sel) => document.querySelector(sel);
+const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const PAGE = 200;
+const STATUS = { pending: "待下载", downloading: "下载中", done: "已下载", failed: "失败", skipped: "跳过" };
+const STATE = { running: "下载中", limited: "YouTube 限制中", paused: "已暂停", finished: "已完成", stopped: "未运行", idle: "未开始" };
+const PROC = { completed: "已处理", failed: "处理失败", queued: "排队中" };
+const CHIPS = [["all", "全部"], ["downloading", "下载中"], ["pending", "待下载"], ["done", "已下载"], ["failed", "失败"], ["skipped", "跳过"], ["processed", "已处理"]];
+const state = { jobs: [], name: "", data: null, chip: "all", q: "", shown: PAGE, sig: "" };
+
+function minutes(seconds) {
+  if (!seconds) return "";
+  const m = Math.round(seconds / 60);
+  return m >= 60 ? `${Math.floor(m / 60)}h${String(m % 60).padStart(2, "0")}` : `${m} 分钟`;
+}
+function mb(bytes) {
+  if (!bytes) return "";
+  return bytes >= 1e9 ? `${(bytes / 1e9).toFixed(2)} GB` : `${Math.round(bytes / 1e6)} MB`;
+}
+function clock(ts) {
+  if (!ts) return "";
+  const d = new Date(ts * 1000);
+  const today = new Date().toDateString() === d.toDateString();
+  const hm = d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
+  return today ? hm : `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
+}
+function ago(ts) {
+  if (!ts) return "";
+  const s = Math.max(0, Date.now() / 1000 - ts);
+  if (s < 60) return "刚刚";
+  if (s < 3600) return `${Math.round(s / 60)} 分钟前`;
+  if (s < 86400) return `${Math.round(s / 3600)} 小时前`;
+  return `${Math.round(s / 86400)} 天前`;
+}
+function selecting() {
+  const sel = window.getSelection();
+  return sel && !sel.isCollapsed && String(sel).trim().length > 0;
+}
+
+async function api(path, options) {
+  const res = await fetch(path, options);
+  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+  return res.json();
+}
+
+async function loadJobs() {
+  const { jobs } = await api("/v1/bulk");
+  state.jobs = jobs;
+  const wanted = decodeURIComponent(location.hash.replace(/^#/, ""));
+  state.name = jobs.some((j) => j.name === wanted) ? wanted : (jobs[0] && jobs[0].name) || "";
+  const nav = $("#jobs");
+  nav.hidden = jobs.length < 2;
+  nav.innerHTML = jobs.map((j) => `<button class="chip" type="button" data-job="${esc(j.name)}" aria-pressed="${j.name === state.name}">${esc(j.title)}</button>`).join("");
+  if (!state.name) {
+    $("#summary").innerHTML = `<div class="empty">还没有批量任务。<br>在 Mac 上运行 <code>media-pipeline bulk add NAME --source 频道URL</code></div>`;
+  }
+}
+
+async function refresh() {
+  if (!state.name || document.visibilityState === "hidden") return;
+  let data;
+  try {
+    data = await api(`/v1/bulk/${encodeURIComponent(state.name)}`);
+  } catch (err) {
+    $("#summary").innerHTML = `<div class="empty">读取失败：${esc(err.message)}</div>`;
+    return;
+  }
+  state.data = data;
+  if (selecting()) return; // never repaint under a text selection
+  paint();
+}
+
+function paint() {
+  const { summary: s, videos, events } = state.data;
+  document.title = `批量下载 · ${s.title}`;
+  $("#title").textContent = s.title;
+  $("#csv").href = `/v1/bulk/${encodeURIComponent(s.name)}/csv`;
+  paintSummary(s);
+  const sig = JSON.stringify([state.chip, state.q, state.shown, videos.map((v) => [v.status, v.bytes, v.location, v.task && v.task.status])]);
+  if (sig !== state.sig) {
+    state.sig = sig;
+    paintChips(videos);
+    paintRows(videos);
+  }
+  paintEvents(events);
+}
+
+function paintSummary(s) {
+  const c = s.counts || {};
+  const done = c.done || 0, skipped = c.skipped || 0, failed = c.failed || 0;
+  const pct = (n) => (s.total ? (100 * n) / s.total : 0);
+  const limited = s.state === "limited";
+  const lastProbe = s.last_probe && s.last_probe.at
+    ? ` · 最近探测 ${clock(s.last_probe.at)} ${s.last_probe.ok ? "正常" : "仍受限"}` : "";
+  const yt = limited
+    ? `<div class="yt bad">⚠️ <b>YouTube 限制</b>：${esc(s.pause_reason)}<br>${s.pause_until ? `${clock(s.pause_until)} 自动探测，正常后继续` : ""}${esc(lastProbe)}</div>`
+    : s.last_ok
+      ? `<div class="yt">✅ <b>YouTube 正常</b> · 最近一次成功下载 ${ago(s.last_ok)}${esc(lastProbe)}</div>`
+      : "";
+  const storage = s.dest
+    ? (s.dest_ready ? `NAS ✓ · ${s.on_nas} 个已在 NAS` : `NAS 未挂载 · 先存在 Mac`)
+    : "Mac（未设置 NAS）";
+  const control = s.control === "pause" || s.state === "paused"
+    ? `<button class="pill primary" type="button" data-act="resume">继续</button>`
+    : `<button class="pill" type="button" data-act="pause" ${s.alive ? "" : "disabled"}>暂停</button>`;
+  const retry = limited ? `<button class="pill" type="button" data-act="resume">立即探测</button>` : "";
+  $("#summary").innerHTML = `
+    <div class="state"><span class="badge ${esc(s.state)}">${esc(STATE[s.state] || s.state)}</span>
+      <span class="state-detail">${esc(limited ? "" : s.state_detail || "")}</span></div>
+    <div class="big">${done}<small>/ ${s.total} 已下载</small></div>
+    <div class="bar"><i class="done" style="width:${pct(done)}%"></i><i class="skipped" style="width:${pct(skipped)}%"></i><i class="failed" style="width:${pct(failed)}%"></i></div>
+    ${yt}
+    <div class="grid">
+      <div class="kv"><div class="k">时长</div><div class="v">${s.done_hours} / ${s.hours} 小时</div></div>
+      <div class="kv"><div class="k">已下载大小</div><div class="v">${s.gigabytes} GB${s.estimated_total_gb ? ` · 预计共 ${s.estimated_total_gb} GB` : ""}</div></div>
+      <div class="kv"><div class="k">最近速度</div><div class="v">${s.recent_speed_mb_s != null ? `${s.recent_speed_mb_s} MB/s` : "—"}</div></div>
+      <div class="kv"><div class="k">存储</div><div class="v">${esc(storage)}</div></div>
+      <div class="kv"><div class="k">Mac 剩余空间${s.min_free_gb ? `（低于 ${s.min_free_gb} GB 暂停）` : ""}</div><div class="v">${s.free_gb != null ? `${s.free_gb} GB` : "—"}</div></div>
+      <div class="kv"><div class="k">失败 / 跳过</div><div class="v">${failed} / ${skipped}</div></div>
+    </div>
+    <div class="actions">${control}${retry}</div>`;
+}
+
+function matches(v) {
+  if (state.q && !v.title.toLowerCase().includes(state.q) && !v.id.toLowerCase().includes(state.q)) return false;
+  if (state.chip === "all") return true;
+  if (state.chip === "processed") return v.task && v.task.status === "completed";
+  return v.status === state.chip;
+}
+
+function paintChips(videos) {
+  const count = (key) => videos.filter((v) => (key === "all" ? true : key === "processed" ? v.task && v.task.status === "completed" : v.status === key)).length;
+  $("#chips").innerHTML = CHIPS.map(([key, label]) => {
+    const n = count(key);
+    if (!n && key !== "all" && key !== state.chip) return "";
+    return `<button class="chip" type="button" data-chip="${key}" aria-pressed="${key === state.chip}">${label}<span class="n">${n}</span></button>`;
+  }).join("");
+}
+
+function paintRows(videos) {
+  const list = videos.filter(matches);
+  const shown = list.slice(0, state.shown);
+  $("#rows").innerHTML = shown.length ? shown.map(row).join("") : `<tr><td colspan="7"><div class="empty">没有符合条件的视频</div></td></tr>`;
+  const more = $("#more");
+  more.hidden = list.length <= state.shown;
+  more.textContent = `显示更多（还有 ${list.length - state.shown} 个）`;
+}
+
+function row(v) {
+  const size = v.status === "downloading" ? (v.bytes ? `${mb(v.bytes)}…` : "…") : mb(v.bytes);
+  const loc = v.status === "done" ? (v.location === "nas" ? "NAS" : "Mac") : "";
+  const task = v.task;
+  const proc = task
+    ? `<a class="proc ${esc(task.status)}" href="/#/n/${encodeURIComponent(task.id)}">${esc(PROC[task.status] || "处理中")}</a>`
+    : `<span class="proc">—</span>`;
+  const sub = [`#${v.position + 1}`, minutes(v.duration), size, loc, task ? (PROC[task.status] || "处理中") : ""].filter(Boolean).join(" · ");
+  const err = v.error && v.status !== "done" ? `<div class="err">${esc(v.error)}</div>` : "";
+  return `<tr>
+    <td class="idx">${v.position + 1}</td>
+    <td class="title"><a href="${esc(v.url)}" target="_blank" rel="noopener">${esc(v.title || v.id)}</a><div class="sub">${esc(sub)}</div>${err}</td>
+    <td class="num dur">${minutes(v.duration)}</td>
+    <td class="status"><span class="st ${esc(v.status)}">${STATUS[v.status] || esc(v.status)}</span></td>
+    <td class="num size">${size}</td>
+    <td class="loc">${loc}</td>
+    <td class="proc-cell">${proc}</td>
+  </tr>`;
+}
+
+function paintEvents(events) {
+  const label = { start: "启动", stop: "停止", pause: "暂停", resume: "恢复", "move-failed": "移动失败" };
+  $("#events").innerHTML = events.length ? `<h2>事件</h2>` + events.map((e) => `
+    <div class="event"><time>${clock(e.at)}</time><span class="kind ${esc(e.kind)}">${esc(label[e.kind] || e.kind)}</span><span class="detail">${esc(e.detail)}</span></div>`).join("") : "";
+}
+
+document.addEventListener("click", async (event) => {
+  const chip = event.target.closest("[data-chip]");
+  if (chip) {
+    state.chip = chip.dataset.chip;
+    state.shown = PAGE;
+    paint();
+    return;
+  }
+  const job = event.target.closest("[data-job]");
+  if (job) {
+    location.hash = encodeURIComponent(job.dataset.job);
+    return;
+  }
+  const act = event.target.closest("[data-act]");
+  if (act && state.name) {
+    act.disabled = true;
+    try {
+      await api(`/v1/bulk/${encodeURIComponent(state.name)}/${act.dataset.act}`, { method: "POST" });
+    } catch (err) {
+      alert(err.message);
+    }
+    refresh();
+  }
+});
+$("#more").addEventListener("click", () => { state.shown += PAGE; paint(); });
+$("#q").addEventListener("input", (event) => { state.q = event.target.value.trim().toLowerCase(); state.shown = PAGE; if (state.data) paint(); });
+window.addEventListener("hashchange", async () => { state.sig = ""; await loadJobs(); refresh(); });
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") refresh(); });
+
+(async () => {
+  try {
+    await loadJobs();
+  } catch (err) {
+    $("#summary").innerHTML = `<div class="empty">读取失败：${esc(err.message)}</div>`;
+    return;
+  }
+  await refresh();
+  setInterval(refresh, 10000);
+})();
+</script>
+</body>
+</html>

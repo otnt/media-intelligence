@@ -98,6 +98,24 @@ class TaskStore:
             ).fetchall()
         return [_task_from_row(row) for row in rows]
 
+    def status_by_video(self, video_ids: list[str]) -> dict[str, dict[str, str]]:
+        """{video_id: {"id", "status"}} for the given videos: a completed task wins, else the newest."""
+        wanted = set(video_ids)
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, video_id, status FROM tasks WHERE video_id IS NOT NULL AND video_id != '' "
+                "ORDER BY updated_at"
+            ).fetchall()
+        found: dict[str, dict[str, str]] = {}
+        for row in rows:
+            vid = row["video_id"]
+            if vid not in wanted:
+                continue
+            if found.get(vid, {}).get("status") == TaskStatus.completed.value:
+                continue
+            found[vid] = {"id": row["id"], "status": row["status"]}
+        return found
+
     def list_incomplete(self) -> list[Task]:
         with self._lock:
             rows = self._conn.execute(

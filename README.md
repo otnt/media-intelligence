@@ -209,6 +209,25 @@ uv run media-pipeline cleanup --dry-run   # what would be compacted, archived or
 uv run media-pipeline cleanup
 ```
 
+## Bulk downloads (a whole channel)
+
+`media-pipeline bulk` downloads a channel or playlist in the background and keeps a per-video progress table.
+It only downloads; processing a video later reuses the file wherever it is (Mac staging folder or the NAS).
+
+```bash
+uv run media-pipeline bulk add aie --source 'https://www.youtube.com/@aiDotEngineer/videos' --title 'AI Engineer'
+uv run media-pipeline bulk run aie --max 3          # a trial in the foreground
+./scripts/install-bulk-agent.sh aie                  # the whole job as a LaunchAgent (resumes after reboot)
+uv run media-pipeline bulk status aie
+uv run media-pipeline bulk dest aie '/Volumes/<share>/Media Intelligence/AI Engineer'   # NAS, once mounted
+```
+
+- **Progress table**: `http://<mac>.ts.net:8875/bulk` (phone-friendly, filters, search, CSV export, pause/resume).
+- **Polite by design**: one video at a time, 8–20 s apart, guest session (no browser cookies, so the Google account is never at risk), 720p H.264 + the original audio track (about 150 MB per hour of talk).
+- **YouTube limits are detected and handled**: bot checks, HTTP 429 or "rate-limited / try again later" pause the job for 15 minutes (doubling up to 4 hours), and one probe request must succeed before it resumes. Four failures in a row, or the last five downloads running below 150 KB/s (throttling), pause it too. Private, removed, members-only and age-restricted videos are marked *skipped*. Every pause and resume is listed under 事件 on the page.
+- **Storage**: files download into `~/AIContent/bulk/<job>/media/` and are copied (size-checked) to `dest` once its share is mounted; downloading pauses while the Mac has less than 40 GB free (`--min-free-gb`).
+- yt-dlp gets a JavaScript runtime (deno, node or bun, whichever is installed). Without one YouTube only offers its HLS formats, which are about 6× bigger.
+
 ## Command line
 
 Transcribe one Bilibili, YouTube, or Xiaohongshu URL without the browser:

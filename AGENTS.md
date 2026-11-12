@@ -36,8 +36,12 @@ Local access: `http://127.0.0.1:8875/`.
 |-------|----------------|--------------|
 | `com.media-pipeline.server` | `./scripts/install-launch-agent.sh` | `media-pipeline serve --host 127.0.0.1 --port 8875` |
 | `com.tailscale.serve` | `./scripts/tailscale/install.sh` | `python3 ~/.config/tailscale/apply-serve.py` (login + every 5 min) |
+| `com.media-pipeline.bulk.<job>` | `./scripts/install-bulk-agent.sh <job>` (`--remove` to stop) | `media-pipeline bulk run <job>`; restarts after a crash, stays stopped once the job is finished |
 
-Logs: `~/AIContent/logs/launchd.out.log`, `launchd.err.log`, `tailscale-serve.out.log`, `tailscale-serve.err.log`.
+Logs: `~/AIContent/logs/launchd.out.log`, `launchd.err.log`, `tailscale-serve.out.log`, `tailscale-serve.err.log`, `bulk-<job>.log`.
+
+Bulk jobs live in `~/AIContent/bulk/<job>/` (`progress.sqlite3` + `media/` staging). The staging folder is outside
+`paths.videos` on purpose, so the storage sweep never archives half-finished bulk downloads to iCloud.
 
 Do **not** pass `--tailscale` to `media-pipeline serve` in LaunchAgent.
 Tailscale Serve is machine-wide, not project-specific.
@@ -84,6 +88,7 @@ Never create sibling worktrees such as `../media-download-<name>`.
 
 - `/` is the reader (`dashboard/static/index.html`): mobile-first library + note view, one row per video, page-level scrolling, PWA manifest and icons under `/static/`.
   It reads `/v1/tasks/{id}/note` (task, summary, speaker transcript, frames) and polls only while a task or summary is running, never repainting under a text selection.
+- `/bulk` is the bulk download progress table (`bulk.html`), polling `/v1/bulk/{job}` every 10s and skipping repaints under a text selection.
 - `/classic` is the previous dashboard (`classic.html`): settings, concurrency, keyframe keep/drop, prompt editing, stage reruns.
 
 ## Dashboard polling (text selection)

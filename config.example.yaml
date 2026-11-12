@@ -12,6 +12,8 @@ paths:
   logs: ~/AIContent/logs
   vault: ""
   notes_folder: Transcripts
+  # Bulk download jobs (media-pipeline bulk ...): progress tables + local staging before the NAS.
+  bulk: ~/AIContent/bulk
 
 asr:
   # agy-gemini = Gemini via the agy CLI (your Google login): transcript + speaker tags, no API key.
