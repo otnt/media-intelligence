@@ -216,7 +216,8 @@ def create_app(config: AppConfig, store: TaskStore | None = None, worker: TaskWo
         if config.notes_dir() is None:
             raise HTTPException(status_code=500, detail="Obsidian vault is not configured")
         source = str(video.get("transcript_source") or "")
-        asr_model = "youtube-captions" if source == "youtube" else (source or job.meta("asr_model", "") or config.asr.default)
+        asr_model = {"youtube": "youtube-captions", "ai-engineer": "ai-engineer"}.get(source) or (
+            source or job.meta("asr_model", "") or config.asr.default)
         _validate_model(asr_model)
         task = Task(
             id=str(uuid.uuid4()),

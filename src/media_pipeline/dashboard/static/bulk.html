@@ -305,17 +305,19 @@ function paintSummary(s) {
   const retry = limited ? `<button class="pill" type="button" data-act="resume">立即探测</button>` : "";
   const a = s.asr_counts || {};
   const src = s.transcript_sources || {};
-  const fromCaptions = src.youtube || 0;
-  const fromAsr = (a.done || 0) - fromCaptions;
-  const asrValue = s.asr_model
-    ? `${a.done || 0} / ${done} 已下载${a.running ? ` · ${a.running} 个转写中` : ""}<br>`
-      + (s.youtube_extras ? `YouTube 字幕 ${fromCaptions} · ${esc(s.asr_model)} ${fromAsr}（≈ $${s.asr_cost_usd}）` : `≈ $${s.asr_cost_usd}`)
+  const transcribed = Object.values(src).reduce((sum, n) => sum + n, 0);
+  const parts = [["ai-engineer", "官方"], ["youtube", "YouTube 字幕"]].filter(([key]) => src[key])
+    .map(([key, label]) => `${label} ${src[key]}`);
+  const paid = transcribed - (src["ai-engineer"] || 0) - (src.youtube || 0);
+  if (paid) parts.push(`${esc(s.asr_model || "ASR")} ${paid}（≈ $${s.asr_cost_usd}）`);
+  const asrValue = s.asr_model || transcribed
+    ? `${transcribed} / ${s.total}${a.running ? ` · ${a.running} 个转写中` : ""}<br>${parts.join(" · ")}`
       + (s.asr_estimated_total_usd ? `（全部约 $${s.asr_estimated_total_usd}）` : "")
     : "未开启";
   const sc = s.summary_counts || {};
   const window = s.summary_in_window ? "半价时段进行中" : `下一个半价时段 ${clock(s.summary_next_window)} 开始`;
   const sumValue = s.summary_model
-    ? `${sc.done || 0} / ${a.done || 0} 已转写${(sc.running || 0) + (sc.queued || 0) ? ` · ${(sc.running || 0) + (sc.queued || 0)} 个进行中` : ""}`
+    ? `${sc.done || 0} / ${transcribed} 已转写${(sc.running || 0) + (sc.queued || 0) ? ` · ${(sc.running || 0) + (sc.queued || 0)} 个进行中` : ""}`
       + `${sc.failed ? ` · ${sc.failed} 个失败` : ""}<br>≈ $${s.summary_cost_usd} · ${s.summary_window ? window : "不限时段"}`
     : "未开启";
   const asrPause = (s.asr_pause_until
@@ -387,7 +389,8 @@ function row(v) {
     : `<span class="proc">—</span>`;
   const sumText = summarizing && v.asr_status === "done" && v.summary_status ? SUM[v.summary_status] : "";
   const asr = asrCell(v);
-  const asrText = v.status === "done" && state.data.summary.asr_model ? (ASR[v.asr_status] || "") : "";
+  const asrText = v.asr_status === "done" ? ASR.done
+    : v.status === "done" && state.data.summary.asr_model ? (ASR[v.asr_status] || "") : "";
   const sub = [`#${v.position + 1}`, minutes(v.duration), size, loc,
     summarizing ? "" : task ? (PROC[task.status] || "处理中") : ""].filter(Boolean).join(" · ");
   const subAsr = (asrText ? ` · ${v.asr_status === "done" ? asr : esc(asrText)}` : "")
@@ -417,9 +420,10 @@ function sumCell(v) {
 }
 
 function asrCell(v) {
-  if (v.status !== "done" || !state.data.summary.asr_model) return `<span class="proc">—</span>`;
+  if (v.asr_status !== "done" && (v.status !== "done" || !state.data.summary.asr_model)) return `<span class="proc">—</span>`;
   if (v.asr_status === "done") {
-    const who = v.transcript_source === "youtube" ? " · 字幕" : v.speakers ? ` · ${v.speakers} 人` : "";
+    const who = v.transcript_source === "ai-engineer" ? " · 官方" : v.transcript_source === "youtube" ? " · 字幕"
+      : v.speakers ? ` · ${v.speakers} 人` : "";
     return `<a class="st done" href="/v1/bulk/${encodeURIComponent(state.name)}/transcript/${encodeURIComponent(v.id)}" target="_blank" rel="noopener">已转写${who}</a>`;
   }
   const cls = { running: "downloading", failed: "failed" }[v.asr_status] || "";
@@ -428,6 +432,7 @@ function asrCell(v) {
 
 function paintEvents(events) {
   const label = { start: "启动", stop: "停止", pause: "暂停", resume: "恢复", "move-failed": "移动失败", "asr-pause": "转写暂停",
+    import: "导入",
     "captions-pause": "字幕冷却", watchdog: "自检" };
   $("#events").innerHTML = events.length ? `<h2>事件</h2>` + events.map((e) => `
     <div class="event"><time>${clock(e.at)}</time><span class="kind ${esc(e.kind)}">${esc(label[e.kind] || e.kind)}</span><span class="detail">${esc(e.detail)}</span></div>`).join("") : "";

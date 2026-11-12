@@ -66,6 +66,8 @@ def probe_model(model_id: str) -> tuple[bool, str]:
         return _probe_dashscope()
     if info["provider"] == "youtube":
         return False, "YouTube captions are saved by bulk downloads; they cannot be made from audio"
+    if info["provider"] == "aie":
+        return False, "AI Engineer transcripts come from `media-pipeline bulk import-aie`; they cannot be made from audio"
     if info["provider"] == "agy":
         import shutil
 

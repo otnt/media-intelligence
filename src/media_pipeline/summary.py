@@ -154,6 +154,9 @@ def collect_stills(artifacts: ArtifactStore, extra_dir: Path | None = None) -> l
             stills.append(SummaryStill(filename=name, timestamp=frame.timestamp, caption="", path=path, score=1.0))
     if stills:
         return stills
+    slides = _official_slides(artifacts)  # the organizers' slide images (ai.engineer), when imported
+    if slides:
+        return slides
     if extra_dir is None or not extra_dir.is_dir():
         return []
     images = sorted(
@@ -166,6 +169,25 @@ def collect_stills(artifacts: ArtifactStore, extra_dir: Path | None = None) -> l
         for index, path in enumerate(images, start=1)
         if path.stat().st_size > 0
     ]
+
+
+def _official_slides(artifacts: ArtifactStore) -> list[SummaryStill]:
+    folder = artifacts.root / "slides"
+    index_path = folder / "slides.json"
+    if not index_path.is_file():
+        return []
+    try:
+        index = artifacts.read_json(index_path)
+    except (OSError, ValueError):
+        return []
+    stills = []
+    for entry in index or []:
+        path = folder / str(entry.get("file") or "")
+        if path.is_file():
+            caption = " — ".join(part for part in (entry.get("title"), entry.get("alt")) if part)
+            stills.append(SummaryStill(filename=path.name, timestamp=float(entry.get("startMs") or 0) / 1000.0,
+                                       caption=caption, path=path, score=1.0))
+    return stills
 
 
 def choose_images(stills: list[SummaryStill], limit: int = MAX_SUMMARY_IMAGES) -> list[SummaryStill]:
@@ -182,6 +204,7 @@ def build_model_prompt(
     source_text: str,
     attached: list[SummaryStill] | None = None,
     chapters: list[dict] | None = None,
+    slides: list[dict] | None = None,
 ) -> str:
     title = (metadata.title if metadata else "") or (metadata.video_id if metadata else "")
     author = metadata.author if metadata else ""
@@ -207,6 +230,7 @@ def build_model_prompt(
         f"Author: {author}",
         f"URL: {url}",
         *(_chapter_lines(chapters) if chapters else []),
+        *(_slide_lines(slides) if slides else []),
         "",
         f"{source_label}:",
         source_text.strip() or "(no source text)",
@@ -227,13 +251,45 @@ def _chapter_lines(chapters: list[dict]) -> list[str]:
 
 
 def _load_chapters(artifacts: ArtifactStore) -> list[dict]:
-    path = artifacts.root / "youtube.json"
+    """The organizers' chapters (ai.engineer) when there are any, else YouTube's."""
+    for name in ("aie.json", "youtube.json"):
+        path = artifacts.root / name
+        if not path.is_file():
+            continue
+        try:
+            chapters = list(artifacts.read_json(path).get("chapters") or [])
+        except (OSError, ValueError, AttributeError):
+            continue
+        if chapters:
+            return chapters
+    return []
+
+
+def _load_slides(artifacts: ArtifactStore) -> list[dict]:
+    path = artifacts.root / "aie.json"
     if not path.is_file():
         return []
     try:
-        return list(artifacts.read_json(path).get("chapters") or [])
+        return list(artifacts.read_json(path).get("slides") or [])
     except (OSError, ValueError, AttributeError):
         return []
+
+
+def _slide_lines(slides: list[dict], limit_chars: int = 12_000) -> list[str]:
+    from media_pipeline.models import format_timestamp
+
+    lines = ["", "Slides (title and on-slide text, in order):"]
+    used = 0
+    for slide in slides:
+        text = " ".join(str(slide.get("text") or "").split())[:240]
+        line = f"- [{format_timestamp(float(slide.get('startMs') or 0) / 1000.0)}] {slide.get('title', '')}"
+        line += f": {text}" if text and text != slide.get("title") else ""
+        used += len(line)
+        if used > limit_chars:
+            lines.append("- …")
+            break
+        lines.append(line)
+    return lines
 
 
 def summarize_task(
@@ -260,7 +316,7 @@ def summarize_task(
         logger.warning("Transcript of %s is %s chars; %s gets the first %s", artifacts.video_id, len(source_text),
                        getattr(provider, "key", "model"), limit)
     packed = build_model_prompt(user_prompt, metadata, _truncate(source_text, limit), attached,
-                                chapters=_load_chapters(artifacts))
+                                chapters=_load_chapters(artifacts), slides=_load_slides(artifacts))
     logger.info("Summarizing %s with %s attached images; output is text-only", artifacts.video_id, len(attached))
     raw = provider.generate(packed, [item.path for item in attached], max_tokens)
     thinking, markdown = parse_summary_output(raw)

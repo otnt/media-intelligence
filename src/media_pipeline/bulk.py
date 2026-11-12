@@ -95,8 +95,9 @@ SKIP_MARKERS = (
 ACTIVE_STATES = ("running", "paused", "limited")
 # Alibaba Cloud bills DeepSeek models at half price from 22:00 to 08:00 Beijing time.
 DEFAULT_SUMMARY_WINDOW = "22:00-08:00@+08:00"
-# Measured: a 42-minute talk with DeepSeek V4.1 Flash, 16k tokens in, 4.4k out (thinking included).
-SUMMARY_USD_PER_VIDEO = {"deepseek-v4.1-flash": 0.005}
+# Measured with DeepSeek V4.1 Flash at the off-peak price: a 42-minute talk is ~16k transcript tokens plus
+# ~7.8k for 8 slide images (~970 each) in, ~4.4k out with thinking: about $0.007.
+SUMMARY_USD_PER_VIDEO = {"deepseek-v4.1-flash": 0.007}
 # Columns added after the first jobs were created; added in place when an older table is opened.
 LATER_COLUMNS = (
     ("asr_status", "TEXT DEFAULT 'pending'"),
@@ -468,7 +469,8 @@ def transcript_text(config: AppConfig, store: BulkStore, video_id: str) -> str |
     from media_pipeline.models import format_timestamp
 
     video = store.video(video_id)
-    model = store.meta("asr_model", "")
+    source = str((video or {}).get("transcript_source") or "")
+    model = {"youtube": "youtube-captions", "ai-engineer": "ai-engineer"}.get(source) or source or store.meta("asr_model", "")
     if video is None or not model:
         return None
     if not (config.paths.artifacts / video_id / "asr" / f"{model}.json").is_file():
@@ -874,6 +876,8 @@ class BulkRunner:
         artifacts = ArtifactStore(self.config.paths.artifacts, video_id)
         chapters = yc.chapters(info)
         transcript, kind, error = None, "", ""
+        if captions and (self.store.video(video_id) or {}).get("asr_status") == "done":
+            captions = False  # already transcribed (e.g. the official AI Engineer transcript): no request
         if captions:
             try:
                 transcript, kind = yc.fetch_captions(ydl, info)

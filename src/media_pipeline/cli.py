@@ -112,6 +112,13 @@ def main(argv: list[str] | None = None) -> int:
     bulk_summary.add_argument("--window", default=None, help="HH:MM-HH:MM@+08:00 (default 22:00-08:00 Beijing)")
     bulk_summary.add_argument("--any-time", action="store_true", help="No time window")
     bulk_summary.add_argument("--off", action="store_true")
+    bulk_import = bulk_sub.add_parser(
+        "import-aie", help="Take transcripts, chapters and slides from AI Engineer's public talk library"
+    )
+    bulk_import.add_argument("name")
+    bulk_import.add_argument("--slides", type=int, default=8, help="Slide images per talk for the summary")
+    bulk_import.add_argument("--refresh", action="store_true", help="Fetch again even what is already saved")
+    bulk_import.add_argument("--limit", type=int, default=None, help="Only the first N matching talks (a trial)")
     bulk_pace = bulk_sub.add_parser("pace", help="Seconds between downloads, e.g. 45-90 (applies while it runs)")
     bulk_pace.add_argument("name")
     bulk_pace.add_argument("seconds", help="MIN-MAX, or 'default'")
@@ -120,7 +127,7 @@ def main(argv: list[str] | None = None) -> int:
     bulk_resume = bulk_sub.add_parser("resume", help="Undo a pause; a YouTube-limit pause is probed right away")
     bulk_resume.add_argument("name")
     for parser_ in (bulk_add, bulk_run, bulk_status, bulk_dest, bulk_pause, bulk_resume, bulk_asr, bulk_summary,
-                    bulk_pace):
+                    bulk_pace, bulk_import):
         parser_.add_argument("--config", type=Path, default=None)
 
     watchdog = sub.add_parser("watchdog", help="One self-check: API, bulk jobs, disk; restarts what is stuck")
@@ -321,6 +328,16 @@ def cmd_bulk(config: AppConfig, args: argparse.Namespace) -> int:
         window = store.meta("summary_window") or "any time"
         print(f"{args.name}: summaries with {store.meta('summary_model')} during {window} (restart the job to apply: "
               f"launchctl kickstart -k gui/$(id -u)/com.media-pipeline.bulk.{args.name})")
+        return 0
+    if command == "import-aie":
+        from media_pipeline.aie_library import import_job
+
+        logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+                            handlers=[logging.StreamHandler(sys.stdout)])
+        stats = import_job(config, store, slides_per_talk=max(0, args.slides), refresh=args.refresh, limit=args.limit)
+        store.event("import", f"AI Engineer 官方资料：{stats['transcripts']} 个转写、{stats['slides']} 个有幻灯片、"
+                              f"{stats['images']} 张幻灯片图片，失败 {stats['failed']}")
+        print(json.dumps(stats))
         return 0
     if command == "pace":
         if args.seconds == "default":

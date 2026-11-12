@@ -58,7 +58,7 @@ def test_summaries_start_in_the_window_a_few_at_a_time_and_retry_a_failure(tmp_p
     assert [vid for vid, _at_, _n in submitted].count("v3") == 2  # the failure was retried once
     assert all(_row(store, vid)["summary_status"] == "done" for vid in ids)
     summary = store.summary(now=clock.t)
-    assert summary["summary_counts"] == {"done": 6} and summary["summary_cost_usd"] == 0.03
+    assert summary["summary_counts"] == {"done": 6} and summary["summary_cost_usd"] == 0.04
     assert store.work_left() == (0, 0, 0)
 
 

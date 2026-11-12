@@ -67,6 +67,14 @@ ASR_MODELS: dict[str, dict[str, str]] = {
         "backend_model": "captions",
         "hidden": "true",
     },
+    # Not a model you pick either: the organizers' own transcript from https://ai.engineer/data.
+    "ai-engineer": {
+        "label": "AI Engineer official transcript",
+        "runtime": "ai.engineer",
+        "provider": "aie",
+        "backend_model": "transcript",
+        "hidden": "true",
+    },
 }
 
 MLX_WHISPER_REPOS = {
