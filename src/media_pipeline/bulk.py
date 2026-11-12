@@ -446,11 +446,13 @@ class BulkRunner:
         self.store.set_meta("last_ok", self.clock())
         self._backoff = self.limits.first_backoff
         self._fail_streak = 0
+        logger.info("done %s (#%s) %.0f MB at %.1f MB/s", vid, row["position"] + 1, size / 1e6, (speed or 0) / 1e6)
         self._check_speed()
 
     def _failed(self, row: sqlite3.Row, message: str) -> None:
         kind = classify(message)
         vid = row["id"]
+        logger.warning("%s %s (#%s): %s", kind, vid, row["position"] + 1, message[:300])
         if kind == "skipped":
             self.store.execute("UPDATE videos SET status='skipped', error=? WHERE id=?", (message, vid))
             return
