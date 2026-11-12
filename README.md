@@ -220,6 +220,10 @@ instead of downloading or paying for ASR again.
 uv run media-pipeline bulk add aie --source 'https://www.youtube.com/@aiDotEngineer/videos' --title 'AI Engineer'
 uv run media-pipeline bulk asr aie                   # also transcribe (asr.default, e.g. fun-asr; --off to stop)
 uv run media-pipeline bulk summary aie               # and summarize at half price (deepseek-v4.1-flash, 22:00-08:00 Beijing)
+uv run media-pipeline bulk import-aie aie            # transcripts, chapters, slides from ai.engineer/data (see below)
+uv run media-pipeline bulk archive-aie aie           # every published file of the library, to <dest>/official
+uv run media-pipeline bulk youtube aie off           # stop downloading from YouTube; ASR, summaries, NAS moves go on
+uv run media-pipeline bulk pace aie 45-90            # seconds between downloads, applied while it runs
 uv run media-pipeline bulk run aie --max 3          # a trial in the foreground
 ./scripts/install-bulk-agent.sh aie                  # the whole job as a LaunchAgent (resumes after reboot)
 uv run media-pipeline bulk status aie
