@@ -54,3 +54,16 @@ def test_the_summary_model_names_the_speakers_in_transcript_and_note(tmp_path: P
     assert [s.speaker_label for s in artifacts.load_named()] == ["主持人", "黄仁勋"]
     assert artifacts.named_source() == "fun-asr"
     assert "黄仁勋" in note.read_text(encoding="utf-8") and "Speaker 2" not in note.read_text(encoding="utf-8")
+
+
+
+def test_the_prompt_carries_the_description_date_and_length():
+    from media_pipeline.summary import build_model_prompt
+
+    meta = VideoMetadata(url="u", title="E251 推理芯片之战", platform="YouTube", author="硅谷101", video_id="v",
+                         duration=3600.0, published="2026-11-01", description="本期嘉宾：红军、子阳。\n\n时间轴…",
+                         thumbnail_url="", asr_model="fun-asr")
+    prompt = build_model_prompt("总结", meta, "text")
+    assert "Source: YouTube · 2026-11-01 · 60 min" in prompt and "本期嘉宾：红军、子阳。 时间轴…" in prompt
+    meta.media_kind = "image"
+    assert "Description" not in build_model_prompt("总结", meta, "text")

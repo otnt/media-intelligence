@@ -297,6 +297,7 @@ def build_model_prompt(
         f"Title: {title}",
         f"Author: {author}",
         f"URL: {url}",
+        *_context_lines(metadata),
         *(_chapter_lines(chapters) if chapters else []),
         *(_slide_lines(slides) if slides else []),
         "",
@@ -307,6 +308,25 @@ def build_model_prompt(
         lines.append("")
         lines.append(f"Attached images: {len(attached)} (visual context only; do not insert them).")
     return "\n".join(lines).strip() + "\n"
+
+
+def _context_lines(metadata: VideoMetadata | None, limit: int = 2000) -> list[str]:
+    """Platform, date, length and the uploader's description: who the guests are, what the episode covers.
+    (An image post's description is its text and is already the source, so it is not repeated.)"""
+    if metadata is None:
+        return []
+    lines = []
+    facts = [metadata.platform or "", metadata.published or ""]
+    if metadata.duration:
+        facts.append(f"{round(float(metadata.duration) / 60)} min")
+    facts = [fact for fact in facts if fact]
+    if facts:
+        lines.append(f"Source: {' · '.join(facts)}")
+    description = " ".join((metadata.description or "").split())
+    if description and metadata.media_kind != "image":
+        lines.append(f"Description (from the uploader; may include guest names, links, ads): {description[:limit]}"
+                     + ("…" if len(description) > limit else ""))
+    return lines
 
 
 def _chapter_lines(chapters: list[dict]) -> list[str]:
