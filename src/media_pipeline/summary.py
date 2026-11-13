@@ -330,8 +330,8 @@ def _context_lines(metadata: VideoMetadata | None, limit: int = 2000) -> list[st
 
 
 def full_context(artifacts: ArtifactStore, metadata: VideoMetadata | None, url: str = "") -> str:
-    """Everything known about one video as plain text, for pasting into an agent session: facts, the
-    uploader's full description, chapters, slides, our latest summary and the whole transcript."""
+    """The source material of one video as plain text, for pasting into an agent session: facts, the
+    uploader's full description, chapters, slides and the whole transcript (no AI summary)."""
     from media_pipeline.models import format_timestamp
 
     parts: list[str] = []
@@ -361,10 +361,7 @@ def full_context(artifacts: ArtifactStore, metadata: VideoMetadata | None, url: 
     slides = _load_slides(artifacts)
     if slides:
         parts.append("## 幻灯片\n" + "\n".join(_slide_lines(slides, limit_chars=60_000)[2:]))
-    summary = artifacts.load_summary() or {}
-    runs = [r for r in summary.get("runs") or [] if str(r.get("markdown") or "").strip()]
-    if runs:
-        parts.append("## 摘要（AI 生成）\n" + str(runs[-1]["markdown"]).strip())
+    # No AI summary here: the agent should read the source, not a model's take on it.
     named = artifacts.load_named() or []
     if named:
         lines, previous = [], None

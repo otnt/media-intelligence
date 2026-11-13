@@ -81,5 +81,6 @@ def test_full_context_has_everything_for_an_agent_session(tmp_path):
                          asr_model="fun-asr")
     text = full_context(artifacts, meta)
     for piece in ("# Q3 财报", "作者：硅谷坐标", "时长：90 分钟", "链接：https://b23.tv/x", "## 简介\n本期嘉宾：周默",
-                  "- [00:01:05] 财报", "## 摘要（AI 生成）\n核心结论：验证期。", "[00:00:00] 主持人：欢迎", "[00:00:05] 周默：谢谢"):
+                  "- [00:01:05] 财报", "[00:00:00] 主持人：欢迎", "[00:00:05] 周默：谢谢"):
         assert piece in text, piece
+    assert "核心结论" not in text and "摘要" not in text
