@@ -333,6 +333,7 @@ class Task:
             "visual": dict(self.extra.get("visual") or {}),
             "rerun_stage": str(self.extra.get("rerun_stage") or ""),
             "tags": _manual_tags(self.extra),
+            "read_at": str(self.extra.get("read_at") or ""),
             "stage_timings": {
                 key: {inner: value for inner, value in entry.items() if not str(inner).startswith("_")}
                 for key, entry in dict(self.extra.get("stage_timings") or {}).items()

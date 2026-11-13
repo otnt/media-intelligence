@@ -111,6 +111,20 @@ class TaskTagsRequest(BaseModel):
     tags: list[str] = Field(default_factory=list)
 
 
+class ReadRequest(BaseModel):
+    read: bool = True
+
+
+class ReadAllRequest(BaseModel):
+    collection: str = ""
+
+
+def _now_stamp() -> str:
+    from datetime import datetime
+
+    return datetime.now().strftime("%Y-%m-%d %H:%M")
+
+
 def create_app(config: AppConfig, store: TaskStore | None = None, worker: TaskWorker | None = None) -> FastAPI:
     store = store or TaskStore(config.paths.db)
     worker = worker or TaskWorker(config, store)
@@ -500,6 +514,35 @@ def create_app(config: AppConfig, store: TaskStore | None = None, worker: TaskWo
     @app.get("/v1/tags")
     def list_tags() -> dict[str, Any]:
         return {"tags": collect_manual_tags(store.list_all())}
+
+    @app.post("/v1/tasks/{task_id}/read")
+    def mark_task_read(task_id: str, payload: ReadRequest | None = None) -> dict[str, Any]:
+        """Read state lives on the server so the phone and the Mac agree."""
+        task = store.get(task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+        read = True if payload is None else payload.read
+        if read:
+            task.extra["read_at"] = task.extra.get("read_at") or _now_stamp()
+        else:
+            task.extra.pop("read_at", None)
+        store.update(task)
+        return {"ok": True, "id": task.id, "read_at": task.extra.get("read_at", "")}
+
+    @app.post("/v1/tasks/read-all")
+    def mark_all_read(payload: ReadAllRequest | None = None) -> dict[str, Any]:
+        """Mark every finished note read, in the library or in one collection."""
+        collection = (payload.collection if payload else "") or ""
+        stamp = _now_stamp()
+        count = 0
+        for task in store.list_all(limit=100_000):
+            if str(task.extra.get("collection") or "") != collection or task.status != TaskStatus.completed:
+                continue
+            if not task.extra.get("read_at"):
+                task.extra["read_at"] = stamp
+                store.update(task)
+                count += 1
+        return {"ok": True, "marked": count}
 
     @app.put("/v1/tasks/{task_id}/tags")
     def update_task_tags(task_id: str, payload: TaskTagsRequest) -> dict[str, Any]:

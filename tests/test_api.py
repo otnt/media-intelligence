@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 
 from media_pipeline.api import create_app
 from media_pipeline.config import AppConfig, PathsConfig
-from media_pipeline.models import Task
+from media_pipeline.models import Task, TaskStatus
 from media_pipeline.store import TaskStore
 
 
@@ -1017,3 +1017,24 @@ def test_inbox_always_explains_itself_for_ios_shortcuts(tmp_path: Path):
     ok = client.get("/v1/inbox", params={"url": "【推理芯片之战】 https://b23.tv/AbC123"})
     assert ok.status_code == 202
     assert ok.json()["message"] == "✅ 已加入队列 · Bilibili"
+
+
+def test_read_state_is_kept_on_the_server(tmp_path: Path):
+    from media_pipeline.config import PathsConfig as _P
+
+    config = AppConfig(paths=_P(videos=tmp_path / "v", audio=tmp_path / "a", artifacts=tmp_path / "art",
+                                logs=tmp_path / "l", vault=tmp_path / "vault", db=tmp_path / "t.sqlite3"))
+    config.ensure_directories()
+    store = TaskStore(config.paths.db)
+    for tid, extra in (("a", {}), ("b", {}), ("c", {"collection": "AI Engineer"})):
+        store.insert(Task(id=tid, url=f"https://www.youtube.com/watch?v={tid}", asr_model="fun-asr", video_id=tid,
+                          status=TaskStatus.completed, extra=extra))
+    client = TestClient(create_app(config, store=store, worker=DummyWorker()))
+    assert client.get("/v1/tasks/a").json()["read_at"] == ""
+    assert client.post("/v1/tasks/a/read", json={"read": True}).json()["read_at"]
+    assert store.get("a").extra["read_at"]
+    assert client.post("/v1/tasks/a/read", json={"read": False}).json()["read_at"] == ""
+    assert client.post("/v1/tasks/read-all", json={}).json()["marked"] == 2  # the library, not the collection
+    assert not store.get("c").extra.get("read_at")
+    assert client.post("/v1/tasks/read-all", json={"collection": "AI Engineer"}).json()["marked"] == 1
+    assert client.post("/v1/tasks/nope/read").status_code == 404

@@ -155,6 +155,10 @@
   }
   .thumb .glyph { position: absolute; inset: 0; display: grid; place-items: center; font-size: 24px; color: var(--text-3); }
   .row-body { min-width: 0; flex: 1; }
+  .row.unread .row-title { font-weight: 700; }
+  .unread-dot { display: inline-block; width: 9px; height: 9px; margin-right: 6px; border-radius: 50%;
+    background: var(--accent); vertical-align: 1px; }
+  .read-all { display: block; margin: 6px var(--gutter) 0; font-size: 14px; }
   .row-title {
     font-size: 15.5px; font-weight: 600; line-height: 1.35;
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
@@ -577,6 +581,7 @@ function filteredTasks() {
     const chip = state.chip;
     if (chip === "active" && !isActive(task)) return false;
     if (chip === "failed" && task.status !== "failed") return false;
+    if (chip === "unread" && !isUnread(task)) return false;
     if (chip.startsWith("src:") && task.source !== chip.slice(4)) return false;
     if (chip.startsWith("tag:") && !(task.tags || []).includes(chip.slice(4))) return false;
     if (!q) return true;
@@ -591,6 +596,8 @@ function renderChips() {
   const active = tasks.filter(isActive).length;
   const failed = tasks.filter((t) => t.status === "failed").length;
   if (active) chips.push(["active", "处理中", active]);
+  const unread = tasks.filter(isUnread).length;
+  if (unread) chips.push(["unread", "未读", unread]);
   if (failed) chips.push(["failed", "失败", failed, "danger"]);
   const sources = new Map();
   for (const t of tasks) if (t.source) sources.set(t.source, [t.source_label || t.source, (sources.get(t.source)?.[1] || 0) + 1]);
@@ -621,6 +628,9 @@ function rowState(task) {
   if (task.summary_status === "running") return `<div class="row-state"><span class="spinner"></span>生成摘要</div>`;
   return "";
 }
+function isUnread(task) {
+  return task.status === "completed" && !task.read_at;
+}
 function rowHtml(task) {
   const thumb = thumbFor(task);
   const duration = Number(task.duration) > 0 ? `<span class="dur">${clock(task.duration)}</span>` : "";
@@ -628,9 +638,10 @@ function rowHtml(task) {
   const meta = [task.author || task.source_label, relTime(parseStamp(task.requested_at || task.created_at))].filter(Boolean).join(" · ");
   const tags = (task.tags || []).length ? `<span class="tagline">${task.tags.map((t) => `<span class="tag">#${esc(t)}</span>`).join("")}</span>` : "";
   const current = state.route.view === "note" && state.route.id === task.id;
-  return `<a class="row" href="#/n/${encodeURIComponent(task.id)}" aria-current="${current}">
+  const unread = isUnread(task);
+  return `<a class="row${unread ? " unread" : ""}" href="#/n/${encodeURIComponent(task.id)}" aria-current="${current}">
     <div class="thumb">${thumb ? `<img src="${esc(thumb)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : ""}<span class="glyph" aria-hidden="true">${thumb ? "" : glyph}</span>${duration}</div>
-    <div class="row-body"><div class="row-title">${esc(task.title || task.url)}</div>
+    <div class="row-body"><div class="row-title">${unread ? '<span class="unread-dot" aria-label="未读"></span>' : ""}${esc(task.title || task.url)}</div>
       <div class="row-meta">${esc(meta)}${tags}</div>${rowState(task)}</div></a>`;
 }
 function renderList() {
@@ -647,7 +658,8 @@ function renderList() {
     if (!groups.length || groups[groups.length - 1][0] !== key) groups.push([key, []]);
     groups[groups.length - 1][1].push(task);
   }
-  $("#list").innerHTML = groups.map(([key, items]) => `<div class="section-title">${esc(key)}</div>${items.map(rowHtml).join("")}`).join("");
+  const readAll = state.chip === "unread" ? `<a class="read-all" href="#" data-read-all="1">全部标为已读</a>` : "";
+  $("#list").innerHTML = readAll + groups.map(([key, items]) => `<div class="section-title">${esc(key)}</div>${items.map(rowHtml).join("")}`).join("");
 }
 /* A note belongs to a video, not to a task: resubmitting a video must not duplicate it.
    Keep the task that matters most: still processing > completed > failed, newest first within each. */
@@ -911,6 +923,18 @@ async function openNote(id) {
     window.scrollTo(0, 0);
   }
   await refreshNote(true);
+  markRead(id, true);
+}
+async function markRead(id, read) {
+  const task = state.tasks.find((t) => t.id === id) || (state.note && state.note.task.id === id ? state.note.task : null);
+  if (!task || (read && (task.read_at || task.status !== "completed"))) return;
+  try {
+    const res = await api(`/v1/tasks/${encodeURIComponent(id)}/read`, { method: "POST", body: JSON.stringify({ read }) });
+    for (const t of [task, state.note && state.note.task].filter(Boolean)) if (t.id === id) t.read_at = res.read_at;
+    const listed = state.tasks.find((t) => t.id === id);
+    if (listed) listed.read_at = res.read_at;
+    renderList();
+  } catch (_) { /* offline: the dot stays until next time */ }
 }
 async function refreshNote(force = false) {
   clearTimeout(state.noteTimer);
@@ -1038,6 +1062,7 @@ function openMenu() {
     items.push(`<button type="button" data-menu="chatgpt">在 ChatGPT 继续</button>`);
   }
   items.push(`<button type="button" data-menu="tags">编辑标签</button>`);
+  if (task.status === "completed") items.push(`<button type="button" data-menu="${task.read_at ? "unread" : "read"}">${task.read_at ? "标为未读" : "标为已读"}</button>`);
   if (task.video_id) items.push(`<button type="button" data-menu="resummarize">换模型重新总结</button>`);
   if (task.status === "failed") items.push(`<button type="button" data-menu="retry">重试</button>`);
   items.push(`<button type="button" data-menu="classic">在旧版中打开</button>`);
@@ -1126,11 +1151,18 @@ document.addEventListener("click", (event) => {
     $("#menu-sheet").close();
     if (name === "open") window.open(state.note.task.url, "_blank", "noopener");
     else if (name === "classic") location.href = `/classic?task=${encodeURIComponent(state.note.task.id)}`;
+    else if (name === "unread" || name === "read") markRead(state.note.task.id, name === "read").then(() => toast(name === "read" ? "已标为已读" : "已标为未读"));
     else act(name, null);
     return;
   }
   if (event.target.closest("[data-close]")) { event.target.closest("dialog").close(); return; }
   if (event.target.id === "more-btn") { openMenu(); return; }
+  if (event.target.closest("[data-read-all]")) {
+    event.preventDefault();
+    api("/v1/tasks/read-all", { method: "POST", body: JSON.stringify({ collection: state.collection || "" }) })
+      .then((res) => { toast(`已标为已读：${res.marked} 篇`); loadTasks(); });
+    return;
+  }
   if (event.target.id === "note-title") { event.target.classList.toggle("clamped"); return; }
 });
 document.addEventListener("input", (event) => {
