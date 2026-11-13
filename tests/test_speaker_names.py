@@ -13,6 +13,10 @@ def test_the_trailing_json_is_parsed_and_removed():
     assert body == "核心结论：……" and names == {"Speaker 1": "黄仁勋"}
     assert take_speaker_names("没有 JSON 的总结", LABELS) == ("没有 JSON 的总结", {})
     assert take_speaker_names("```json\n{broken\n```", LABELS)[1] == {}
+    for tail in ('json\n{"speakers": {"Speaker 2": "周默"}}', '```json\n{"speakers": {"Speaker 2": "周默"}}',
+                 '{"speakers": {"Speaker 2": "周默"}}\n'):
+        body, names = take_speaker_names("总结正文\n\n" + tail, LABELS)
+        assert body == "总结正文" and names == {"Speaker 2": "周默"}
 
 
 class Provider:

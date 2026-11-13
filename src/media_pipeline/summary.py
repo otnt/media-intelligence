@@ -199,7 +199,8 @@ def choose_images(stills: list[SummaryStill], limit: int = MAX_SUMMARY_IMAGES) -
     return sorted(chosen, key=lambda item: (item.timestamp, item.filename))
 
 
-SPEAKER_JSON = re.compile(r"```json\s*(\{[\s\S]*?\})\s*```\s*$")
+# The trailing speaker map, fenced or not ("```json {...} ```", "json {...}", or a bare object).
+SPEAKER_JSON = re.compile(r'(?:```\s*json|(?<![\w"])json)?\s*(\{\s*"speakers"\s*:\s*\{[^{}]*\}\s*\})\s*(?:```)?\s*$')
 
 
 def speaker_request(labels: list[str]) -> str:
