@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import re
 import time
@@ -198,6 +199,72 @@ def choose_images(stills: list[SummaryStill], limit: int = MAX_SUMMARY_IMAGES) -
     return sorted(chosen, key=lambda item: (item.timestamp, item.filename))
 
 
+SPEAKER_JSON = re.compile(r"```json\s*(\{[\s\S]*?\})\s*```\s*$")
+
+
+def speaker_request(labels: list[str]) -> str:
+    """Ask for the speakers' names in a trailing JSON block (parsed and removed by take_speaker_names)."""
+    listed = "、".join(f'"{label}"' for label in labels)
+    return (
+        "\n最后，在总结之后另起一行，输出一个 ```json 代码块（只供程序读取，不是正文）：\n"
+        '{"speakers": {"<逐字稿里的标签>": "<名字或身份>"}}\n'
+        f"标签只能是这些：{listed}。名字必须有依据：逐字稿里的自我介绍或别人的称呼，或标题、作者、简介里写明的人；"
+        "只能判断身份时写身份（例如 主持人、嘉宾、提问观众）；判断不了写 null。不要猜。"
+    )
+
+
+def take_speaker_names(markdown: str, labels: list[str]) -> tuple[str, dict[str, str]]:
+    """Split the trailing speaker JSON off the summary; keep only known labels and real values."""
+    match = SPEAKER_JSON.search((markdown or "").rstrip())
+    if not match:
+        return markdown, {}
+    try:
+        data = json.loads(match.group(1))
+    except ValueError:
+        return markdown, {}
+    speakers = data.get("speakers") if isinstance(data, dict) else None
+    names = {}
+    for label, name in (speakers or {}).items():
+        name = str(name or "").strip()
+        if label in labels and name and name.lower() not in {"null", "none", "unknown", "未知"} and len(name) <= 40:
+            names[label] = name
+    return markdown[: match.start()].rstrip(), names
+
+
+def apply_speaker_names(artifacts: ArtifactStore, names: dict[str, str]) -> bool:
+    """Relabel the transcript (and its note) with names the summary model found. True if anything changed."""
+    named = artifacts.load_named() or []
+    if not names or not named:
+        return False
+    changed = False
+    for segment in named:
+        new = names.get(segment.speaker_label)
+        if new and new != segment.speaker_label:
+            segment.speaker_label = new
+            changed = True
+    if not changed:
+        return False
+    source = artifacts.named_source()
+    artifacts.save_named(named)
+    if source:
+        artifacts.set_named_source(source)
+    artifacts.write_json(artifacts.root / "speaker_names.json", names)
+    note = artifacts.note_pointer_path
+    if note.is_file():
+        note_path = Path(note.read_text(encoding="utf-8").strip())
+        if note_path.is_file():
+            from media_pipeline.notes import NoteDocument
+            from media_pipeline.transcript import render_transcript
+
+            try:
+                document = NoteDocument.parse(note_path.read_text(encoding="utf-8"))
+                document.transcript_markdown = render_transcript(named)
+                note_path.write_text(document.render(), encoding="utf-8")
+            except Exception:  # noqa: BLE001 - the note keeps old labels; the reader has the new ones
+                logger.warning("Could not relabel speakers in %s", note_path, exc_info=True)
+    return True
+
+
 def build_model_prompt(
     user_prompt: str,
     metadata: VideoMetadata | None,
@@ -317,8 +384,12 @@ def summarize_task(
                        getattr(provider, "key", "model"), limit)
     packed = build_model_prompt(user_prompt, metadata, _truncate(source_text, limit), attached,
                                 chapters=_load_chapters(artifacts), slides=_load_slides(artifacts))
+    labels = list(dict.fromkeys(segment.speaker_label for segment in named if segment.speaker_label))
+    if labels:
+        packed += speaker_request(labels)
     logger.info("Summarizing %s with %s attached images; output is text-only", artifacts.video_id, len(attached))
     raw = provider.generate(packed, [item.path for item in attached], max_tokens)
+    raw, speakers = take_speaker_names(str(raw or ""), labels)  # before the cleanup rewrites code blocks
     thinking, markdown = parse_summary_output(raw)
     if not markdown and not thinking:
         raise RuntimeError("Summary model returned an empty summary")
@@ -332,6 +403,7 @@ def summarize_task(
         "image_count": 0,
         "updated_at": datetime.now(timezone.utc).isoformat(),
         "key": str(getattr(provider, "key", "") or ""),
+        "speakers": speakers,
         "label": str(getattr(provider, "label", "") or getattr(provider, "model_id", "") or ""),
     }
 
@@ -372,6 +444,11 @@ def run_summary_backends(
             error = str(exc)
         duration_sec = round(max(0.0, time.perf_counter() - started), 3)
         fresh.append(_run_payload(backend, result, error=error, duration_sec=duration_sec))
+        if result.get("speakers"):
+            try:
+                apply_speaker_names(artifacts, result["speakers"])
+            except Exception:  # noqa: BLE001 - names are a bonus, never fail a summary over them
+                logger.warning("Could not apply speaker names for %s", artifacts.video_id, exc_info=True)
     history = [] if replace else list(existing_runs or [])
     runs = history + fresh
     markdown = render_summary_runs(runs)
