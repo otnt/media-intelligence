@@ -75,7 +75,26 @@ def generate_fn(config: AppConfig, model: str = "deepseek-v4.1-flash") -> Callab
     if not backends:
         raise RuntimeError(f"Summary model {model!r} is not available")
     backend = backends[0]
-    return lambda prompt, max_tokens=16000: strip_think(backend.generate(prompt, [], max_tokens))
+
+    def run(prompt: str, max_tokens: int = 16000) -> str:
+        # Long merges can spend the whole budget thinking and come back empty: retry with a larger
+        # budget and thinking off.
+        try:
+            text = strip_think(backend.generate(prompt, [], max_tokens))
+        except RuntimeError as exc:
+            if "empty" not in str(exc):
+                raise
+            text = ""
+        if text.strip():
+            return text
+        from media_pipeline.summary_llm import _openai_compatible_generate, _qwen_max_base_url, _qwen_max_key
+
+        return strip_think(_openai_compatible_generate(
+            api_key=_qwen_max_key(config), model=backend.model_id, prompt=prompt, images=None,
+            max_tokens=32000, base_url=_qwen_max_base_url(config), extra={"enable_thinking": False},
+            timeout=600, stream=True))
+
+    return run
 
 
 def load_talks(config: AppConfig, store: Any, library: dict[str, Any]) -> list[Talk]:
@@ -189,6 +208,13 @@ def synthesize_topic(generate: Callable[[str, int], str], topic: str, descriptio
         return generate(_reduce_prompt(topic, description, material, len(talks), partial=False), 16000)
     prompts = [_map_prompt(topic, description, batch, i, len(batches)) for i, batch in enumerate(batches, start=1)]
     partials = list(pool.map(lambda p: generate(p, 12000), prompts)) if pool else [generate(p, 12000) for p in prompts]
+    # Many batches (500+ talks): merge them a few at a time first, so the final merge stays small.
+    while len(partials) > 6:
+        groups = [partials[i:i + 4] for i in range(0, len(partials), 4)]
+        merge = lambda group: generate(  # noqa: E731
+            f"把下面几份关于主题「{topic}」的分批提炼合并成一份，保留子主题、关键数据、共识分歧和 [T编号] 引用，去掉重复：\n\n"
+            + "\n\n".join(group), 12000)
+        partials = list(pool.map(merge, groups)) if pool else [merge(g) for g in groups]
     material = "\n\n".join(f"### 第 {i} 批\n{text}" for i, text in enumerate(partials, start=1))
     return generate(_reduce_prompt(topic, description, material, len(talks), partial=True), 16000)
 
