@@ -24,6 +24,17 @@ def test_the_half_price_window_is_beijing_night_whatever_the_mac_clock_says():
     assert in_window("", _at(12)) and next_window_start("", _at(12)) == _at(12)
 
 
+def test_deepseek_schedule_is_half_price_outside_weekday_peaks():
+    from media_pipeline.bulk import DEEPSEEK_OFFPEAK_WINDOW as W
+
+    utc = timezone.utc
+    at = lambda d, h, m=0: datetime(2026, 11, d, h, m, tzinfo=utc).timestamp()  # noqa: E731  Nov 12 2026 = Thursday
+    assert not in_window(W, at(12, 2)) and not in_window(W, at(12, 7, 30))
+    assert in_window(W, at(12, 4)) and in_window(W, at(12, 12)) and in_window(W, at(12, 0, 59))
+    assert in_window(W, at(14, 2)) and in_window(W, at(15, 8))  # the weekend is off-peak all day
+    assert next_window_start(W, at(12, 2)) == at(12, 4) and next_window_start(W, at(12, 12)) == at(12, 12)
+
+
 def test_summaries_start_in_the_window_a_few_at_a_time_and_retry_a_failure(tmp_path: Path):
     config = _config(tmp_path)
     ids = tuple(f"v{i}" for i in range(6))

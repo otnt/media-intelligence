@@ -54,6 +54,9 @@ DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 # DeepSeek V4.1 Flash served by Alibaba Cloud (same DashScope key as qwen3.8-max). Unlike DeepSeek's own
 # API it takes images, so slides and keyframes reach it. Off-peak (22:00-08:00 UTC+8) costs half.
 DASHSCOPE_FLASH_MODEL = "deepseek-v4.1-flash"
+# The same model on DeepSeek's own API (preferred when a DeepSeek key is set): vision, 1M context, and
+# off-peak half price outside 01-04 and 06-10 UTC on weekdays (weekends are off-peak all day).
+DEEPSEEK_FLASH_MODEL = "deepseek-flash"
 # Mainland China DashScope default. Match key region:
 # Singapore intl: https://dashscope-intl.aliyuncs.com/compatible-mode/v1
 # US (Virginia):  https://dashscope-us.aliyuncs.com/compatible-mode/v1
@@ -190,13 +193,14 @@ def catalog_summary_backends(config: AppConfig, vision: object | None = None) ->
     )
     qwen_max_key = _qwen_max_key(config)
     qwen_max_model = _qwen_max_model(config)
+    official = bool(_deepseek_key(config))
     rows.append(
         _catalog_row(
             "deepseek-v4.1-flash",
-            "DeepSeek V4.1 Flash (Alibaba Cloud, sees images)",
-            DASHSCOPE_FLASH_MODEL,
-            bool(qwen_max_key),
-            "" if qwen_max_key else "set DASHSCOPE_API_KEY or QWEN_API_KEY",
+            "DeepSeek V4.1 Flash (DeepSeek, sees images)" if official else "DeepSeek V4.1 Flash (Alibaba Cloud, sees images)",
+            DEEPSEEK_FLASH_MODEL if official else DASHSCOPE_FLASH_MODEL,
+            official or bool(qwen_max_key),
+            "" if official or qwen_max_key else "set DEEPSEEK_API_KEY or DASHSCOPE_API_KEY",
         )
     )
     rows.append(
@@ -347,7 +351,30 @@ def _available_backends(
             )
         )
     qwen_max_key = _qwen_max_key(config)
-    if qwen_max_key:
+    if deepseek_key:
+        base_url = _deepseek_base_url(config)
+        backends.append(
+            SummaryBackend(
+                key="deepseek-v4.1-flash",
+                label="DeepSeek V4.1 Flash (DeepSeek)",
+                model_id=DEEPSEEK_FLASH_MODEL,
+                max_source_chars=CLOUD_SOURCE_CHARS,
+                generate_fn=lambda prompt, images, max_tokens, _key=deepseek_key, _base=base_url: strip_think(
+                    _openai_compatible_generate(
+                        api_key=_key,
+                        model=DEEPSEEK_FLASH_MODEL,
+                        prompt=prompt,
+                        images=images,
+                        max_tokens=max(int(max_tokens or 0), THINKING_MAX_TOKENS),
+                        base_url=_base,
+                        extra={"thinking": {"type": "enabled"}},
+                        timeout=300,
+                        stream=True,
+                    )
+                ),
+            )
+        )
+    elif qwen_max_key:
         base_url = _qwen_max_base_url(config)
         backends.append(
             SummaryBackend(

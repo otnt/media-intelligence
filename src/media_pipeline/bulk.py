@@ -95,9 +95,11 @@ SKIP_MARKERS = (
 ACTIVE_STATES = ("running", "paused", "limited")
 # Alibaba Cloud bills DeepSeek models at half price from 22:00 to 08:00 Beijing time.
 DEFAULT_SUMMARY_WINDOW = "22:00-08:00@+08:00"
+# DeepSeek's own API: peak (full price) 01-04 and 06-10 UTC, Monday to Friday; everything else is half price.
+DEEPSEEK_OFFPEAK_WINDOW = "peak:01:00-04:00,06:00-10:00@+00:00"
 # Measured with DeepSeek V4.1 Flash at the off-peak price: a 42-minute talk is ~16k transcript tokens plus
 # ~7.8k for 8 slide images (~970 each) in, ~4.4k out with thinking: about $0.007.
-SUMMARY_USD_PER_VIDEO = {"deepseek-v4.1-flash": 0.007}
+SUMMARY_USD_PER_VIDEO = {"deepseek-v4.1-flash": 0.007}  # same price on DeepSeek's own API
 # Columns added after the first jobs were created; added in place when an older table is opened.
 LATER_COLUMNS = (
     ("asr_status", "TEXT DEFAULT 'pending'"),
@@ -180,7 +182,27 @@ def _window(window: str) -> tuple[int, int, timezone] | None:
     return minute(start), minute(end), tz
 
 
+def _peak(window: str, now: float) -> bool:
+    """For "peak:HH:MM-HH:MM,...@tz" schedules: is ``now`` inside a weekday peak range?"""
+    spec, _, zone = window[len("peak:"):].partition("@")
+    sign = -1 if zone.startswith("-") else 1
+    hours, _, minutes = zone.lstrip("+-").partition(":")
+    moment = datetime.fromtimestamp(now, timezone(sign * timedelta(hours=int(hours or 0), minutes=int(minutes or 0))))
+    if moment.weekday() >= 5:
+        return False
+    minute = moment.hour * 60 + moment.minute
+    for part in spec.split(","):
+        start, _, end = part.partition("-")
+        low = int(start[:2]) * 60 + int(start[3:5])
+        high = int(end[:2]) * 60 + int(end[3:5])
+        if low <= minute < high:
+            return True
+    return False
+
+
 def in_window(window: str, now: float) -> bool:
+    if window.startswith("peak:"):
+        return not _peak(window, now)
     parsed = _window(window)
     if parsed is None:
         return True
@@ -192,6 +214,11 @@ def in_window(window: str, now: float) -> bool:
 
 def next_window_start(window: str, now: float) -> float:
     """When the window opens next (now if it is open)."""
+    if window.startswith("peak:"):
+        moment = now
+        while not in_window(window, moment):
+            moment += 60
+        return moment
     parsed = _window(window)
     if parsed is None or in_window(window, now):
         return now

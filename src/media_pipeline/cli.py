@@ -338,6 +338,10 @@ def cmd_bulk(config: AppConfig, args: argparse.Namespace) -> int:
             print(f"{args.name}: summaries off (restart the job to apply)")
             return 0
         store.set_meta("summary_model", normalize_summary_key(args.model))
+        if args.window in ("deepseek", "deepseek-offpeak"):
+            from media_pipeline.bulk import DEEPSEEK_OFFPEAK_WINDOW
+
+            args.window = DEEPSEEK_OFFPEAK_WINDOW
         store.set_meta("summary_window", "" if args.any_time else (args.window or DEFAULT_SUMMARY_WINDOW))
         window = store.meta("summary_window") or "any time"
         print(f"{args.name}: summaries with {store.meta('summary_model')} during {window} (restart the job to apply: "
