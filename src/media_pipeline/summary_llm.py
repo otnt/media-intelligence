@@ -359,18 +359,8 @@ def _available_backends(
                 label="DeepSeek V4.1 Flash (DeepSeek)",
                 model_id=DEEPSEEK_FLASH_MODEL,
                 max_source_chars=CLOUD_SOURCE_CHARS,
-                generate_fn=lambda prompt, images, max_tokens, _key=deepseek_key, _base=base_url: strip_think(
-                    _openai_compatible_generate(
-                        api_key=_key,
-                        model=DEEPSEEK_FLASH_MODEL,
-                        prompt=prompt,
-                        images=images,
-                        max_tokens=max(int(max_tokens or 0), THINKING_MAX_TOKENS),
-                        base_url=_base,
-                        extra={"thinking": {"type": "enabled"}},
-                        timeout=300,
-                        stream=True,
-                    )
+                generate_fn=lambda prompt, images, max_tokens, _key=deepseek_key, _base=base_url, _config=config: (
+                    _deepseek_flash_generate(_config, _key, _base, prompt, images, max_tokens)
                 ),
             )
         )
@@ -435,6 +425,23 @@ def _available_backends(
             )
         )
     return backends
+
+
+def _deepseek_flash_generate(config: AppConfig, key: str, base_url: str, prompt: str, images, max_tokens) -> str:
+    """DeepSeek's own API; if its balance runs out (HTTP 402), the same model on Alibaba Cloud instead."""
+    tokens = max(int(max_tokens or 0), THINKING_MAX_TOKENS)
+    try:
+        return strip_think(_openai_compatible_generate(
+            api_key=key, model=DEEPSEEK_FLASH_MODEL, prompt=prompt, images=images, max_tokens=tokens,
+            base_url=base_url, extra={"thinking": {"type": "enabled"}}, timeout=300, stream=True))
+    except RuntimeError as exc:
+        dash_key = _qwen_max_key(config)
+        if "HTTP 402" not in str(exc) or not dash_key:
+            raise
+        logger.warning("DeepSeek balance is empty; using DeepSeek V4.1 Flash on Alibaba Cloud for this summary")
+        return strip_think(_openai_compatible_generate(
+            api_key=dash_key, model=DASHSCOPE_FLASH_MODEL, prompt=prompt, images=images, max_tokens=tokens,
+            base_url=_qwen_max_base_url(config), extra={"enable_thinking": True}, timeout=300, stream=True))
 
 
 def strip_think(text: str) -> str:
