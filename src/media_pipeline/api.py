@@ -54,6 +54,8 @@ DASHBOARD_DIR = Path(__file__).resolve().parent / "dashboard" / "static"
 DASHBOARD_FILE = DASHBOARD_DIR / "index.html"
 # The previous dashboard: settings, keyframe decisions and prompt editing still live here.
 CLASSIC_DASHBOARD_FILE = DASHBOARD_DIR / "classic.html"
+# Pages always revalidate (ETag), so a phone or home-screen app never keeps an old UI.
+NO_CACHE = {"Cache-Control": "no-cache"}
 STATIC_TYPES = {".png": "image/png", ".svg": "image/svg+xml", ".webmanifest": "application/manifest+json"}
 ALLOWED_FRAME_DIRS = {"candidate_frames", "keyframes"}
 
@@ -150,16 +152,16 @@ def create_app(config: AppConfig, store: TaskStore | None = None, worker: TaskWo
     @app.get("/")
     def root():
         if DASHBOARD_FILE.exists():
-            return FileResponse(DASHBOARD_FILE, media_type="text/html")
+            return FileResponse(DASHBOARD_FILE, media_type="text/html", headers=NO_CACHE)
         return {"service": "media-pipeline", "health": "/v1/health", "dashboard": "/"}
 
     @app.get("/classic")
     def classic():
-        return FileResponse(CLASSIC_DASHBOARD_FILE, media_type="text/html")
+        return FileResponse(CLASSIC_DASHBOARD_FILE, media_type="text/html", headers=NO_CACHE)
 
     @app.get("/manifest.webmanifest")
     def manifest():
-        return FileResponse(DASHBOARD_DIR / "manifest.webmanifest", media_type="application/manifest+json")
+        return FileResponse(DASHBOARD_DIR / "manifest.webmanifest", media_type="application/manifest+json", headers=NO_CACHE)
 
     @app.get("/static/{filename}")
     def static_file(filename: str):
@@ -171,7 +173,7 @@ def create_app(config: AppConfig, store: TaskStore | None = None, worker: TaskWo
 
     @app.get("/learn")
     def learn_page():
-        return FileResponse(DASHBOARD_DIR / "learn.html", media_type="text/html")
+        return FileResponse(DASHBOARD_DIR / "learn.html", media_type="text/html", headers=NO_CACHE)
 
     def _learn_dirs() -> dict[str, Path]:
         """{collection: <notes>/<collection>/_学习} for every collection that has study material."""
@@ -229,7 +231,7 @@ def create_app(config: AppConfig, store: TaskStore | None = None, worker: TaskWo
 
     @app.get("/bulk")
     def bulk_page():
-        return FileResponse(DASHBOARD_DIR / "bulk.html", media_type="text/html")
+        return FileResponse(DASHBOARD_DIR / "bulk.html", media_type="text/html", headers=NO_CACHE)
 
     def _bulk_job(name: str) -> bulk_jobs.BulkStore:
         try:
