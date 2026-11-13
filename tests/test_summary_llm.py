@@ -537,3 +537,11 @@ def test_stream_chat_collects_content_and_reasoning_and_surfaces_errors():
 
     with pytest.raises(RuntimeError, match="quota"):
         _stream_chat("https://x/v1/chat/completions", {"model": "m"}, {"Authorization": "Bearer k"}, opener=failing)
+
+
+
+def test_config_accepts_deepseek_flash_as_the_summary_provider():
+    from media_pipeline.config import _summary_providers
+
+    assert _summary_providers(["deepseek-v4.1-flash"]) == ["deepseek-v4.1-flash"]
+    assert _summary_providers("flash") == ["deepseek-v4.1-flash"]

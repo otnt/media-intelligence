@@ -527,6 +527,8 @@ def _summary_providers(value: Any) -> list[str]:
         "deepseek-pro": "deepseek-v4-pro",
         "qwen-max": "qwen3.8-max",
         "agy": "agy-gemini",
+        "flash": "deepseek-v4.1-flash",
+        "deepseek-flash": "deepseek-v4.1-flash",
     }
     known = {
         "qwen",
@@ -540,7 +542,9 @@ def _summary_providers(value: Any) -> list[str]:
         "gemini",
         "openai",
         "deepseek-v4-pro",
+        "deepseek-v4.1-flash",
         "qwen3.8-max",
+        "agy-gemini",
         "all",
     }
     cleaned: list[str] = []
