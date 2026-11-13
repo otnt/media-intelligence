@@ -329,6 +329,56 @@ def _context_lines(metadata: VideoMetadata | None, limit: int = 2000) -> list[st
     return lines
 
 
+def full_context(artifacts: ArtifactStore, metadata: VideoMetadata | None, url: str = "") -> str:
+    """Everything known about one video as plain text, for pasting into an agent session: facts, the
+    uploader's full description, chapters, slides, our latest summary and the whole transcript."""
+    from media_pipeline.models import format_timestamp
+
+    parts: list[str] = []
+    title = (metadata.title if metadata else "") or artifacts.video_id
+    parts.append(f"# {title}")
+    facts = []
+    if metadata:
+        for label, value in (("平台", metadata.platform), ("作者", metadata.author), ("发布", metadata.published)):
+            if value:
+                facts.append(f"{label}：{value}")
+        if metadata.duration:
+            facts.append(f"时长：{round(float(metadata.duration) / 60)} 分钟")
+    link = (metadata.url if metadata else "") or url
+    if link:
+        from media_pipeline.media import canonicalize_url
+
+        link = canonicalize_url(link)  # no share-tracking parameters
+        facts.append(f"链接：{link}")
+    if facts:
+        parts.append("\n".join(facts))
+    if metadata and (metadata.description or "").strip():
+        parts.append("## 简介\n" + metadata.description.strip())
+    chapters = _load_chapters(artifacts)
+    if chapters:
+        parts.append("## 章节\n" + "\n".join(
+            f"- [{format_timestamp(float(c.get('start') or 0))}] {c.get('title', '')}" for c in chapters))
+    slides = _load_slides(artifacts)
+    if slides:
+        parts.append("## 幻灯片\n" + "\n".join(_slide_lines(slides, limit_chars=60_000)[2:]))
+    summary = artifacts.load_summary() or {}
+    runs = [r for r in summary.get("runs") or [] if str(r.get("markdown") or "").strip()]
+    if runs:
+        parts.append("## 摘要（AI 生成）\n" + str(runs[-1]["markdown"]).strip())
+    named = artifacts.load_named() or []
+    if named:
+        lines, previous = [], None
+        for segment in named:
+            text = (segment.text or "").strip()
+            if not text:
+                continue
+            who = "" if segment.speaker_label == previous else f"{segment.speaker_label}："
+            lines.append(f"[{format_timestamp(segment.start)}] {who}{text}")
+            previous = segment.speaker_label
+        parts.append("## 逐字稿\n" + "\n".join(lines))
+    return "\n\n".join(parts) + "\n"
+
+
 def _chapter_lines(chapters: list[dict]) -> list[str]:
     from media_pipeline.models import format_timestamp
 

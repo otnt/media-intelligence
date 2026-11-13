@@ -562,6 +562,19 @@ def create_app(config: AppConfig, store: TaskStore | None = None, worker: TaskWo
             raise HTTPException(status_code=404, detail="Task not found")
         return _enrich_task(task, config)
 
+    @app.get("/v1/tasks/{task_id}/context")
+    def get_context(task_id: str) -> Response:
+        """The whole context of a note as plain text (metadata, description, chapters, slides, summary,
+        transcript), for pasting into an agent session."""
+        from media_pipeline.summary import full_context
+
+        task = store.get(task_id)
+        if task is None or not task.video_id:
+            raise HTTPException(status_code=404, detail="Task not found")
+        artifacts = ArtifactStore(config.paths.artifacts, task.video_id)
+        return Response(full_context(artifacts, artifacts.load_metadata(), task.url),
+                        media_type="text/plain; charset=utf-8")
+
     @app.get("/v1/tasks/{task_id}/note")
     def get_note(task_id: str) -> dict[str, Any]:
         """Everything the reader needs for one note, without the debug artifacts."""

@@ -67,3 +67,19 @@ def test_the_prompt_carries_the_description_date_and_length():
     assert "Source: YouTube · 2026-11-01 · 60 min" in prompt and "本期嘉宾：红军、子阳。 时间轴…" in prompt
     meta.media_kind = "image"
     assert "Description" not in build_model_prompt("总结", meta, "text")
+
+
+def test_full_context_has_everything_for_an_agent_session(tmp_path):
+    from media_pipeline.summary import full_context
+
+    artifacts = ArtifactStore(tmp_path, "v1")
+    artifacts.save_named([NamedSegment(0, 5, "S0", "主持人", "欢迎"), NamedSegment(5, 9, "S1", "周默", "谢谢")])
+    artifacts.save_summary({"status": "completed", "runs": [{"markdown": "核心结论：验证期。"}]})
+    artifacts.write_json(artifacts.root / "youtube.json", {"chapters": [{"start": 65, "title": "财报"}]})
+    meta = VideoMetadata(url="https://b23.tv/x", title="Q3 财报", platform="Bilibili", author="硅谷坐标", video_id="v1",
+                         duration=5400.0, published="2026-11-12", description="本期嘉宾：周默", thumbnail_url="",
+                         asr_model="fun-asr")
+    text = full_context(artifacts, meta)
+    for piece in ("# Q3 财报", "作者：硅谷坐标", "时长：90 分钟", "链接：https://b23.tv/x", "## 简介\n本期嘉宾：周默",
+                  "- [00:01:05] 财报", "## 摘要（AI 生成）\n核心结论：验证期。", "[00:00:00] 主持人：欢迎", "[00:00:05] 周默：谢谢"):
+        assert piece in text, piece

@@ -864,7 +864,8 @@ function transcriptHtml(note) {
   return `<div class="t-tools"><div class="t-row"><label class="search"><span class="sr-only">在逐字稿中搜索</span>
       <svg width="14" height="14" viewBox="0 0 20 20" aria-hidden="true"><path fill="currentColor" d="M8.5 2a6.5 6.5 0 0 1 5.18 10.43l4.45 4.44-1.42 1.42-4.44-4.45A6.5 6.5 0 1 1 8.5 2Zm0 2a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9Z"/></svg>
       <input id="t-q" type="search" placeholder="在逐字稿中搜索" value="${esc(state.tQuery)}" autocomplete="off" enterkeyhint="search"></label>
-      <button class="pill primary t-copy-top" type="button" data-act="copy-transcript">复制全部</button></div>${chips}
+      <button class="pill primary t-copy-top" type="button" data-act="copy-transcript">复制全部</button>
+      <button class="pill t-copy-top" type="button" data-act="copy-context" title="标题、简介、章节、摘要和逐字稿">复制上下文</button></div>${chips}
       <div class="t-count" id="t-count"></div></div><div id="t-body"></div>${copy("bottom")}`;
 }
 function paintTranscript() {
@@ -942,6 +943,13 @@ async function openNote(id) {
   }
   await refreshNote(true);
   markRead(id, true);
+  prefetchContext(id);
+}
+async function prefetchContext(id) {
+  try {
+    const res = await fetch(`/v1/tasks/${encodeURIComponent(id)}/context`);
+    if (res.ok) state.context = { id, text: await res.text() };
+  } catch (_) { /* the button retries */ }
 }
 async function markRead(id, read) {
   const task = state.tasks.find((t) => t.id === id) || (state.note && state.note.task.id === id ? state.note.task : null);
@@ -1015,7 +1023,12 @@ async function act(name, button) {
   if (!note) return;
   const id = note.task.id;
   try {
-    if (name === "copy-transcript") {
+    if (name === "copy-context") {
+      // Fetched when the note opened: Safari only lets a tap copy text that is already at hand.
+      const text = state.context && state.context.id === id ? state.context.text : null;
+      if (text) { await copyText(text); toast(`完整上下文已复制（${Math.round(text.length / 1000)}k 字）`); }
+      else { prefetchContext(id); toast("正在准备上下文，请再点一次"); }
+    } else if (name === "copy-transcript") {
       await copyText(transcriptText(note));
       toast("逐字稿已复制");
     } else if (name === "copy-summary") {
