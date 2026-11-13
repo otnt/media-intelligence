@@ -163,7 +163,9 @@ def _confident_self_name(claimed: list[str]) -> str | None:
         lowered = claim.strip().lower()
         if lowered in blocked:
             continue
-        if _NAME_TOKEN.match(claim) or _CJK_NAME(claim):
+        # Chinese "我是…" is followed by anything ("我是觉得…", "我是反着的"), so a Chinese name is only
+        # trusted when the title, author or description names it (_best_supported_name), never alone.
+        if _NAME_TOKEN.match(claim):
             return claim.strip()
     return None
 

@@ -279,7 +279,9 @@
   .chip .dot { display: inline-block; width: 8px; height: 8px; border-radius: 4px; margin-right: 6px; background: var(--spk); vertical-align: 1px; }
   .t-count { font-size: 13px; color: var(--text-3); padding: 6px 0 0; }
   .t-copy { display: flex; justify-content: flex-end; }
-  .t-copy.top { margin: 4px 0 10px; }
+  .t-row { display: flex; gap: 8px; align-items: center; }
+  .t-row .search { flex: 1; min-width: 0; }
+  .t-copy-top { flex: none; height: 36px; }
   .t-copy.bottom { margin: 20px 0 8px; }
   .blk { padding: 6px 0; }
   .blk-head { display: flex; align-items: baseline; gap: 8px; margin-top: 10px; font-size: 13.5px; }
@@ -859,9 +861,10 @@ function transcriptHtml(note) {
         `<button class="chip" type="button" data-speaker="${esc(id)}" aria-pressed="${state.tSpeaker === id}" style="--spk:${colors[id] || "transparent"}">${id ? '<span class="dot"></span>' : ""}${esc(label)}</button>`).join("")}</nav>`
     : "";
   const copy = (where) => `<div class="t-copy ${where}"><button class="pill" type="button" data-act="copy-transcript">复制全部逐字稿</button></div>`;
-  return `${copy("top")}<div class="t-tools"><label class="search"><span class="sr-only">在逐字稿中搜索</span>
+  return `<div class="t-tools"><div class="t-row"><label class="search"><span class="sr-only">在逐字稿中搜索</span>
       <svg width="14" height="14" viewBox="0 0 20 20" aria-hidden="true"><path fill="currentColor" d="M8.5 2a6.5 6.5 0 0 1 5.18 10.43l4.45 4.44-1.42 1.42-4.44-4.45A6.5 6.5 0 1 1 8.5 2Zm0 2a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9Z"/></svg>
-      <input id="t-q" type="search" placeholder="在逐字稿中搜索" value="${esc(state.tQuery)}" autocomplete="off" enterkeyhint="search"></label>${chips}
+      <input id="t-q" type="search" placeholder="在逐字稿中搜索" value="${esc(state.tQuery)}" autocomplete="off" enterkeyhint="search"></label>
+      <button class="pill primary t-copy-top" type="button" data-act="copy-transcript">复制全部</button></div>${chips}
       <div class="t-count" id="t-count"></div></div><div id="t-body"></div>${copy("bottom")}`;
 }
 function paintTranscript() {
