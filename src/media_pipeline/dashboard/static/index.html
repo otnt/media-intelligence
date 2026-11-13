@@ -1032,7 +1032,8 @@ async function act(name, button) {
       let copied = false;
       try { await copyText(text); copied = true; } catch (_) { /* still open Claude */ }
       const opened = window.open(`${CLAUDE_URL}?q=${encodeURIComponent(CLAUDE_STUB)}`, "_blank", "noopener,noreferrer");
-      toast(copied ? (opened ? "上下文已复制，在 Claude 输入框里粘贴即可" : "已复制；请允许弹窗或手动打开 Claude") : "复制失败，请用「复制上下文」", 4200);
+      void opened;  // with noopener the browser returns null even when the tab opened
+      toast(copied ? "上下文已复制，在 Claude 输入框里粘贴即可" : "复制失败，请用菜单里的「复制完整上下文」", 4200);
     } else if (name === "copy-context") {
       // Fetched when the note opened: Safari only lets a tap copy text that is already at hand.
       const text = state.context && state.context.id === id ? state.context.text : null;
@@ -1048,7 +1049,8 @@ async function act(name, button) {
       let copied = false;
       try { await copyText(chatPayload()); copied = true; } catch (_) { /* still open ChatGPT */ }
       const opened = window.open(`${CHATGPT_URL}?q=${encodeURIComponent(CHATGPT_STUB)}`, "_blank", "noopener,noreferrer");
-      toast(copied ? (opened ? "内容已复制，在 ChatGPT 中粘贴即可" : "已复制；请允许弹窗或手动打开 ChatGPT") : "复制失败，请手动复制", 3600);
+      void opened;  // with noopener the browser returns null even when the tab opened
+      toast(copied ? "内容已复制，在 ChatGPT 中粘贴即可" : "复制失败，请手动复制", 3600);
     } else if (name === "retry") {
       if (button) button.disabled = true;
       await api(`/v1/tasks/${encodeURIComponent(id)}/retry`, { method: "POST", body: "{}" });
