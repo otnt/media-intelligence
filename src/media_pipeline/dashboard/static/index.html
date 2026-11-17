@@ -761,6 +761,21 @@ function tabsHtml(note, tab) {
 function completedRuns(summary) {
   return (summary.runs || []).filter((run) => run.status === "completed" && String(run.markdown || "").trim());
 }
+/* The uploader's description: links clickable, timestamps jump into the video. */
+function descriptionHtml(note) {
+  const text = String(note.task.description || "").trim();
+  if (!text || note.task.media_kind === "image") return "";
+  const lines = text.split("\n").map((line) => {
+    let html = esc(line);
+    html = html.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
+    html = html.replace(/(^|\s)((?:\d{1,2}:)?\d{1,2}:\d{2})(?=\s|$)/g, (m, pre, ts) => {
+      const secs = ts.split(":").reduce((acc, part) => acc * 60 + Number(part), 0);
+      return `${pre}<a class="ts" href="${esc(videoAt(note.task, secs))}" target="_blank" rel="noopener">${ts}</a>`;
+    });
+    return html;
+  });
+  return `<details class="fold desc"><summary>视频简介</summary><div class="fold-body">${lines.join("<br>")}</div></details>`;
+}
 function summaryHtml(note) {
   const summary = note.summary || {};
   const runs = completedRuns(summary);
@@ -794,7 +809,7 @@ function summaryHtml(note) {
       body += `<details class="fold"><summary>推理过程</summary><div class="fold-body thinking">${esc(run.thinking.trim())}</div></details>`;
     }
   }
-  return body + infoHtml(note);
+  return body + descriptionHtml(note) + infoHtml(note);
 }
 function shortModel(label) {
   return String(label || "").replace(/\s*\((reasoning|thinking)[^)]*\)/i, "");

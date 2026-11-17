@@ -783,7 +783,7 @@ def _note_payload(task: Task, config: AppConfig, worker: object) -> dict[str, An
     artifacts = ArtifactStore(config.paths.artifacts, task.video_id)
     metadata = artifacts.load_metadata()
     if metadata is not None:
-        payload["task"]["description"] = (metadata.description or "")[:2000]
+        payload["task"]["description"] = (metadata.description or "")[:20000]
     payload["summary"] = _public_summary(task, artifacts, worker, config)
     named = artifacts.load_named() or []
     stats: dict[str, dict[str, Any]] = {}

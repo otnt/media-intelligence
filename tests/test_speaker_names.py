@@ -64,7 +64,7 @@ def test_the_prompt_carries_the_description_date_and_length():
                          duration=3600.0, published="2026-11-01", description="本期嘉宾：红军、子阳。\n\n时间轴…",
                          thumbnail_url="", asr_model="fun-asr")
     prompt = build_model_prompt("总结", meta, "text")
-    assert "Source: YouTube · 2026-11-01 · 60 min" in prompt and "本期嘉宾：红军、子阳。 时间轴…" in prompt
+    assert "Source: YouTube · 2026-11-01 · 60 min" in prompt and "本期嘉宾：红军、子阳。\n\n时间轴…" in prompt
     meta.media_kind = "image"
     assert "Description" not in build_model_prompt("总结", meta, "text")
 
