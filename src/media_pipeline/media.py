@@ -71,6 +71,13 @@ def parse_video_ref(url: str) -> tuple[str, str]:
             return parse_linkedin_ref(raw)
         except ValueError as exc:
             raise UnsupportedURLError(f"Could not parse a LinkedIn post from {url}") from exc
+    from media_pipeline.x_posts import is_x_host, parse_x_ref
+
+    if is_x_host(host):
+        try:
+            return parse_x_ref(raw)
+        except ValueError as exc:
+            raise UnsupportedURLError(f"Could not parse an X post from {url}") from exc
     from media_pipeline.xiaoyuzhou import is_xiaoyuzhou_host, parse_xiaoyuzhou_ref
 
     if is_xiaoyuzhou_host(host):
@@ -79,7 +86,7 @@ def parse_video_ref(url: str) -> tuple[str, str]:
         except ValueError as exc:
             raise UnsupportedURLError(f"Could not parse a Xiaoyuzhou episode from {url}") from exc
     raise UnsupportedURLError(
-        "Only Bilibili, YouTube, Xiaohongshu (RedNote), Threads, LinkedIn and Xiaoyuzhou URLs are supported")
+        "Only Bilibili, YouTube, Xiaohongshu (RedNote), Threads, LinkedIn, X and Xiaoyuzhou URLs are supported")
 
 
 def extract_supported_url(text: str) -> str:
@@ -105,7 +112,7 @@ def extract_supported_url(text: str) -> str:
             continue
         found.append(candidate)
     if not found:
-        raise UnsupportedURLError("No Bilibili, YouTube, Xiaohongshu, Threads, LinkedIn or Xiaoyuzhou URL found in that text")
+        raise UnsupportedURLError("No Bilibili, YouTube, Xiaohongshu, Threads, LinkedIn, X or Xiaoyuzhou URL found in that text")
     chosen = min(found, key=_share_url_rank)
     return canonicalize_url(chosen)
 
@@ -139,6 +146,10 @@ def canonicalize_url(url: str) -> str:
         from media_pipeline.linkedin import canonicalize_linkedin_url
 
         return canonicalize_linkedin_url(url)
+    if platform == "X":
+        from media_pipeline.x_posts import canonicalize_x_url
+
+        return canonicalize_x_url(url)
     if platform == "Xiaoyuzhou":
         from media_pipeline.xiaoyuzhou import canonicalize_xiaoyuzhou_url
 
@@ -203,6 +214,10 @@ def fetch_metadata(url: str, asr_model: str, config: AppConfig) -> VideoMetadata
         from media_pipeline.linkedin import fetch_linkedin_metadata
 
         return fetch_linkedin_metadata(page_url, asr_model, config)
+    if platform == "X":
+        from media_pipeline.x_posts import fetch_x_metadata
+
+        return fetch_x_metadata(page_url, asr_model, config)
     if platform == "Xiaoyuzhou":
         from media_pipeline.xiaoyuzhou import fetch_xiaoyuzhou_metadata
 
@@ -266,6 +281,10 @@ def download_video(url: str, video_id: str, dest_dir: Path, config: AppConfig) -
         from media_pipeline.linkedin import download_linkedin_post
 
         return download_linkedin_post(page_url, video_id, dest_dir, config)
+    if platform == "X":
+        from media_pipeline.x_posts import download_x_post
+
+        return download_x_post(page_url, video_id, dest_dir, config)
     if platform == "Xiaoyuzhou":
         from media_pipeline.xiaoyuzhou import download_xiaoyuzhou_episode
 

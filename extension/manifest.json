@@ -33,7 +33,11 @@
     "*://linkedin.com/*",
     "*://lnkd.in/*",
     "*://*.xiaoyuzhoufm.com/*",
-    "*://xiaoyuzhoufm.com/*"
+    "*://xiaoyuzhoufm.com/*",
+    "*://x.com/*",
+    "*://*.x.com/*",
+    "*://twitter.com/*",
+    "*://*.twitter.com/*"
   ],
   "background": {
     "service_worker": "background.js"

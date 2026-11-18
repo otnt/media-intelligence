@@ -387,7 +387,7 @@ def test_rejects_unknown_model_and_platform(tmp_path: Path):
     assert bad_model.status_code == 400
     bad_site = client.post(
         "/v1/tasks",
-        json={"url": "https://twitter.com/x/status/1", "asr_model": "whisper-large-v3-turbo"},
+        json={"url": "https://vimeo.com/12345", "asr_model": "whisper-large-v3-turbo"},
     )
     assert bad_site.status_code == 400
 

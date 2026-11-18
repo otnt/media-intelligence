@@ -362,6 +362,7 @@ SOURCE_REDNOTE = "rednote"
 SOURCE_THREADS = "threads"
 SOURCE_LINKEDIN = "linkedin"
 SOURCE_XIAOYUZHOU = "xiaoyuzhou"
+SOURCE_X = "x"
 SOURCE_OTHER = "other"
 SOURCE_LABELS = {
     SOURCE_YOUTUBE: "YouTube",
@@ -370,6 +371,7 @@ SOURCE_LABELS = {
     SOURCE_THREADS: "Threads",
     SOURCE_LINKEDIN: "LinkedIn",
     SOURCE_XIAOYUZHOU: "小宇宙",
+    SOURCE_X: "X",
     SOURCE_OTHER: "Other",
 }
 
@@ -389,6 +391,8 @@ def source_key(platform: str | None = "", url: str | None = "") -> str:
         return SOURCE_LINKEDIN
     if name in {"xiaoyuzhou", "小宇宙"}:
         return SOURCE_XIAOYUZHOU
+    if name in {"x", "twitter"}:
+        return SOURCE_X
     host = urlparse(url or "").netloc.lower()
     if host.startswith("www."):
         host = host[4:]
@@ -406,6 +410,8 @@ def source_key(platform: str | None = "", url: str | None = "") -> str:
         return SOURCE_LINKEDIN
     if host == "xiaoyuzhoufm.com" or host.endswith(".xiaoyuzhoufm.com"):
         return SOURCE_XIAOYUZHOU
+    if host in {"x.com", "twitter.com", "mobile.twitter.com", "mobile.x.com"}:
+        return SOURCE_X
     return SOURCE_OTHER
 
 

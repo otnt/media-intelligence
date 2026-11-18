@@ -57,7 +57,7 @@ def test_extract_supported_url_strips_trailing_punctuation():
         "https://www.xiaohongshu.com/explore/64aaaaaaaaaaaaaaaaaaaaaa"
     )
     with pytest.raises(UnsupportedURLError):
-        parse_video_ref("https://twitter.com/x/status/1")
+        parse_video_ref("https://vimeo.com/12345")
 
 
 def test_duration_and_timestamp_formatting():

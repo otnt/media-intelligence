@@ -199,6 +199,7 @@ function mdpIsSupportedVideoUrl(urlString) {
     if (host === "b23.tv") return url.pathname.replace(/\/$/, "").length > 1;
     if (mdpIsXiaohongshuHost(urlString)) return Boolean(mdpParseXiaohongshuNote(urlString));
     if (mdpIsThreadsHost(urlString)) return /^\/(?:@[^/]+\/post|share)\/[A-Za-z0-9_-]+/.test(url.pathname);
+    if (["x.com", "twitter.com", "mobile.twitter.com", "mobile.x.com"].includes(host)) return /^\/(?:[A-Za-z0-9_]{1,30}\/status|i(?:\/web)?\/status)\/\d+/.test(url.pathname);
     if (host === "xiaoyuzhoufm.com" || host.endsWith(".xiaoyuzhoufm.com")) return /^\/episode\/[0-9a-f]{24}/.test(url.pathname);
     if (mdpIsLinkedinHost(urlString)) {
       if (host === "lnkd.in") return url.pathname.replace(/\/$/, "").length > 1;
