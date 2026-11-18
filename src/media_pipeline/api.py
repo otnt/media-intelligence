@@ -177,18 +177,15 @@ def create_app(config: AppConfig, store: TaskStore | None = None, worker: TaskWo
 
     def _learn_dirs() -> dict[str, Path]:
         """{collection: <notes>/<collection>/_学习} for every collection that has study material."""
-        from media_pipeline.learning import LEARN_DIR
+        from media_pipeline.learning import learning_dir
 
-        notes = config.notes_dir()
         found: dict[str, Path] = {}
-        if notes is None:
-            return found
         for name in bulk_jobs.list_jobs(config):
             try:
                 title = str(bulk_jobs.open_job(config, name).meta("title", "") or name)
             except Exception:  # noqa: BLE001
                 continue
-            folder = notes / title / LEARN_DIR
+            folder = learning_dir(config, title)
             if folder.is_dir():
                 found[title] = folder
         return found
@@ -289,8 +286,6 @@ def create_app(config: AppConfig, store: TaskStore | None = None, worker: TaskWo
             raise HTTPException(status_code=404, detail="No such video in this job")
         if video.get("asr_status") != "done":
             raise HTTPException(status_code=409, detail="Not transcribed yet")
-        if config.notes_dir() is None:
-            raise HTTPException(status_code=500, detail="Obsidian vault is not configured")
         source = str(video.get("transcript_source") or "")
         asr_model = {"youtube": "youtube-captions", "ai-engineer": "ai-engineer"}.get(source) or (
             source or job.meta("asr_model", "") or config.asr.default)
@@ -851,6 +846,9 @@ def _extracted_markdown(task: Task, config: AppConfig, artifacts: ArtifactStore)
         if path.exists():
             document = load_note(path, rewrite_layout=True)
             return document.transcript_markdown.strip()
+    post = artifacts.root / "post.md"  # image/text posts written without Obsidian
+    if post.is_file():
+        return post.read_text(encoding="utf-8").strip()
     named = artifacts.load_named() or []
     if not named:
         return ""
@@ -928,11 +926,6 @@ def _enqueue_share(
         platform, video_id = parse_video_ref(page_url)
     except UnsupportedURLError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    if config.notes_dir() is None:
-        raise HTTPException(
-            status_code=500,
-            detail="Obsidian vault is not configured. Set paths.vault in ~/.config/media-pipeline/config.yaml",
-        )
     task = Task(
         id=str(uuid.uuid4()),
         url=page_url,

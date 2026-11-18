@@ -87,6 +87,10 @@ Never create sibling worktrees such as `../media-download-<name>`.
 
 ## Web UI
 
+Obsidian is optional: `paths.vault: off` writes no notes. The reader works from `artifacts/<id>/` alone
+(`post.md` holds image/text post bodies); study material lives in `~/AIContent/learning/<collection>/`.
+
+
 - `/` is the reader (`dashboard/static/index.html`): mobile-first library + note view, one row per video, page-level scrolling, PWA manifest and icons under `/static/`.
   It reads `/v1/tasks/{id}/note` (task, summary, speaker transcript, frames) and polls only while a task or summary is running, never repainting under a text selection.
 - Tasks with `extra.collection` (made by bulk jobs) are left out of `GET /v1/tasks` unless `?collection=<name>` is given; the reader shows each collection as a 📚 chip (`/v1/collections`).

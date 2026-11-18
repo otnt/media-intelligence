@@ -86,9 +86,8 @@ class Pipeline:
         self.config = config
         self.store = store
         notes_dir = config.notes_dir()
-        if notes_dir is None:
-            raise PipelineError(TaskStatus.fetching_metadata, "Obsidian vault is not configured")
-        self.notes = NoteWriter(notes_dir)
+        # Obsidian notes are optional (paths.vault: off): the reader works from the artifacts alone.
+        self.notes = NoteWriter(notes_dir) if notes_dir is not None else None
         self.diarization = diarization or build_diarization_provider(
             config.diarization.provider,
             config.diarization.model,
@@ -233,6 +232,9 @@ class Pipeline:
 
     def _create_note(self, task: Task, metadata: VideoMetadata, artifacts: ArtifactStore) -> None:
         task.status = TaskStatus.downloading
+        if self.notes is None:
+            self.store.update(task)
+            return
         note_path = self.notes.create_or_open(metadata, task)
         task.note_path = str(note_path)
         artifacts.remember_note(note_path)
@@ -440,6 +442,7 @@ class Pipeline:
                 for image in images:
                     shutil.copy2(image, attachment_dir / image.name)
             body = render_image_post(metadata.video_id, metadata.description, names)
+            (artifacts.root / "post.md").write_text(body, encoding="utf-8")  # the reader's copy, with or without Obsidian
             if task.note_path:
                 self.notes.update_progress(Path(task.note_path), task, metadata, body=body)
             task.extra["image_count"] = len(images)
@@ -569,6 +572,8 @@ class Pipeline:
         return task
 
     def _write_stub_failure_note(self, task: Task) -> None:
+        if self.notes is None:
+            return
         video_id = task.video_id
         if not video_id:
             try:

@@ -83,6 +83,7 @@ function inline(text) {
     const text = label || name;
     return href ? `<a class="talk" href="${esc(href)}">${text}</a>` : `<span>${text}</span>`;
   });
+  html = html.replace(/\[([^\]]+)\]\((\/#\/n\/[^\s)]+)\)/g, '<a class="talk" href="$2">$1</a>');
   html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
   html = html.replace(/\*\*([^*]+?)\*\*|__([^_]+?)__/g, (_, a, b) => `<strong>${a || b}</strong>`);
   html = html.replace(/(^|[^*\w])\*([^*\s][^*]*?)\*(?!\*)/g, "$1<em>$2</em>");

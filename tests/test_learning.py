@@ -68,11 +68,11 @@ def test_topics_scores_and_plan_cite_talks_with_links(tmp_path: Path):
     assert stats["topics"] == 1 and stats["skipped_topics"] == 1 and stats["scored"] == 3
     topic = (out / "主题" / "Evals.md").read_text()
     assert topic.startswith("# Evals\n\n> AI Engineer 主题综述 · 3 场演讲")
-    assert "[[Talk One]]、[Talk Two](https://www.youtube.com/watch?v=v2)" in topic  # note link, else YouTube
+    assert "[Talk One](/#/n/t1)、[Talk Two](https://www.youtube.com/watch?v=v2)" in topic  # reader link, else YouTube
     assert "核心结论：评测要可验证。" in model.prompts[0] and "Graders and reward hacking." in model.prompts[0]
     assert "### Flash" not in model.prompts[0]  # our run header is not fed back
     plan = (out / "学习路线.md").read_text()
-    assert "第一周看 [[Talk One]]" in plan and "[Talk Three](https://www.youtube.com/watch?v=v3)" in plan
+    assert "第一周看 [Talk One](/#/n/t1)" in plan and "[Talk Three](https://www.youtube.com/watch?v=v3)" in plan
     plan_prompt = next(p for p in model.prompts if "8 周学习路线" in p)
     assert "Talk Two" in plan_prompt and "Talk Three" not in plan_prompt  # only the high scorers
     assert "01:15 Why graders" in plan_prompt  # chapters help pick what to watch first
@@ -94,8 +94,10 @@ def test_learn_pages_list_and_render_the_material(tmp_path: Path):
     from media_pipeline.api import create_app
     from tests.test_api import DummyWorker
 
+    from media_pipeline.learning import learning_dir
+
     config, store, tasks = _setup(tmp_path)
-    out = config.notes_dir() / "AI Engineer" / "_学习"
+    out = learning_dir(config, "AI Engineer")
     run_learning(config, store, LIBRARY, out, generate=FakeModel(), min_topic_talks=2)
     client = TestClient(create_app(config, store=tasks, worker=DummyWorker()))
     index = client.get("/v1/learn").json()["collections"]

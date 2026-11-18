@@ -68,6 +68,11 @@ class Talk:
         return f"{head}\n{body.strip()}" if with_summary and body else head
 
 
+def learning_dir(config: AppConfig, collection: str) -> Path:
+    """Where a collection's study material lives: ~/AIContent/learning/<collection>/ (read by /learn)."""
+    return config.paths.bulk.parent / "learning" / collection
+
+
 def generate_fn(config: AppConfig, model: str = "deepseek-v4.1-flash") -> Callable[[str, int], str]:
     from media_pipeline.summary_llm import resolve_summary_backends, strip_think
 
@@ -287,13 +292,13 @@ def plan(generate: Callable[[str, int], str], talks: list[Talk], scores: dict[st
 
 
 def link_citations(markdown: str, talks: dict[str, Talk]) -> str:
-    """[T12] → [[note]] (Obsidian) or [title](YouTube) when the talk has no note yet."""
+    """[T12] → a link to the talk's note in the reader (or to YouTube when it has no note yet)."""
     def one(tid: str) -> str:
         talk = talks.get(tid.strip())
         if talk is None:
             return tid
-        if talk.note:
-            return f"[[{talk.note}]]"
+        if talk.task_id:
+            return f"[{talk.title}](/#/n/{talk.task_id})"
         return f"[{talk.title}](https://www.youtube.com/watch?v={talk.video_id})"
 
     return _CITE.sub(lambda m: "、".join(one(part) for part in re.split(r"\s*[,，、]\s*", m.group(1))), markdown)

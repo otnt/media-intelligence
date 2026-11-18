@@ -198,12 +198,6 @@ def cmd_serve(
 ) -> int:
     _configure_logging(config)
     config.ensure_directories()
-    if config.notes_dir() is None:
-        print(
-            "Obsidian vault was not found. Set paths.vault in ~/.config/media-pipeline/config.yaml",
-            file=sys.stderr,
-        )
-        return 1
     import uvicorn
 
     from media_pipeline.api import create_app
@@ -379,14 +373,12 @@ def cmd_bulk(config: AppConfig, args: argparse.Namespace) -> int:
 
         logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s",
                             handlers=[logging.StreamHandler(sys.stdout)])
-        notes = config.notes_dir()
-        if notes is None:
-            print("Obsidian vault is not configured", file=sys.stderr)
-            return 1
+        from media_pipeline.learning import learning_dir
+
         if args.wait:
             _wait_for_summaries(store)
         library = _aie_library_index(store)
-        out_dir = notes / str(store.meta("title", "") or args.name) / LEARN_DIR
+        out_dir = learning_dir(config, str(store.meta("title", "") or args.name))
         stats = run_learning(config, store, library, out_dir, generate=generate_fn(config, args.model),
                              min_topic_talks=args.min_topic_talks)
         store.event("import", f"学习材料已生成：{stats['topics']} 份主题综述 + 学习路线（{out_dir}）")
@@ -579,12 +571,6 @@ def cmd_transcribe(
     except UnsupportedURLError as exc:
         print(str(exc), file=sys.stderr)
         return 2
-    if config.notes_dir() is None:
-        print(
-            "Obsidian vault was not found. Set paths.vault in ~/.config/media-pipeline/config.yaml",
-            file=sys.stderr,
-        )
-        return 1
     _configure_logging(config)
     config.ensure_directories()
     store = TaskStore(config.paths.db)

@@ -10,7 +10,7 @@ paths:
   audio: ~/AIContent/audio
   artifacts: ~/AIContent/artifacts
   logs: ~/AIContent/logs
-  vault: ""
+  vault: ""  # "" = detect the open Obsidian vault; off = no Obsidian notes at all
   notes_folder: Transcripts
   # Bulk download jobs (media-pipeline bulk ...): progress tables + local staging before the NAS.
   bulk: ~/AIContent/bulk

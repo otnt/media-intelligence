@@ -350,8 +350,11 @@ def load_config(path: Path | None = None) -> AppConfig:
     agy_raw = raw.get("agy") or {}
     storage_raw = raw.get("storage") or {}
 
-    vault_value = paths_raw.get("vault") or ""
-    vault = expand_path(vault_value) if str(vault_value).strip() else detect_obsidian_vault()
+    vault_value = paths_raw.get("vault")
+    if vault_value is False or str(vault_value or "").strip().lower() in {"off", "none", "false", "no"}:
+        vault = None  # no Obsidian notes; the web reader is the product
+    else:
+        vault = expand_path(str(vault_value)) if str(vault_value or "").strip() else detect_obsidian_vault()
 
     hf_token = str(diar_raw.get("hf_token") or "").strip()
     if not hf_token:
