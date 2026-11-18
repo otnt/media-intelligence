@@ -31,7 +31,9 @@
     "*://threads.net/*",
     "*://*.linkedin.com/*",
     "*://linkedin.com/*",
-    "*://lnkd.in/*"
+    "*://lnkd.in/*",
+    "*://*.xiaoyuzhoufm.com/*",
+    "*://xiaoyuzhoufm.com/*"
   ],
   "background": {
     "service_worker": "background.js"

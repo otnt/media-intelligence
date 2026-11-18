@@ -71,7 +71,15 @@ def parse_video_ref(url: str) -> tuple[str, str]:
             return parse_linkedin_ref(raw)
         except ValueError as exc:
             raise UnsupportedURLError(f"Could not parse a LinkedIn post from {url}") from exc
-    raise UnsupportedURLError("Only Bilibili, YouTube, Xiaohongshu (RedNote), Threads and LinkedIn URLs are supported")
+    from media_pipeline.xiaoyuzhou import is_xiaoyuzhou_host, parse_xiaoyuzhou_ref
+
+    if is_xiaoyuzhou_host(host):
+        try:
+            return parse_xiaoyuzhou_ref(raw)
+        except ValueError as exc:
+            raise UnsupportedURLError(f"Could not parse a Xiaoyuzhou episode from {url}") from exc
+    raise UnsupportedURLError(
+        "Only Bilibili, YouTube, Xiaohongshu (RedNote), Threads, LinkedIn and Xiaoyuzhou URLs are supported")
 
 
 def extract_supported_url(text: str) -> str:
@@ -97,7 +105,7 @@ def extract_supported_url(text: str) -> str:
             continue
         found.append(candidate)
     if not found:
-        raise UnsupportedURLError("No Bilibili, YouTube, Xiaohongshu, Threads or LinkedIn URL found in that text")
+        raise UnsupportedURLError("No Bilibili, YouTube, Xiaohongshu, Threads, LinkedIn or Xiaoyuzhou URL found in that text")
     chosen = min(found, key=_share_url_rank)
     return canonicalize_url(chosen)
 
@@ -131,6 +139,10 @@ def canonicalize_url(url: str) -> str:
         from media_pipeline.linkedin import canonicalize_linkedin_url
 
         return canonicalize_linkedin_url(url)
+    if platform == "Xiaoyuzhou":
+        from media_pipeline.xiaoyuzhou import canonicalize_xiaoyuzhou_url
+
+        return canonicalize_xiaoyuzhou_url(url)
     if platform == "Xiaohongshu":
         from media_pipeline.xhs import canonicalize_xhs_url
 
@@ -191,6 +203,10 @@ def fetch_metadata(url: str, asr_model: str, config: AppConfig) -> VideoMetadata
         from media_pipeline.linkedin import fetch_linkedin_metadata
 
         return fetch_linkedin_metadata(page_url, asr_model, config)
+    if platform == "Xiaoyuzhou":
+        from media_pipeline.xiaoyuzhou import fetch_xiaoyuzhou_metadata
+
+        return fetch_xiaoyuzhou_metadata(page_url, asr_model, config)
     info = _yt_dlp_info(page_url, config, download=False)
     return metadata_from_info(info, page_url, asr_model, fallback_id=fallback_id, platform=platform)
 
@@ -250,6 +266,10 @@ def download_video(url: str, video_id: str, dest_dir: Path, config: AppConfig) -
         from media_pipeline.linkedin import download_linkedin_post
 
         return download_linkedin_post(page_url, video_id, dest_dir, config)
+    if platform == "Xiaoyuzhou":
+        from media_pipeline.xiaoyuzhou import download_xiaoyuzhou_episode
+
+        return download_xiaoyuzhou_episode(page_url, video_id, dest_dir, config)
     opts = _base_ydl_opts(config)
     opts.update(
         {

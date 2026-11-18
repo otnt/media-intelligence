@@ -1,6 +1,6 @@
 # Local Video → Obsidian Extraction Pipeline
 
-One-click capture from Bilibili, YouTube, Xiaohongshu, RedNote, Threads and LinkedIn.
+One-click capture from Bilibili, YouTube, Xiaohongshu, RedNote, Threads, LinkedIn and Xiaoyuzhou (小宇宙) podcasts.
 The local service downloads the media, then for video posts extracts a timestamped speaker-aware transcript and writes an Obsidian note.
 Keyframe extraction is off by default because it is slow.
 Check **Extract keyframes** in the extension, pass `--keyframes` on the CLI, or click **Extract keyframes** on the dashboard to add stills and `multimodal.json`.
@@ -8,6 +8,8 @@ Image/text posts (Xiaohongshu, Threads, LinkedIn) are downloaded into the vault 
 LinkedIn posts (`linkedin.com/posts/...`, `/feed/update/...`, and `lnkd.in/p/...` share links) are read from the public
 post page: the text, the post it reshares, images or the video, with `lnkd.in` links in the text resolved to their
 destination. Posts that need a login are reported as such.
+Xiaoyuzhou episodes (`xiaoyuzhoufm.com/episode/...`): the public audio is transcribed like a video, and the show notes
+(timeline, guests, links) become the description. Paid episodes are reported as such.
 
 ## What V1 does
 
