@@ -139,7 +139,15 @@ def parse_fxtwitter(data: dict[str, Any], url: str) -> XPost:
     author = tweet.get("author") or {}
     name = f"{author.get('name') or ''} (@{author.get('screen_name') or ''})".strip()
     images = [p.get("url") for p in (tweet.get("media") or {}).get("photos") or [] if p.get("url")]
-    videos = [(v.get("url"), v.get("duration")) for v in (tweet.get("media") or {}).get("videos") or [] if v.get("url")]
+    videos, silent_thumbs = [], []
+    for v in (tweet.get("media") or {}).get("videos") or []:
+        if not v.get("url"):
+            continue
+        if has_audio(v):
+            videos.append((v.get("url"), v.get("duration")))
+        elif v.get("thumbnail_url"):
+            silent_thumbs.append(v["thumbnail_url"])  # a silent clip: nothing to transcribe, keep its still
+    images = images + silent_thumbs
     article = tweet.get("article")
     if isinstance(article, dict) and article.get("content"):
         body = article_markdown(article)
@@ -167,6 +175,26 @@ def parse_fxtwitter(data: dict[str, Any], url: str) -> XPost:
         video_url=video_url or "",
         duration=float(duration) if duration else None,
     )
+
+
+def has_audio(video: dict[str, Any]) -> bool:
+    """X's mp4 files carry no audio when the clip is silent; its HLS playlist then lists no audio group."""
+    if video.get("type") == "gif":
+        return False
+    playlist = next((f.get("url") for f in video.get("formats") or video.get("variants") or []
+                     if f.get("container") == "m3u8" or ".m3u8" in str(f.get("url") or "")), "")
+    if not playlist:
+        return True  # can't tell; let ASR try
+    try:
+        return "TYPE=AUDIO" in _get_text(playlist) or "mp4a" in _get_text(playlist)
+    except Exception:  # noqa: BLE001 - a failed check should not block the post
+        return True
+
+
+def _get_text(url: str) -> str:
+    from curl_cffi import requests as cf_requests
+
+    return cf_requests.get(url, impersonate="chrome", timeout=20).text
 
 
 def article_markdown(article: dict[str, Any]) -> str:

@@ -14,46 +14,18 @@
       }
       header { padding: 12px 14px 4px; }
       h1 { margin: 0; font-size: 14px; }
-      .sub { color: #64748b; margin-top: 2px; }
       .ok { color: #15803d; }
       .err { color: #b91c1c; }
-      .page { padding: 8px 14px 0; color: #334155; word-break: break-all; white-space: pre-wrap; }
+      .page { padding: 4px 14px 0; color: #334155; word-break: break-all; white-space: pre-wrap; }
+      .status { padding: 8px 14px 10px; font-size: 13px; font-weight: 650; white-space: pre-wrap; min-height: 18px; }
+      .retry {
+        margin: 0 14px 10px; height: 30px; padding: 0 14px; border: 0; border-radius: 8px;
+        background: #4f46e5; color: #fff; font-weight: 700; cursor: pointer;
+      }
+      .retry[hidden] { display: none; }
       .section {
-        padding: 10px 14px 0;
-        font-size: 11px;
-        font-weight: 700;
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
-        color: #64748b;
-      }
-      .option {
-        display: flex;
-        gap: 8px;
-        align-items: flex-start;
-        padding: 7px 14px;
-        cursor: pointer;
-      }
-      .option.unavailable { opacity: 0.55; }
-      .label { font-weight: 650; }
-      .runtime { font-size: 11px; color: #64748b; margin-top: 1px; }
-      .actions { padding: 10px 14px 4px; }
-      .start {
-        width: 100%;
-        height: 34px;
-        border: 0;
-        border-radius: 8px;
-        background: #4f46e5;
-        color: #fff;
-        font-weight: 750;
-        cursor: pointer;
-      }
-      .start:hover { background: #4338ca; }
-      .start[disabled] { opacity: 0.55; cursor: default; }
-      .status {
-        padding: 6px 14px 8px;
-        font-size: 12px;
-        white-space: pre-wrap;
-        min-height: 18px;
+        padding: 6px 14px 0; font-size: 11px; font-weight: 700; text-transform: uppercase;
+        letter-spacing: 0.08em; color: #64748b;
       }
       ul { list-style: none; margin: 0; padding: 0 8px 12px; }
       li { padding: 8px; border-top: 1px solid #e2e8f0; }
@@ -62,26 +34,11 @@
     </style>
   </head>
   <body>
-    <header>
-      <h1>✨ Extract</h1>
-      <div class="sub" id="health">Checking local service…</div>
-    </header>
+    <header><h1>✨ Media Intelligence</h1></header>
     <div class="page" id="page"></div>
-    <div class="section">ASR Model</div>
-    <div id="model-list"></div>
-    <div class="section">Visual</div>
-    <label class="option">
-      <input type="checkbox" id="keyframes">
-      <span>
-        <span class="label">Extract keyframes</span>
-        <div class="runtime">Optional and slow. Adds stills and Qwen captions to the note.</div>
-      </span>
-    </label>
-    <div class="actions">
-      <button class="start" type="button" id="start" disabled>Extract</button>
-    </div>
-    <div class="status" id="status"></div>
-    <div class="section">Recent</div>
+    <div class="status" id="status">发送中…</div>
+    <button class="retry" type="button" id="retry" hidden>重新发送</button>
+    <div class="section">最近</div>
     <ul id="tasks"></ul>
     <script src="shared.js"></script>
     <script src="popup.js"></script>

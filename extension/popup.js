@@ -1,147 +1,60 @@
-const healthEl = document.getElementById("health");
+// Clicking the toolbar icon sends the current page straight away: no model or keyframe choices.
+// The server picks the ASR (asr.default, Fun-ASR) and skips keyframes.
 const pageEl = document.getElementById("page");
-const listEl = document.getElementById("model-list");
-const startEl = document.getElementById("start");
 const statusEl = document.getElementById("status");
+const retryEl = document.getElementById("retry");
 const tasksEl = document.getElementById("tasks");
 
-let selectedModel = ""; // empty: the server's default (asr.default) wins until the user picks one
-let models = MDP_FALLBACK_MODELS;
 let currentUrl = "";
-let serviceOk = false;
-let extractKeyframes = false;
 
 init();
 
 async function init() {
-  const stored = await chrome.storage.local.get(["asrModel", "extractKeyframes"]);
-  if (stored.asrModel) selectedModel = stored.asrModel;
-  extractKeyframes = Boolean(stored.extractKeyframes);
-  const keyframesEl = document.getElementById("keyframes");
-  if (keyframesEl) {
-    keyframesEl.checked = extractKeyframes;
-    keyframesEl.addEventListener("change", () => {
-      extractKeyframes = keyframesEl.checked;
-      chrome.storage.local.set({ extractKeyframes });
-    });
-  }
-  await Promise.all([loadHealth(), loadTab(), loadModels(), loadTasks()]);
-  renderModels();
-  startEl.addEventListener("click", submitTask);
-  updateStartEnabled();
-}
-
-async function loadHealth() {
-  const health = await mdpSend({ type: "HEALTH" });
-  serviceOk = Boolean(health.ok);
-  if (!health.ok) {
-    healthEl.className = "sub err";
-    healthEl.textContent = health.error || "Local service is not running.";
-    return;
-  }
-  healthEl.className = "sub ok";
-  healthEl.textContent = "Service running on 127.0.0.1";
-}
-
-async function loadTab() {
+  retryEl.addEventListener("click", send);
   const tab = await mdpGetActiveTab();
   currentUrl = tab?.url || "";
+  pageEl.textContent = tab?.title || currentUrl;
   if (!currentUrl) {
-    pageEl.textContent = "Could not read the current tab. Reload the extension, then open this popup from a video page.";
-    return;
+    show("err", "读不到当前标签页的地址。重新加载插件后再试。");
+  } else if (!mdpIsSupportedVideoUrl(currentUrl)) {
+    show("err", mdpIsXiaohongshuHost(currentUrl)
+      ? "小红书首页：点帖子卡片上的 ✨ Extract，或打开帖子后再点插件。"
+      : "这个页面不支持（支持 YouTube、B站、小红书、Threads、LinkedIn、X、小宇宙）。");
+  } else {
+    await send();
   }
-  if (mdpIsSupportedVideoUrl(currentUrl)) {
-    pageEl.textContent = tab.title || currentUrl;
-    return;
-  }
-  if (mdpIsXiaohongshuHost(currentUrl)) {
-    pageEl.textContent = "Xiaohongshu / RedNote feed: click ✨ Extract on a post card, or open a note and press Extract here.";
-    return;
-  }
-  pageEl.textContent = `Not a Bilibili, YouTube, Xiaohongshu, RedNote, Threads, or LinkedIn post page:\n${currentUrl}`;
+  loadTasks();
 }
 
-async function loadModels() {
-  const response = await mdpSend({ type: "MODELS" });
-  if (response.ok && Array.isArray(response.models) && response.models.length) {
-    models = response.models;
+async function send() {
+  retryEl.hidden = true;
+  show("", "发送中…");
+  const response = await mdpSend({ type: "CREATE_TASK", url: currentUrl });
+  if (!response.ok) {
+    show("err", response.error || "发送失败。");
+    retryEl.hidden = false;
+    return;
   }
-  const preferred = selectedModel || response.default || MDP_DEFAULT_MODEL;
-  const match = models.find((item) => item.id === preferred && item.available !== false);
-  selectedModel = match ? match.id : models.find((item) => item.available !== false)?.id || preferred;
+  show("ok", "✓ 已加入队列");
+  loadTasks();
 }
 
-function renderModels() {
-  mdpRenderModelList(listEl, models, selectedModel, (modelId) => {
-    selectedModel = modelId;
-    chrome.storage.local.set({ asrModel: selectedModel });
-    updateStartEnabled();
-  });
+function show(kind, text) {
+  statusEl.className = `status ${kind}`;
+  statusEl.textContent = text;
 }
 
 async function loadTasks() {
   const listing = await mdpSend({ type: "TASKS" });
   if (!listing.ok) {
-    tasksEl.innerHTML = `<li class="meta">${mdpEscapeHtml(listing.error || "Could not load tasks")}</li>`;
+    tasksEl.innerHTML = `<li class="meta">${mdpEscapeHtml(listing.error || "服务没有响应")}</li>`;
     return;
   }
-  const tasks = listing.tasks || [];
-  if (!tasks.length) {
-    tasksEl.innerHTML = `<li class="meta">No tasks yet.</li>`;
-    return;
-  }
-  tasksEl.innerHTML = tasks
-    .slice(0, 8)
-    .map((task) => {
-      const title = task.title || task.video_id || task.url;
-      const extra = task.error ? ` · ${task.error}` : "";
-      return `<li>
-        <div class="title">${mdpEscapeHtml(title)}</div>
-        <div class="meta">${mdpEscapeHtml(task.status)} · ${mdpEscapeHtml(task.asr_label || task.asr_model)}${mdpEscapeHtml(extra)}</div>
-      </li>`;
-    })
-    .join("");
-}
-
-function updateStartEnabled() {
-  const model = models.find((item) => item.id === selectedModel);
-  const modelOk = Boolean(model && model.available !== false);
-  const urlOk = mdpIsSupportedVideoUrl(currentUrl);
-  startEl.disabled = !(serviceOk && urlOk && modelOk);
-  if (!startEl.disabled) {
-    if (statusEl.textContent.startsWith("Start is disabled")) statusEl.textContent = "";
-    return;
-  }
-  if (!serviceOk) statusEl.textContent = "Start is disabled until the local service is running.";
-  else if (!currentUrl) statusEl.textContent = "Start is disabled because this tab URL could not be read.";
-  else if (!urlOk) {
-    if (mdpIsXiaohongshuHost(currentUrl)) {
-      statusEl.textContent = "On Explore, click ✨ Extract on a post card. Open a note to use this Extract button.";
-    } else {
-      statusEl.textContent = "Start is disabled until you are on a Bilibili, YouTube, Xiaohongshu, or RedNote page.";
-    }
-  }
-  else if (!modelOk) statusEl.textContent = "Start is disabled because the selected ASR model is not installed.";
-}
-
-async function submitTask() {
-  statusEl.className = "status";
-  statusEl.textContent = "Submitting…";
-  startEl.disabled = true;
-  const response = await mdpSend({
-    type: "CREATE_TASK",
-    url: currentUrl,
-    asr_model: selectedModel,
-    extract_keyframes: extractKeyframes,
-  });
-  updateStartEnabled();
-  if (!response.ok) {
-    statusEl.className = "status err";
-    statusEl.textContent = response.error || "Could not add the task.";
-    return;
-  }
-  chrome.storage.local.set({ asrModel: selectedModel, extractKeyframes });
-  statusEl.className = "status ok";
-  statusEl.textContent = `✓ Queued\nASR: ${response.asr_label || selectedModel}${extractKeyframes ? "\nKeyframes: on" : ""}`;
-  await loadTasks();
+  const tasks = (listing.tasks || []).slice(0, 6);
+  tasksEl.innerHTML = tasks.length
+    ? tasks.map((task) => `<li>
+        <div class="title">${mdpEscapeHtml(task.title || task.video_id || task.url)}</div>
+        <div class="meta">${mdpEscapeHtml(task.status)}${task.error ? ` · ${mdpEscapeHtml(task.error)}` : ""}</div>
+      </li>`).join("")
+    : `<li class="meta">还没有任务。</li>`;
 }

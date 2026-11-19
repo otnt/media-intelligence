@@ -538,13 +538,7 @@ async function queueCard(host, button) {
   button.className = "";
   button.textContent = "…";
   try {
-    const stored = await chrome.storage.local.get(["asrModel", "extractKeyframes"]);
-    const response = await mdpSend({
-      type: "CREATE_TASK",
-      url,
-      asr_model: stored.asrModel || selectedModel || undefined,
-      extract_keyframes: Boolean(stored.extractKeyframes),
-    });
+    const response = await mdpSend({ type: "CREATE_TASK", url });
     if (!response.ok) {
       button.className = "err";
       button.textContent = "Retry";
@@ -555,7 +549,7 @@ async function queueCard(host, button) {
     }
     button.className = "ok";
     button.textContent = "Queued";
-    button.title = `Added to queue · ${response.asr_label || stored.asrModel || selectedModel}`;
+    button.title = "Added to queue";
     window.setTimeout(() => {
       button.className = "";
       button.textContent = idle;

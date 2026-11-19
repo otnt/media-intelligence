@@ -139,7 +139,7 @@ class Pipeline:
             self.store.update(task)
             if task.note_path:
                 self.notes.update_progress(Path(task.note_path), task, metadata)
-            logger.info("Task %s completed Xiaohongshu image post %s", task.id, metadata.video_id)
+            logger.info("Task %s completed %s image/text post %s", task.id, metadata.platform, metadata.video_id)
             return task
         transcript = self._transcribe(task, metadata, artifacts, media)
         diarization = self._diarize(task, artifacts, media, transcript)

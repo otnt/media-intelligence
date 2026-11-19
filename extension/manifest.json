@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Save & Transcribe",
-  "version": "0.1.12",
-  "description": "Save Bilibili, YouTube, Xiaohongshu, and RedNote posts to Obsidian with local speech recognition.",
+  "version": "0.2.0",
+  "description": "One click sends the current page (video, podcast or post) to Media Intelligence.",
   "permissions": [
     "storage",
     "activeTab",

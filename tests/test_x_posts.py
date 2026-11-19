@@ -39,7 +39,8 @@ def test_plain_tweet_with_quote():
     assert post.text.endswith("引用 @b：\noriginal")
 
 
-def test_video_tweet_is_transcribed():
+def test_video_tweet_is_transcribed(monkeypatch):
+    monkeypatch.setattr(x_posts, "has_audio", lambda video: True)
     post = x_posts.parse_fxtwitter(_fx(media={"videos": [{"url": "https://video/v.mp4", "duration": 42.5}]}),
                                    "https://x.com/addy/status/123")
     assert post.media_kind == "video" and post.video_url == "https://video/v.mp4" and post.duration == 42.5
@@ -62,3 +63,16 @@ def test_falls_back_to_embed_endpoint(monkeypatch):
     assert "syndication" in calls[-1] and "token=" in calls[-1]
     assert post.text == "embedded text" and post.image_urls == ["https://img/p.jpg"]
     x_posts._CACHE.clear()
+
+
+def test_silent_video_becomes_text_post(monkeypatch):
+    monkeypatch.setattr(x_posts, "_get_text", lambda url: "#EXTM3U\n#EXT-X-STREAM-INF:CODECS=\"avc1.4D4015\"\nv.m3u8")
+    video = {"url": "https://video/v.mp4", "duration": 40, "thumbnail_url": "https://img/thumb.jpg",
+             "formats": [{"url": "https://video/pl/master.m3u8?tag=29", "container": "m3u8"}]}
+    post = x_posts.parse_fxtwitter(_fx(media={"videos": [video]}), "https://x.com/addy/status/123")
+    assert post.media_kind == "image" and post.image_urls == ["https://img/thumb.jpg"] and not post.video_url
+
+
+def test_has_audio_reads_playlist(monkeypatch):
+    monkeypatch.setattr(x_posts, "_get_text", lambda url: '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="a"')
+    assert x_posts.has_audio({"formats": [{"url": "https://v/m.m3u8", "container": "m3u8"}]})

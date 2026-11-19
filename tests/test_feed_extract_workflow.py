@@ -213,8 +213,8 @@ def test_extract_click_queues_and_downloads_rednote_post(tmp_path: Path, monkeyp
     assert clicked["type"] == "CREATE_TASK"
     assert clicked["url"].startswith(f"https://www.rednote.com/explore/{CLICKED_NOTE_ID}")
     assert "xsec_token=feed-token-def" in clicked["url"]
-    assert clicked["asr_model"] == "qwen3-asr-1.7b"
-    assert clicked.get("extract_keyframes") is False
+    # One click, no options: the server's default ASR and no keyframes.
+    assert "asr_model" not in clicked and "extract_keyframes" not in clicked
 
     config = _config(tmp_path)
     store = TaskStore(config.paths.db)
@@ -252,8 +252,7 @@ def test_extract_click_queues_and_downloads_rednote_post(tmp_path: Path, monkeyp
         "/v1/tasks",
         json={
             "url": clicked["url"],
-            "asr_model": clicked["asr_model"],
-            "extract_keyframes": bool(clicked.get("extract_keyframes")),
+            "asr_model": "qwen3-asr-1.7b",
         },
     )
     assert response.status_code == 202, response.text

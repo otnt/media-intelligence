@@ -35,10 +35,9 @@ async function handle(message) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        // One click, no options: the server's default ASR (asr.default) and no keyframes.
         url: message.url,
-        asr_model: message.asr_model,
-        language: message.language || "auto",
-        extract_keyframes: Boolean(message.extract_keyframes),
+        language: "auto",
       }),
     });
   }
