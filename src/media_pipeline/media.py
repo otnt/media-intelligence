@@ -126,12 +126,43 @@ def _share_url_rank(url: str) -> int:
     return 2
 
 
+_B23_CACHE: dict[str, str] = {}
+
+
+def _resolve_b23(url: str) -> str:
+    """Follow a b23.tv short link to the bilibili.com page it points to (the original URL if that fails)."""
+    host = (urlparse(url).hostname or "").lower()
+    if host != "b23.tv":
+        return url
+    if url in _B23_CACHE:
+        return _B23_CACHE[url]
+    try:
+        import urllib.request
+
+        request = urllib.request.Request(url, method="HEAD", headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(request, timeout=15) as response:
+            final = response.geturl()
+    except Exception as exc:  # noqa: BLE001 - yt-dlp gets the short link instead
+        logger.warning("Could not resolve %s: %s", url, exc)
+        return url
+    if (urlparse(final).hostname or "").lower().endswith("bilibili.com") and _BV_RE.search(final):
+        _B23_CACHE[url] = final
+        return final
+    return url
+
+
 def canonicalize_url(url: str) -> str:
     """Collapse playlist/watchlater wrappers to a single-video URL."""
     try:
         platform, video_id = parse_video_ref(url)
     except UnsupportedURLError:
         return url
+    if platform == "Bilibili" and not _BV_RE.fullmatch(video_id) and not video_id.lower().startswith("av"):
+        # b23.tv short link: resolve it here. Bilibili now redirects some to /zh-Hans/video/BV..., which
+        # yt-dlp's Bilibili extractor doesn't match (it falls back to the generic one and gets id "player").
+        resolved = _resolve_b23(url)
+        if resolved != url:
+            return canonicalize_url(resolved)
     if platform == "Bilibili" and _BV_RE.fullmatch(video_id):
         return f"https://www.bilibili.com/video/{video_id}"
     if platform == "Bilibili" and video_id.lower().startswith("av") and video_id[2:].isdigit():

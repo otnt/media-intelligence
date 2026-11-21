@@ -65,3 +65,12 @@ def test_duration_and_timestamp_formatting():
     assert format_duration(3723) == "1:02:03"
     assert format_timestamp(8) == "00:00:08"
     assert format_timestamp(3723) == "01:02:03"
+
+
+def test_b23_short_link_resolves_to_canonical_bv(monkeypatch):
+    from media_pipeline import media
+
+    media._B23_CACHE.clear()
+    monkeypatch.setattr(media, "_resolve_b23",
+                        lambda url: "https://www.bilibili.com/zh-Hans/video/BV1eq4n6QEik?p=1&share_from=ugc")
+    assert media.canonicalize_url("https://b23.tv/hx0xHnL") == "https://www.bilibili.com/video/BV1eq4n6QEik"

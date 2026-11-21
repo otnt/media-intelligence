@@ -19,3 +19,11 @@ def isolated_bulk_jobs(tmp_path_factory, monkeypatch):
     fake = tmp_path_factory.mktemp("bulk-jobs")
     monkeypatch.setattr(config_module, "BULK_ROOT", fake)
     return fake
+
+
+@pytest.fixture(autouse=True)
+def _no_b23_network(monkeypatch):
+    """b23.tv short links are resolved over the network in production; tests keep them as they are."""
+    from media_pipeline import media
+
+    monkeypatch.setattr(media, "_resolve_b23", lambda url: url)
